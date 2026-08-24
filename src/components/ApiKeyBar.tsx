@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { readStoredToken, storeToken } from '../core/replicate';
 
 interface Status {
   connected: boolean;
-  source?: 'env' | 'session' | 'none';
+  source?: 'env' | 'client' | 'none';
   account?: string;
   error?: string;
+  acceptsClientToken?: boolean;
 }
 
 /**
@@ -27,10 +29,27 @@ export default function ApiKeyBar() {
 
   const refresh = async () => {
     try {
-      const response = await fetch('/api/status');
+      const token = readStoredToken();
+      const response = await fetch('/api/status', {
+        headers: token ? { 'x-replicate-token': token } : {},
+      });
+      if (!response.ok && response.status === 404) {
+        // No API routes at all: the site was deployed as static files only, or
+        // the dev server is running without its API. Saying "local proxy" here
+        // was wrong and unactionable on a deployment.
+        setStatus({
+          connected: false,
+          error:
+            'This build has no API routes. Deploy the whole repository (the api/ folder included), or run npm run dev locally.',
+        });
+        return;
+      }
       setStatus(await response.json());
     } catch {
-      setStatus({ connected: false, error: 'The local proxy is not running. Start it with npm run dev.' });
+      setStatus({
+        connected: false,
+        error: 'Could not reach the API. Run npm run dev locally, or redeploy with the api/ folder.',
+      });
     }
   };
 
@@ -45,11 +64,14 @@ export default function ApiKeyBar() {
       const response = await fetch('/api/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: value, remember }),
+        body: JSON.stringify({ token: value }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'That token was not accepted.');
-      // Held only by the server from here on; nothing keeps it in the page.
+
+      // Kept in this browser and attached to each request. Serverless functions
+      // are stateless, so there is no server-side place to keep it.
+      storeToken(value.trim(), remember);
       setValue('');
       setOpen(false);
       await refresh();
@@ -61,7 +83,7 @@ export default function ApiKeyBar() {
   };
 
   const disconnect = async () => {
-    await fetch('/api/token/clear', { method: 'POST' });
+    storeToken(null);
     await refresh();
   };
 
@@ -79,8 +101,8 @@ export default function ApiKeyBar() {
       {open && (
         <div className="key-panel">
           <p className="hint">
-            Paste your Replicate API token. It is sent to the local proxy on this machine, checked
-            against Replicate, and never stored in the browser.
+            Paste your Replicate API token. It is checked against Replicate before being kept, then
+            attached to each request from this browser.
           </p>
 
           <label className="field">
@@ -104,7 +126,7 @@ export default function ApiKeyBar() {
               checked={remember}
               onChange={(event) => setRemember(event.target.checked)}
             />
-            Save to .env so it survives a restart
+            Keep it in this browser (otherwise it is forgotten on refresh)
           </label>
 
           <div className="row">
@@ -126,11 +148,14 @@ export default function ApiKeyBar() {
           {status.connected && !error && (
             <p className="status status-ok">
               Connected as {status.account}
-              {status.source === 'env' ? ' (from .env)' : ''}.
+              {status.source === 'env' ? ' (from the server environment)' : ' (from this browser)'}.
             </p>
           )}
           <p className="hint">
-            Get one at replicate.com → Account → API tokens.
+            Get one at replicate.com → Account → API tokens. For a deployment other people can
+            reach, set <code>REPLICATE_API_TOKEN</code> as an environment variable instead — a key
+            entered here lives in this browser only, which is what you want for your own key and
+            not what you want for a shared one.
           </p>
         </div>
       )}
