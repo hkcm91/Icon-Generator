@@ -52,10 +52,53 @@ export function modelSupportsAlpha(slug: string): boolean {
   return MODELS.find((entry) => entry.slug === slug)?.alpha ?? false;
 }
 
+const TOKEN_KEY = 'icon-generator-replicate-token';
+
+/**
+ * A key held in the browser, used when the deployment has no server-side one.
+ *
+ * On serverless there is nowhere else for it to live: functions are stateless,
+ * so nothing "saved" in one invocation exists in the next. The trade is that
+ * the key is in this browser's localStorage — acceptable for your own key on
+ * your own machine, and the reason a shared deployment should set
+ * REPLICATE_API_TOKEN server-side instead.
+ */
+/** Set when the user declined to persist: usable now, gone on refresh. */
+let ephemeralToken = '';
+
+export function readStoredToken(): string {
+  if (ephemeralToken) return ephemeralToken;
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * `persist` is honoured rather than decorative: unticked really does mean the
+ * key is gone on refresh, which is the difference between a checkbox and a lie.
+ */
+export function storeToken(token: string | null, persist = true) {
+  ephemeralToken = token && !persist ? token : '';
+  try {
+    if (token && persist) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Private mode: fall back to memory for this tab.
+    if (token) ephemeralToken = token;
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const token = readStoredToken();
+  return token ? { 'x-replicate-token': token } : {};
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({}));
@@ -64,14 +107,73 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function testConnection(): Promise<string> {
-  const response = await fetch('/api/account');
+  const response = await fetch('/api/status', { headers: authHeaders() });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'Connection test failed.');
+  if (!payload.connected) throw new Error(payload.error || 'No API key set.');
   return payload.account as string;
 }
 
-export function generate(model: string, input: Record<string, unknown>) {
-  return post<GenerateResult>('/api/generate', { model, input });
+interface Started {
+  id: string;
+}
+
+interface Polled {
+  status: string;
+  images?: string[];
+  raw?: string[];
+  text?: string;
+  error?: string;
+}
+
+/** Poll interval. Image models take tens of seconds; sub-second polling is waste. */
+const POLL_MS = 1500;
+const POLL_TIMEOUT_MS = 6 * 60 * 1000;
+
+/**
+ * Wait for a prediction the client started.
+ *
+ * Waiting happens here rather than inside the API route because a serverless
+ * function is capped well below the minutes an image model can take. Polling
+ * from the browser keeps every individual request short.
+ */
+async function waitFor(id: string): Promise<Polled> {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+  for (;;) {
+    await new Promise((done) => setTimeout(done, POLL_MS));
+    if (Date.now() > deadline) throw new Error('Generation timed out after six minutes.');
+
+    const response = await fetch(`/api/prediction?id=${encodeURIComponent(id)}`, {
+      headers: authHeaders(),
+    });
+    const payload = (await response.json().catch(() => ({}))) as Polled;
+    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
+
+    if (payload.status === 'succeeded') return payload;
+    if (payload.status === 'failed' || payload.status === 'canceled') {
+      throw new Error(payload.error || `Generation ${payload.status}.`);
+    }
+  }
+}
+
+export async function generate(
+  model: string,
+  input: Record<string, unknown>,
+): Promise<GenerateResult> {
+  const started = await post<Started>('/api/generate', { model, input });
+  const finished = await waitFor(started.id);
+  if (!finished.images?.length) throw new Error('The model returned no image.');
+  return { images: finished.images, predictionId: started.id };
+}
+
+/** Run a vision model and return its text. */
+export async function describeImage(
+  model: string,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const started = await post<Started>('/api/describe', { model, input });
+  const finished = await waitFor(started.id);
+  return finished.text ?? '';
 }
 
 /**

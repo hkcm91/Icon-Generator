@@ -11,6 +11,8 @@
  * reported plainly and the local description still stands on its own.
  */
 
+import { describeImage } from './replicate';
+
 export const DEFAULT_VISION_MODEL = 'yorickvp/llava-13b';
 
 /** Field name each family expects for its image input. */
@@ -62,12 +64,6 @@ export async function nameSymbol(
   imageDataUrl: string,
   model: string = DEFAULT_VISION_MODEL,
 ): Promise<string> {
-  const response = await fetch('/api/describe', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, input: visionInput(model, SYMBOL_PROMPT, imageDataUrl) }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'Could not describe the image.');
-  return cleanSymbolAnswer(String(payload.text ?? ''));
+  const text = await describeImage(model, visionInput(model, SYMBOL_PROMPT, imageDataUrl));
+  return cleanSymbolAnswer(text);
 }

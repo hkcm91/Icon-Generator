@@ -61,9 +61,29 @@ npm run dev               # web on :5173, proxy on :8787
 ```
 
 Then click **Add API key** in the header and paste your Replicate token. It is
-sent to the local proxy, checked against Replicate before being kept, and never
-sent back to the browser. Tick *Save to .env* for it to survive a restart, or
-set `REPLICATE_API_TOKEN` yourself — either works.
+checked against Replicate before being kept, then attached to each request.
+
+## Deploying
+
+The API lives in `api/` as serverless functions, so deploying the repository is
+all that is needed — on Vercel it is detected automatically (`vercel.json` sets
+the Vite build and the SPA rewrite). `npm run dev` mounts those same handlers
+behind Express, so local and deployed run identical code.
+
+Two ways to supply the key, and the choice matters:
+
+| Where | Behaviour | Use when |
+|---|---|---|
+| `REPLICATE_API_TOKEN` env var | Every visitor uses the deployment owner's key | Private deployment, or you intend to pay for everyone |
+| **Add API key** in the app | Held in that visitor's browser, sent per request | Your own key; anything others can reach |
+
+There is no third option on serverless: functions are stateless, so a key
+"saved" during one request does not exist in the next.
+
+**Generation is started and polled separately** — `POST /api/generate` returns a
+prediction id and the browser polls `GET /api/prediction`. An image model can
+take minutes, and a serverless function is capped well below that, so anything
+waiting for the result inside one request works locally and times out deployed.
 
 Without a token everything except generation still works — spec editing,
 preview, determinism check, and all exports.
