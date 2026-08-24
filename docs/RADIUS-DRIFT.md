@@ -130,6 +130,57 @@ times and hashes every frame's raw RGBA. Identical hashes, or it is not fixed.
 The **Drift comparison** strip shows six spec-compiled renders against six with
 simulated prompted-geometry jitter, side by side.
 
+## Can the model generate *into* the container?
+
+Yes — three levels, which trade off differently. All of them end with the same
+clip, so the outline is exact in every case; they differ in whether the model
+*knows* about the shape while it paints.
+
+### 1. Clip only
+
+Model paints an unbounded texture, code cuts the container out of it.
+
+Silhouette is perfect and it works with any text-to-image model. The weakness is
+that the model is blind to the geometry: highlights, bevels and falloff have no
+idea where the corners are, so the body can read flat, like a texture behind a
+stencil — because that is exactly what it is.
+
+### 2. Shape reference (image-to-image)
+
+The spec is rendered to a **base plate** — the container filled with a neutral
+tone, a soft top-down gradient and an inner rim — and passed to the model as an
+input image, with a prompt telling it to preserve that silhouette exactly and
+light *that* object.
+
+The model can now see where the surface turns over, so its shading follows the
+real contour. Works with any editing model that takes an image input
+(`image_input` for Nano Banana and Seedream, `input_images` for GPT Image).
+
+The model may still drift the outline slightly — which does not matter, because
+the clip runs afterwards. The reference is a lighting cue, not a promise.
+
+### 3. Masked fill (inpainting)
+
+The strongest form. Two images go to the model: the base plate, and a **mask**
+that is white inside the container and black outside. Inpainting models repaint
+white and preserve black, so the material is painted into the silhouette and
+nothing outside it is touched.
+
+Requires a model that accepts a mask — `black-forest-labs/flux-fill-dev` is
+wired up for this. Mask convention confirmed against the FLUX Fill docs: white
+areas are inpainted, black areas are preserved.
+
+### What is never done
+
+Sending the geometry as **text**. `radius 30%`, `squircle`, `padding 8%` — the
+original failure. Even in conditioned modes the numbers never appear in the
+prompt; the geometry travels as pixels the model can see, and the exact path is
+re-applied afterwards regardless of what comes back.
+
+Conditioning images are built by `src/core/condition.ts` from the same
+`containerPath` the compositor and exporter use, so the plate, the mask and the
+final clip cannot disagree — asserted in `test/condition.test.ts`.
+
 ## Measuring the drift you already have
 
 `src/core/measure.ts` reads finished PNGs and reports what geometry they

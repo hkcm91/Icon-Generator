@@ -45,10 +45,23 @@ Replicate ──► material (full-bleed texture) ──┤
 Replicate ──► glyph (chroma field, keyed)   ──┘
 ```
 
-The model is never told the shape. Its prompts are written to *exclude* geometry
-— no radius, no padding, no container word — because anything it draws outside
-the contour is discarded anyway, and anything it draws with its own silhouette
-would fight the spec. Open **Prompts actually sent** in the app to see them.
+The model is never told the shape *as text*. No radius, no padding percentage,
+no container word — those are the numbers it cannot honour. Open **Prompts
+actually sent** in the app to see exactly what goes over the wire.
+
+### Shape conditioning
+
+It can, however, be *shown* the shape. Three modes, all ending in the same clip:
+
+| Mode | What the model gets | Trade-off |
+|---|---|---|
+| **Clip only** | Nothing — a free texture, cut to shape afterwards | Works with any model; body can read flat, since the lighting doesn't know where the corners are |
+| **Shape reference** | A base plate rendered from the spec, as an image input | Shading follows the real contour; needs an editing model |
+| **Masked fill** | Base plate **+** a mask, white inside the container | Strongest; needs an inpainting model (`flux-fill-dev` is wired up) |
+
+The clip runs in every mode, so the outline is exact whatever the model returns.
+Conditioning changes how good the *material* looks, not whether the geometry
+holds. Details in [docs/RADIUS-DRIFT.md](docs/RADIUS-DRIFT.md).
 
 ### Shapes
 

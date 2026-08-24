@@ -32,7 +32,9 @@ try {
 }
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
+// Conditioning images travel inline as base64 data URIs, so a request can
+// legitimately carry a couple of PNGs alongside the prompt.
+app.use(express.json({ limit: '24mb' }));
 
 const PORT = Number(process.env.PORT || 8787);
 const API = 'https://api.replicate.com/v1';

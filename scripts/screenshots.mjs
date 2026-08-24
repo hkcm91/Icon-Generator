@@ -73,6 +73,7 @@ const shot = async (name, target = page) => {
 };
 
 await shot('01-full-app');
+await shot('07-conditioning', page.locator('.panel', { hasText: 'Shape conditioning' }));
 
 // --- 3. Determinism check --------------------------------------------------
 await page.getByRole('button', { name: 'Run 50x' }).click();

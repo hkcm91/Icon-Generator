@@ -9,17 +9,36 @@
  * field, and code supplies the shape.
  */
 
+import type { Conditioning } from './condition';
+
 export interface GenerateResult {
   images: string[];
   predictionId: string;
 }
 
+/**
+ * `conditioning` records what shape signal each model can actually receive:
+ *  - 'edit'    takes a reference image it edits in place
+ *  - 'inpaint' takes a base image plus a mask and repaints only the white area
+ *  - 'none'    text only, so geometry can be enforced by clipping alone
+ */
 export const MODELS = [
-  { slug: 'google/nano-banana-pro', label: 'Nano Banana Pro' },
-  { slug: 'google/nano-banana', label: 'Nano Banana' },
-  { slug: 'openai/gpt-image-2', label: 'GPT Image 2' },
-  { slug: 'bytedance/seedream-4', label: 'Seedream 4' },
+  { slug: 'google/nano-banana-pro', label: 'Nano Banana Pro', conditioning: 'edit' },
+  { slug: 'google/nano-banana', label: 'Nano Banana', conditioning: 'edit' },
+  { slug: 'openai/gpt-image-2', label: 'GPT Image 2', conditioning: 'edit' },
+  { slug: 'bytedance/seedream-4', label: 'Seedream 4', conditioning: 'edit' },
+  {
+    slug: 'black-forest-labs/flux-fill-dev',
+    label: 'FLUX Fill (masked)',
+    conditioning: 'inpaint',
+  },
 ] as const;
+
+export type ModelSlug = (typeof MODELS)[number]['slug'];
+
+export function modelConditioning(slug: string): 'edit' | 'inpaint' | 'none' {
+  return MODELS.find((entry) => entry.slug === slug)?.conditioning ?? 'none';
+}
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(path, {
@@ -64,6 +83,28 @@ export function materialPrompt(description: string): string {
 }
 
 /**
+ * Material prompt for a shape-conditioned run.
+ *
+ * The difference from the unconditioned version is the whole point: here the
+ * model is shown the silhouette and asked to light *that* object, so bevels and
+ * falloff land on the real corners. It is still never told the radius as a
+ * number, and the output is still clipped to the exact path afterwards — the
+ * reference is a lighting cue, not a promise.
+ */
+export function conditionedMaterialPrompt(description: string): string {
+  return [
+    'Render the shape shown in the reference image as a solid physical object,',
+    `finished in this material: ${description.trim() || 'smooth polished gradient'}.`,
+    'Preserve the reference silhouette exactly: identical outline, identical corner curvature,',
+    'identical proportions, identical position and scale in frame.',
+    'Light it so highlights, bevels and shading follow that exact contour.',
+    'Front-facing orthographic view. Keep the surrounding background flat and empty.',
+    'Do not redraw, reshape, straighten, round, or resize the outline.',
+    'No glyph, symbol, logo, text, badge, second object, scene, or mockup.',
+  ].join(' ');
+}
+
+/**
  * Prompt for the glyph.
  *
  * A flat chroma field is requested rather than transparency because most image
@@ -95,21 +136,38 @@ export function modelInput(
   prompt: string,
   size: number,
   references: string[] = [],
+  conditioning?: Conditioning,
 ): Record<string, unknown> {
   const base: Record<string, unknown> = { prompt };
+  // Replicate accepts data URIs wherever it accepts a file input, so the
+  // conditioning plate travels inline and never needs an upload round trip.
+  const shape = conditioning && conditioning.mode !== 'off' ? conditioning.reference : undefined;
+  const images = shape ? [shape, ...references] : references;
+
+  if (model.startsWith('black-forest-labs/flux-fill')) {
+    // Mask convention: white is repainted, black is preserved. The mask built
+    // from the spec is white inside the container, so the model paints the
+    // material into the silhouette and leaves everything outside untouched.
+    if (shape) base.image = shape;
+    if (conditioning?.mask) base.mask = conditioning.mask;
+    base.output_format = 'png';
+    base.num_inference_steps = 28;
+    base.guidance = 30;
+    return base;
+  }
 
   if (model.startsWith('openai/gpt-image')) {
     base.aspect_ratio = '1:1';
     base.quality = 'high';
     base.output_format = 'png';
-    if (references.length) base.input_images = references;
+    if (images.length) base.input_images = images;
     return base;
   }
 
   if (model.startsWith('google/nano-banana')) {
     base.aspect_ratio = '1:1';
     base.output_format = 'png';
-    if (references.length) base.image_input = references;
+    if (images.length) base.image_input = images;
     return base;
   }
 
@@ -117,12 +175,12 @@ export function modelInput(
     base.size = 'custom';
     base.width = Math.min(4096, size);
     base.height = Math.min(4096, size);
-    if (references.length) base.image_input = references;
+    if (images.length) base.image_input = images;
     return base;
   }
 
   base.aspect_ratio = '1:1';
-  if (references.length) base.image_input = references;
+  if (images.length) base.image_input = images;
   return base;
 }
 
