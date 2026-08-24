@@ -7,6 +7,8 @@ import { nameSymbol } from '../core/vision';
 import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '../core/spec';
 import type { ComposeLayers, ComposeOptions } from '../core/compose';
 import { useGeneration } from '../state/useGeneration';
+import IconGrid from './IconGrid';
+import type { IconItem } from '../core/library';
 import {
   PLATFORM_TARGETS,
   blobBytes,
@@ -33,6 +35,13 @@ interface Props {
   onGlyph: (value: string) => void;
   onMaterialLayer: (image: CanvasImageSource | null) => void;
   onGlyphLayer: (image: CanvasImageSource | null) => void;
+  master: { name: string; dataUrl: string } | null;
+  onMaster: (master: { name: string; dataUrl: string } | null) => void;
+  items: IconItem[];
+  onItems: (items: IconItem[]) => void;
+  concurrency: number;
+  onConcurrency: (value: number) => void;
+  materialLayer: CanvasImageSource | null;
 }
 
 /** Small filled thumbnail of a shape, for the preset buttons. */
@@ -46,7 +55,9 @@ function ShapeChip({ spec }: { spec: ContainerSpec }) {
 }
 
 /** Decode once, returning both the pixels to analyse and a URL to send. */
-async function readMaster(file: File): Promise<{ pixels: ImageData; dataUrl: string }> {
+async function readMaster(
+  file: File,
+): Promise<{ pixels: ImageData; dataUrl: string; stored: string }> {
   const bitmap = await createImageBitmap(file);
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width;
@@ -58,7 +69,22 @@ async function readMaster(file: File): Promise<{ pixels: ImageData; dataUrl: str
   return {
     pixels: ctx.getImageData(0, 0, canvas.width, canvas.height),
     dataUrl: canvas.toDataURL('image/png'),
+    // A separate, smaller copy for persistence. A full-size master is easily
+    // half a megabyte as a data URL and localStorage caps out around five,
+    // which a family project would blow through on the master alone.
+    stored: downscale(canvas, 384),
   };
+}
+
+function downscale(source: HTMLCanvasElement, size: number): string {
+  const scale = Math.min(1, size / Math.max(source.width, source.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(source.width * scale);
+  canvas.height = Math.round(source.height * scale);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return source.toDataURL('image/png');
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/png');
 }
 
 /**
@@ -71,7 +97,7 @@ async function readMaster(file: File): Promise<{ pixels: ImageData; dataUrl: str
  * supposed to be settled.
  */
 export default function SimpleStudio(props: Props) {
-  const { status, generateIcon } = useGeneration();
+  const { status, generateIcon, generateForItem } = useGeneration();
   const [tracing, setTracing] = useState('');
   const [notes, setNotes] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
@@ -93,6 +119,9 @@ export default function SimpleStudio(props: Props) {
     try {
       const master = await readMaster(file);
       dataUrl = master.dataUrl;
+      // Registered before anything else can fail, so a later vision error still
+      // leaves every generation referencing the approved master.
+      props.onMaster({ name: file.name, dataUrl: master.stored });
 
       const traced = traceMaster(master.pixels, 'symmetric', props.spec);
       props.onSpec(traced.spec);
@@ -145,6 +174,7 @@ export default function SimpleStudio(props: Props) {
         glyphStyle: '',
         conditioning: 'auto',
         wantAlpha: true,
+        master: props.master?.dataUrl ?? null,
       },
       props.onMaterialLayer,
       props.onGlyphLayer,
@@ -217,6 +247,11 @@ export default function SimpleStudio(props: Props) {
               onChange={(event) => void useMaster(event.target.files)}
             />
           </div>
+          {props.master && (
+            <p className="status status-ok">
+              Master: {props.master.name} — every generation references it.
+            </p>
+          )}
           {tracing && <p className="hint">{tracing}</p>}
           {notes.length > 0 && (
             <ul className="notes">
@@ -284,7 +319,32 @@ export default function SimpleStudio(props: Props) {
 
         <li>
           <h3>
-            <span className="step-num">4</span> Download
+            <span className="step-num">4</span> Make a whole family
+          </h3>
+          <IconGrid
+            spec={props.spec}
+            compose={props.compose}
+            material={props.materialLayer}
+            items={props.items}
+            concurrency={props.concurrency}
+            onItems={props.onItems}
+            onConcurrency={props.onConcurrency}
+            generate={generateForItem}
+            options={{
+              spec: props.spec,
+              model: props.model,
+              material: props.material,
+              glyphStyle: '',
+              conditioning: 'auto',
+              wantAlpha: true,
+              master: props.master?.dataUrl ?? null,
+            }}
+          />
+        </li>
+
+        <li>
+          <h3>
+            <span className="step-num">5</span> Download
           </h3>
           <button type="button" onClick={downloadAll} disabled={exporting}>
             {exporting ? 'Rendering every size…' : 'Download all icon sizes'}

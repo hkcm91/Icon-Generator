@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_COMPOSE, type ComposeOptions } from '../core/compose';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../core/spec';
 import { DEFAULT_VISION_MODEL } from '../core/vision';
+import type { IconItem } from '../core/library';
 
 const STORAGE_KEY = 'icon-generator-project-v1';
 
@@ -16,6 +17,12 @@ export interface Project {
   materialDescription: string;
   glyphSubject: string;
   glyphStyle: string;
+  /** The approved master: every generation references it. */
+  master: { name: string; dataUrl: string } | null;
+  /** Library cards. Metadata only — rendered images are not persisted. */
+  items: IconItem[];
+  /** How many generations run at once. */
+  concurrency: number;
 }
 
 const DEFAULT_PROJECT: Project = {
@@ -27,6 +34,9 @@ const DEFAULT_PROJECT: Project = {
   materialDescription: 'brushed deep indigo metal',
   glyphSubject: 'a paper plane, solid white',
   glyphStyle: 'rounded geometric, even stroke weight',
+  master: null,
+  items: [],
+  concurrency: 3,
 };
 
 function load(): Project {
@@ -39,6 +49,10 @@ function load(): Project {
       ...parsed,
       spec: normalizeSpec(parsed.spec),
       compose: { ...DEFAULT_COMPOSE, ...(parsed.compose ?? {}) },
+      // Rendered glyphs live only in memory — persisting a few hundred PNG
+      // data URLs would blow the localStorage quota — so every restored card
+      // starts from draft regardless of how it finished last session.
+      items: (parsed.items ?? []).map((item) => ({ ...item, status: 'draft' as const, error: undefined })),
     };
   } catch {
     // A corrupt autosave should cost the user their layout, not the app.

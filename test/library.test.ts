@@ -1,0 +1,175 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { dedupe, makeItem, parseLibrary, resetIdCounter } from '../src/core/library';
+import { runPool } from '../src/core/queue';
+
+beforeEach(() => resetIdCounter());
+
+describe('parsing an icon list', () => {
+  it('reads one name per line', () => {
+    const items = parseLibrary('Settings\nMessages\nCamera');
+    expect(items.map((i) => i.name)).toEqual(['Settings', 'Messages', 'Camera']);
+    expect(items.every((i) => i.selected)).toBe(true);
+    expect(items.every((i) => i.status === 'draft')).toBe(true);
+  });
+
+  it('splits "Name — concept" and "Name: concept"', () => {
+    const items = parseLibrary('Weather — a sun behind a cloud\nMusic: a quaver');
+    expect(items[0]).toMatchObject({ name: 'Weather', concept: 'a sun behind a cloud' });
+    expect(items[1]).toMatchObject({ name: 'Music', concept: 'a quaver' });
+  });
+
+  it('reads a CSV with a header in any column order', () => {
+    const items = parseLibrary('concept,name\na rising bar chart,Analytics\na gear,Settings');
+    expect(items[0]).toMatchObject({ name: 'Analytics', concept: 'a rising bar chart' });
+    expect(items[1]).toMatchObject({ name: 'Settings', concept: 'a gear' });
+  });
+
+  it('reads a headerless CSV positionally', () => {
+    const items = parseLibrary('Analytics,a rising bar chart\nSettings,a gear', 'list.csv');
+    expect(items[0]).toMatchObject({ name: 'Analytics', concept: 'a rising bar chart' });
+  });
+
+  it('honours quoted CSV cells containing commas', () => {
+    const items = parseLibrary('name,concept\nMessages,"two bubbles, overlapping"');
+    expect(items[0].concept).toBe('two bubbles, overlapping');
+  });
+
+  it('handles doubled quotes inside a quoted cell', () => {
+    const items = parseLibrary('name,concept\nQuote,"a ""smart"" quote mark"');
+    expect(items[0].concept).toBe('a "smart" quote mark');
+  });
+
+  it('reads a JSON array of objects', () => {
+    const items = parseLibrary(
+      JSON.stringify([{ name: 'Camera', concept: 'a lens', category: 'Media' }]),
+    );
+    expect(items[0]).toMatchObject({ name: 'Camera', concept: 'a lens', category: 'Media' });
+  });
+
+  it('reads the manifest form with an icons key', () => {
+    const items = parseLibrary(
+      JSON.stringify({ icons: [{ label: 'Analytics', concept: 'three columns' }] }),
+    );
+    expect(items[0]).toMatchObject({ name: 'Analytics', concept: 'three columns' });
+  });
+
+  it('reads the Simple Icons metadata shape', () => {
+    // {title, slug, hex} — no concept field at all.
+    const items = parseLibrary(JSON.stringify([{ title: 'GitHub', slug: 'github', hex: '181717' }]));
+    expect(items[0].name).toBe('GitHub');
+    expect(items[0].concept).toBe('');
+  });
+
+  it('reads the y2k library shape, preferring name over symbol', () => {
+    const items = parseLibrary(
+      JSON.stringify([
+        {
+          symbol: 'star_shine',
+          name: 'Sparkle Cluster',
+          category: 'Y2K Celestial',
+          concept: 'One large four-point sparkle',
+          keywords: ['y2k', 'sparkle'],
+        },
+      ]),
+    );
+    expect(items[0]).toMatchObject({ name: 'Sparkle Cluster', concept: 'One large four-point sparkle' });
+    expect(items[0].keywords).toEqual(['y2k', 'sparkle']);
+  });
+
+  it('reads a JSON array of bare strings', () => {
+    expect(parseLibrary('["Settings","Camera"]').map((i) => i.name)).toEqual(['Settings', 'Camera']);
+  });
+
+  it('drops duplicates by name, case-insensitively', () => {
+    // Concatenated lists routinely repeat; two "Settings" cards would produce
+    // two icons that then disagree with each other.
+    const items = parseLibrary('Settings\nsettings\nSETTINGS\nCamera');
+    expect(items.map((i) => i.name)).toEqual(['Settings', 'Camera']);
+  });
+
+  it('gives every item a distinct id', () => {
+    const items = parseLibrary('Settings\nCamera\nMusic');
+    expect(new Set(items.map((i) => i.id)).size).toBe(3);
+  });
+
+  it('returns nothing for empty input rather than throwing', () => {
+    expect(parseLibrary('')).toEqual([]);
+    expect(parseLibrary('   \n  ')).toEqual([]);
+  });
+
+  it('reports unusable JSON clearly', () => {
+    expect(() => parseLibrary('{"nope": 1}')).toThrow(/no icon list/i);
+  });
+
+  it('scales to a large list', () => {
+    const many = Array.from({ length: 300 }, (_v, i) => `Icon ${i}`).join('\n');
+    expect(parseLibrary(many)).toHaveLength(300);
+  });
+});
+
+describe('dedupe', () => {
+  it('keeps the first occurrence', () => {
+    const kept = dedupe([makeItem('A', { concept: 'first' }), makeItem('A', { concept: 'second' })]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].concept).toBe('first');
+  });
+});
+
+describe('worker pool', () => {
+  it('processes every item', async () => {
+    const items = Array.from({ length: 20 }, (_v, i) => i);
+    const results = await runPool(items, 4, async (n) => n * 2);
+    expect(results).toHaveLength(20);
+    expect(results.map((r) => r.result)).toEqual(items.map((n) => n * 2));
+  });
+
+  it('never exceeds the concurrency limit', async () => {
+    let active = 0;
+    let peak = 0;
+    await runPool(Array.from({ length: 30 }, (_v, i) => i), 5, async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((done) => setTimeout(done, 1));
+      active--;
+    });
+    expect(peak).toBeLessThanOrEqual(5);
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  it('isolates a failure instead of losing the whole batch', async () => {
+    const results = await runPool([1, 2, 3], 2, async (n) => {
+      if (n === 2) throw new Error('nope');
+      return n;
+    });
+    expect(results.filter((r) => r.error)).toHaveLength(1);
+    expect(results.filter((r) => r.result !== undefined)).toHaveLength(2);
+  });
+
+  it('reports progress that ends complete', async () => {
+    const seen: number[] = [];
+    await runPool([1, 2, 3, 4], 2, async (n) => n, (p) => seen.push(p.completed));
+    expect(seen[seen.length - 1]).toBe(4);
+  });
+
+  it('counts failures in progress', async () => {
+    let last = { total: 0, completed: 0, active: 0, failed: 0 };
+    await runPool([1, 2, 3], 1, async (n) => {
+      if (n !== 3) throw new Error('no');
+      return n;
+    }, (p) => { last = p; });
+    expect(last.failed).toBe(2);
+  });
+
+  it('stops taking new work when asked', async () => {
+    let started = 0;
+    await runPool(Array.from({ length: 50 }, (_v, i) => i), 2, async () => {
+      started++;
+      await new Promise((done) => setTimeout(done, 1));
+    }, undefined, () => started >= 6);
+    expect(started).toBeLessThan(20);
+  });
+
+  it('handles an empty list', async () => {
+    expect(await runPool([], 4, async () => 1)).toEqual([]);
+  });
+});

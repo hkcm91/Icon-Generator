@@ -150,7 +150,12 @@ export function conditionedMaterialPrompt(description: string): string {
  * models silently ignore alpha requests; `keyOutBackground` recovers the alpha
  * afterwards, which works whether or not the model cooperated.
  */
-export function glyphPrompt(subject: string, style: string, nativeAlpha = false): string {
+export function glyphPrompt(
+  subject: string,
+  style: string,
+  nativeAlpha = false,
+  hasMaster = false,
+): string {
   return [
     `A single centered ${subject.trim() || 'symbol'} icon glyph.`,
     style.trim() ? `Style: ${style.trim()}.` : '',
@@ -161,6 +166,12 @@ export function glyphPrompt(subject: string, style: string, nativeAlpha = false)
       : 'Isolated on a completely flat uniform #00FF00 chroma-green background with no gradient, no vignette, and no color spill.',
     'The glyph is fully visible, centered, with generous even margin on all four sides.',
     'Front-facing orthographic view.',
+    // With a master supplied, the reference is the authority on *style* only.
+    // Saying so explicitly is what stops the model copying its subject, which
+    // is the usual failure when a reference image is present.
+    hasMaster
+      ? 'Match the reference image exactly for material, palette, lighting direction, stroke weight, and level of detail. Draw the new subject described above; do not copy or trace the reference subject.'
+      : '',
     'No container, tile, badge, frame, card, rounded rectangle, circle backing, border,',
     'text, label, watermark, mockup, or scene.',
   ]

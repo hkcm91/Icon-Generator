@@ -60,6 +60,13 @@ export default function App() {
           onGlyph={(value) => setField('glyphSubject', value)}
           onMaterialLayer={setMaterial}
           onGlyphLayer={setGlyph}
+          materialLayer={material}
+          master={project.master}
+          onMaster={(next) => setField('master', next)}
+          items={project.items}
+          onItems={(next) => setField('items', next)}
+          concurrency={project.concurrency}
+          onConcurrency={(next) => setField('concurrency', next)}
         />
       )}
 
