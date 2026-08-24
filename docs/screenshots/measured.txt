@@ -1,0 +1,12 @@
+Radius drifts 5.72 points across 5 files
+Radius %
+22.03–27.75 (σ 2.06)
+Exponent
+4.02–5.19 (σ 0.42)
+
+File	Radius	%	Shape	Skew	
+container-run-01.png	92.2px	23.05	rounded rect	0.1px	Use
+container-run-02.png	104.0px	26.01	rounded rect	0.0px	Use
+container-run-03.png	88.1px	22.03	rounded rect	0.0px	Use
+container-run-04.png	111.0px	27.75	rounded rect	0.1px	Use
+container-run-05.pngkeyed	96.3px	24.07	rounded rect	0.0px	Use
