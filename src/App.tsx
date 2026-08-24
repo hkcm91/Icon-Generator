@@ -4,9 +4,10 @@ import DriftLab from './components/DriftLab';
 import ExportPanel from './components/ExportPanel';
 import GeneratePanel from './components/GeneratePanel';
 import MeasurePanel from './components/MeasurePanel';
-import TracePanel from './components/TracePanel';
 import Preview from './components/Preview';
+import SimpleStudio from './components/SimpleStudio';
 import SpecPanel from './components/SpecPanel';
+import TracePanel from './components/TracePanel';
 import type { ComposeLayers } from './core/compose';
 import { useProject } from './state/useProject';
 
@@ -17,111 +18,144 @@ export default function App() {
   const [showGuides, setShowGuides] = useState(true);
 
   const layers: ComposeLayers = useMemo(() => ({ material, glyph }), [material, glyph]);
+  const advanced = project.advanced;
 
   return (
-    <div className="app">
+    <div className={advanced ? 'app' : 'app app-simple'}>
       <header className="topbar">
         <div>
           <h1>Icon Generator</h1>
-          <p>Geometry is compiled. Material is generated. The two never negotiate.</p>
+          <p>
+            {advanced
+              ? 'Geometry is compiled. Material is generated. The two never negotiate.'
+              : 'Pick a shape, describe the look, download every size.'}
+          </p>
         </div>
-        <button type="button" className="ghost" onClick={reset}>
-          Reset project
-        </button>
+        <div className="row row-tight">
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => setField('advanced', !advanced)}
+          >
+            {advanced ? 'Simple view' : 'All controls'}
+          </button>
+          <button type="button" className="ghost" onClick={reset}>
+            Reset
+          </button>
+        </div>
       </header>
 
-      <div className="columns">
-        <div className="column">
-          <SpecPanel spec={project.spec} onChange={setSpec} />
-        </div>
+      {!advanced && (
+        <SimpleStudio
+          spec={project.spec}
+          compose={project.compose}
+          layers={layers}
+          model={project.model}
+          material={project.materialDescription}
+          glyph={project.glyphSubject}
+          onSpec={setSpec}
+          onCompose={setCompose}
+          onMaterial={(value) => setField('materialDescription', value)}
+          onGlyph={(value) => setField('glyphSubject', value)}
+          onMaterialLayer={setMaterial}
+          onGlyphLayer={setGlyph}
+        />
+      )}
 
-        <div className="column column-center">
-          <section className="panel panel-preview">
-            <div className="preview-head">
-              <h2>Preview</h2>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={showGuides}
-                  onChange={(event) => setShowGuides(event.target.checked)}
-                />
-                Contour guides
-              </label>
-            </div>
-            <Preview
+      {advanced && (
+        <div className="columns">
+          <div className="column">
+            <SpecPanel spec={project.spec} onChange={setSpec} />
+          </div>
+
+          <div className="column column-center">
+            <section className="panel panel-preview">
+              <div className="preview-head">
+                <h2>Preview</h2>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={showGuides}
+                    onChange={(event) => setShowGuides(event.target.checked)}
+                  />
+                  Contour guides
+                </label>
+              </div>
+              <Preview
+                spec={project.spec}
+                compose={project.compose}
+                layers={layers}
+                showGuides={showGuides}
+              />
+
+              <div className="style-grid">
+                <label className="field">
+                  <span className="field-label">Base</span>
+                  <input
+                    type="color"
+                    value={project.compose.baseColor}
+                    onChange={(event) => setCompose({ baseColor: event.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">Rim</span>
+                  <input
+                    type="color"
+                    value={project.compose.rimColor}
+                    onChange={(event) => setCompose({ rimColor: event.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">
+                    Rim width <b>{project.compose.rimWidth}</b>
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={24}
+                    value={project.compose.rimWidth}
+                    onChange={(event) => setCompose({ rimWidth: Number(event.target.value) })}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">
+                    Shadow <b>{project.compose.shadowBlur}</b>
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={120}
+                    value={project.compose.shadowBlur}
+                    onChange={(event) => setCompose({ shadowBlur: Number(event.target.value) })}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <TracePanel spec={project.spec} onApply={(next) => setSpec(next)} />
+            <DriftLab spec={project.spec} />
+            <MeasurePanel onApply={setSpec} />
+          </div>
+
+          <div className="column">
+            <GeneratePanel
               spec={project.spec}
-              compose={project.compose}
-              layers={layers}
-              showGuides={showGuides}
+              model={project.model}
+              materialDescription={project.materialDescription}
+              glyphSubject={project.glyphSubject}
+              glyphStyle={project.glyphStyle}
+              onModel={(value) => setField('model', value)}
+              onMaterialDescription={(value) => setField('materialDescription', value)}
+              onGlyphSubject={(value) => setField('glyphSubject', value)}
+              onGlyphStyle={(value) => setField('glyphStyle', value)}
+              onMaterial={setMaterial}
+              onGlyph={setGlyph}
             />
-
-            <div className="style-grid">
-              <label className="field">
-                <span className="field-label">Base</span>
-                <input
-                  type="color"
-                  value={project.compose.baseColor}
-                  onChange={(event) => setCompose({ baseColor: event.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span className="field-label">Rim</span>
-                <input
-                  type="color"
-                  value={project.compose.rimColor}
-                  onChange={(event) => setCompose({ rimColor: event.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span className="field-label">
-                  Rim width <b>{project.compose.rimWidth}</b>
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={24}
-                  value={project.compose.rimWidth}
-                  onChange={(event) => setCompose({ rimWidth: Number(event.target.value) })}
-                />
-              </label>
-              <label className="field">
-                <span className="field-label">
-                  Shadow <b>{project.compose.shadowBlur}</b>
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={120}
-                  value={project.compose.shadowBlur}
-                  onChange={(event) => setCompose({ shadowBlur: Number(event.target.value) })}
-                />
-              </label>
-            </div>
-          </section>
-
-          <DriftLab spec={project.spec} />
-          <TracePanel spec={project.spec} onApply={(next) => setSpec(next)} />
-          <MeasurePanel onApply={setSpec} />
+            <DeterminismPanel spec={project.spec} compose={project.compose} layers={layers} />
+            <ExportPanel spec={project.spec} compose={project.compose} layers={layers} />
+          </div>
         </div>
-
-        <div className="column">
-          <GeneratePanel
-            spec={project.spec}
-            model={project.model}
-            materialDescription={project.materialDescription}
-            glyphSubject={project.glyphSubject}
-            glyphStyle={project.glyphStyle}
-            onModel={(value) => setField('model', value)}
-            onMaterialDescription={(value) => setField('materialDescription', value)}
-            onGlyphSubject={(value) => setField('glyphSubject', value)}
-            onGlyphStyle={(value) => setField('glyphStyle', value)}
-            onMaterial={setMaterial}
-            onGlyph={setGlyph}
-          />
-          <DeterminismPanel spec={project.spec} compose={project.compose} layers={layers} />
-          <ExportPanel spec={project.spec} compose={project.compose} layers={layers} />
-        </div>
-      </div>
+      )}
     </div>
   );
 }

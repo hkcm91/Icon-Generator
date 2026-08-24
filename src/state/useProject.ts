@@ -5,6 +5,8 @@ import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../core/spec';
 const STORAGE_KEY = 'icon-generator-project-v1';
 
 export interface Project {
+  /** false shows the guided four-step view; true shows every control. */
+  advanced: boolean;
   spec: ContainerSpec;
   compose: ComposeOptions;
   model: string;
@@ -14,12 +16,13 @@ export interface Project {
 }
 
 const DEFAULT_PROJECT: Project = {
+  advanced: false,
   spec: DEFAULT_SPEC,
   compose: DEFAULT_COMPOSE,
   model: 'google/nano-banana-pro',
-  materialDescription: 'brushed anodised aluminium with a soft vertical gradient, deep indigo',
-  glyphSubject: 'a paper plane',
-  glyphStyle: 'solid white, rounded geometric, even stroke weight',
+  materialDescription: 'brushed deep indigo metal',
+  glyphSubject: 'a paper plane, solid white',
+  glyphStyle: 'rounded geometric, even stroke weight',
 };
 
 function load(): Project {

@@ -124,3 +124,54 @@ export function serializeSpec(spec: ContainerSpec): string {
     2,
   );
 }
+
+/**
+ * One-click shape choices for the guided view.
+ *
+ * Each preset sets exponent/radius/padding/inset together, because those are
+ * not independent decisions in practice — an iOS-style squircle wants a
+ * different optical margin from a circle, and asking someone to discover that
+ * with four sliders is how you get an icon that looks slightly wrong.
+ */
+export interface ShapePreset {
+  id: string;
+  label: string;
+  patch: Partial<ContainerSpec>;
+}
+
+export const SHAPE_PRESETS: ShapePreset[] = [
+  {
+    id: 'squircle',
+    label: 'Squircle',
+    patch: { shape: 'superellipse', exponent: 5, padding: 6, glyphInset: 18 },
+  },
+  {
+    id: 'rounded',
+    label: 'Rounded',
+    patch: { shape: 'rounded-rect', radius: 22, padding: 6, glyphInset: 18 },
+  },
+  {
+    id: 'circle',
+    label: 'Circle',
+    patch: { shape: 'circle', padding: 6, glyphInset: 20 },
+  },
+  {
+    id: 'square',
+    label: 'Square',
+    patch: { shape: 'rounded-rect', radius: 5, padding: 6, glyphInset: 15 },
+  },
+];
+
+/** Which preset, if any, the current spec corresponds to. */
+export function matchPreset(spec: ContainerSpec): string | null {
+  for (const preset of SHAPE_PRESETS) {
+    const patch = preset.patch;
+    const sameShape = patch.shape === spec.shape;
+    const sameCurve =
+      patch.exponent === undefined ? true : Math.abs(patch.exponent - spec.exponent) < 0.01;
+    const sameRadius =
+      patch.radius === undefined ? true : Math.abs(patch.radius - spec.radius) < 0.01;
+    if (sameShape && sameCurve && sameRadius) return preset.id;
+  }
+  return null;
+}
