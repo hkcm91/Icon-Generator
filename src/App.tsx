@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ApiKeyBar from './components/ApiKeyBar';
 import DeterminismPanel from './components/DeterminismPanel';
 import DriftLab from './components/DriftLab';
@@ -11,12 +11,48 @@ import SpecPanel from './components/SpecPanel';
 import TracePanel from './components/TracePanel';
 import type { ComposeLayers } from './core/compose';
 import { useImageStore } from './state/useImageStore';
-import { useProject } from './state/useProject';
+import { hydrateProject, useProject, type Project } from './state/useProject';
+import { download } from './core/export';
+import type { ImageBundle } from './state/useImageStore';
 
 export default function App() {
-  const { project, setSpec, setCompose, setField, reset } = useProject();
+  const { project, setProject, setSpec, setCompose, setField, reset } = useProject();
   const store = useImageStore();
   const [showGuides, setShowGuides] = useState(true);
+  const projectInput = useRef<HTMLInputElement>(null);
+  const [projectMessage, setProjectMessage] = useState('');
+
+  const saveProject = async () => {
+    const bundle = {
+      schemaVersion: 1,
+      project,
+      images: await store.exportImages(),
+    };
+    const safe = project.name.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '') || 'icon-family';
+    download(
+      new Blob([JSON.stringify(bundle)], { type: 'application/json' }),
+      `${safe}.icon-family.json`,
+    );
+    setProjectMessage('Portable project saved with its rendered artwork.');
+  };
+
+  const openProject = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text()) as {
+        schemaVersion?: number;
+        project?: Partial<Project>;
+        images?: ImageBundle;
+      };
+      if (!parsed.project || !parsed.images) throw new Error('This is not an icon-family project bundle.');
+      await store.importImages(parsed.images);
+      setProject(hydrateProject(parsed.project));
+      setProjectMessage(`Opened ${file.name}.`);
+    } catch (error) {
+      setProjectMessage(`Could not open project: ${(error as Error).message}`);
+    }
+  };
 
   const { material, glyph } = store;
   const layers: ComposeLayers = useMemo(() => ({ material, glyph }), [material, glyph]);
@@ -49,7 +85,7 @@ export default function App() {
     <div className={advanced ? 'app' : 'app app-simple'}>
       <header className="topbar">
         <div>
-          <h1>Icon Generator</h1>
+          <h1>{project.name || 'Icon Generator'}</h1>
           <p>
             {advanced
               ? 'Geometry is compiled. Material is generated. The two never negotiate.'
@@ -58,6 +94,21 @@ export default function App() {
         </div>
         <div className="row row-tight">
           <ApiKeyBar />
+          {!advanced && (
+            <>
+              <button type="button" className="ghost" onClick={() => void saveProject()}>Save project</button>
+              <button type="button" className="ghost" onClick={() => projectInput.current?.click()}>
+                Open project
+              </button>
+              <input
+                ref={projectInput}
+                type="file"
+                accept=".json,.icon-family.json,application/json"
+                hidden
+                onChange={(event) => void openProject(event.target.files)}
+              />
+            </>
+          )}
           <button
             type="button"
             className="ghost"
@@ -80,25 +131,49 @@ export default function App() {
         </div>
       </header>
 
+      {!advanced && projectMessage && <p className="project-message status status-ok">{projectMessage}</p>}
+
       {!advanced && (
-        <SimpleStudio
+          <SimpleStudio
+          familyName={project.name}
+          onFamilyName={(value) => setField('name', value)}
           spec={project.spec}
           compose={project.compose}
           layers={layers}
           model={project.model}
+          onModel={(value) => setField('model', value)}
+          quality={project.quality}
+          onQuality={(value) => setField('quality', value)}
+          premiumAllowed={project.premiumAllowed}
+          onPremiumAllowed={(value) => setField('premiumAllowed', value)}
           visionModel={project.visionModel}
           material={project.materialDescription}
+          familyPrompt={project.familyPrompt}
+          negativePrompt={project.negativePrompt}
           glyph={project.glyphSubject}
+          glyphColor={project.glyphColor}
           onSpec={setSpec}
           onCompose={setCompose}
           onMaterial={(value) => setField('materialDescription', value)}
+          onFamilyPrompt={(value) => setField('familyPrompt', value)}
+          onNegativePrompt={(value) => setField('negativePrompt', value)}
           onGlyph={(value) => setField('glyphSubject', value)}
+          onGlyphColor={(value) => setField('glyphColor', value)}
           onMaterialLayer={store.setMaterial}
           onGlyphLayer={store.setGlyph}
           materialLayer={material}
           glyphs={store.glyphs}
           onItemGlyph={store.setItemGlyph}
+          onRestoreRevision={store.restoreItemRevision}
           onClearGlyphs={store.clearGlyphs}
+          lockedContainer={project.lockedContainer}
+          onLockedContainer={(value) => setField('lockedContainer', value)}
+          references={project.references}
+          onReferences={(value) => setField('references', value)}
+          exportApprovedOnly={project.exportApprovedOnly}
+          onExportApprovedOnly={(value) => setField('exportApprovedOnly', value)}
+          exportSelectedOnly={project.exportSelectedOnly}
+          onExportSelectedOnly={(value) => setField('exportSelectedOnly', value)}
           master={project.master}
           onMaster={(next) => setField('master', next)}
           items={project.items}

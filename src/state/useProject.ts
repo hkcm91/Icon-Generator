@@ -7,18 +7,32 @@ import type { IconItem } from '../core/library';
 const STORAGE_KEY = 'icon-generator-project-v1';
 
 export interface Project {
+  /** Human-readable family name used by project and export packages. */
+  name: string;
   /** false shows the guided four-step view; true shows every control. */
   advanced: boolean;
   spec: ContainerSpec;
   compose: ComposeOptions;
   model: string;
+  quality: 'low' | 'medium' | 'high';
+  premiumAllowed: boolean;
   /** Vision model used to name the symbol in an uploaded master. */
   visionModel: string;
   materialDescription: string;
+  familyPrompt: string;
+  negativePrompt: string;
   glyphSubject: string;
   glyphStyle: string;
+  glyphColor: string;
   /** The approved master: every generation references it. */
   master: { name: string; dataUrl: string } | null;
+  /** Reuse the approved container pixels instead of repainting the material. */
+  lockedContainer: boolean;
+  /** Additional appearance references shared by the family. */
+  references: Array<{ name: string; dataUrl: string }>;
+  /** Production export gate. */
+  exportApprovedOnly: boolean;
+  exportSelectedOnly: boolean;
   /** Library cards. Metadata only — rendered images are not persisted. */
   items: IconItem[];
   /** How many generations run at once. */
@@ -26,41 +40,56 @@ export interface Project {
 }
 
 const DEFAULT_PROJECT: Project = {
+  name: 'My Icon Family',
   advanced: false,
   spec: DEFAULT_SPEC,
   compose: DEFAULT_COMPOSE,
-  model: 'google/nano-banana-pro',
+  model: 'openai/gpt-image-2',
+  quality: 'low',
+  premiumAllowed: false,
   visionModel: DEFAULT_VISION_MODEL,
   // Empty by design. A pre-filled default is indistinguishable from a field
   // that auto-fill failed to touch, which is exactly the confusion to avoid
   // when uploading a master is supposed to write these for you.
   materialDescription: '',
+  familyPrompt: '',
+  negativePrompt: '',
   glyphSubject: '',
   glyphStyle: '',
+  glyphColor: '#ffffff',
   master: null,
+  lockedContainer: false,
+  references: [],
+  exportApprovedOnly: false,
+  exportSelectedOnly: false,
   items: [],
   concurrency: 3,
 };
+
+export function hydrateProject(parsed: Partial<Project>): Project {
+  const migrateExpensiveDefault = parsed.quality === undefined && parsed.model === 'google/nano-banana-pro';
+  return {
+    ...DEFAULT_PROJECT,
+    ...parsed,
+    model: migrateExpensiveDefault ? 'openai/gpt-image-2' : (parsed.model ?? DEFAULT_PROJECT.model),
+    quality: parsed.quality ?? 'low',
+    premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
+    spec: normalizeSpec(parsed.spec),
+    compose: { ...DEFAULT_COMPOSE, ...(parsed.compose ?? {}) },
+    items: (parsed.items ?? []).map((item) =>
+      item.status === 'queued' || item.status === 'generating'
+        ? { ...item, status: 'draft' as const, error: undefined }
+        : item,
+    ),
+  };
+}
 
 function load(): Project {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return DEFAULT_PROJECT;
     const parsed = JSON.parse(stored) as Partial<Project>;
-    return {
-      ...DEFAULT_PROJECT,
-      ...parsed,
-      spec: normalizeSpec(parsed.spec),
-      compose: { ...DEFAULT_COMPOSE, ...(parsed.compose ?? {}) },
-      // Rendered glyphs live in IndexedDB, so a card that finished last
-      // session can come back ready. Only genuinely interrupted work is reset:
-      // a queued or generating card had no result when the tab closed.
-      items: (parsed.items ?? []).map((item) =>
-        item.status === 'queued' || item.status === 'generating'
-          ? { ...item, status: 'draft' as const, error: undefined }
-          : item,
-      ),
-    };
+    return hydrateProject(parsed);
   } catch {
     // A corrupt autosave should cost the user their layout, not the app.
     return DEFAULT_PROJECT;

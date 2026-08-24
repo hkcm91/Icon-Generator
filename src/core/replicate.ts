@@ -293,6 +293,7 @@ export function modelInput(
   references: string[] = [],
   conditioning?: Conditioning,
   wantAlpha = false,
+  quality: 'low' | 'medium' | 'high' = 'low',
 ): Record<string, unknown> {
   const base: Record<string, unknown> = { prompt };
   // Replicate accepts data URIs wherever it accepts a file input, so the
@@ -314,7 +315,7 @@ export function modelInput(
 
   if (model.startsWith('openai/gpt-image')) {
     base.aspect_ratio = '1:1';
-    base.quality = 'high';
+    base.quality = quality;
     // png (or webp) is required alongside a transparent background; jpeg is not
     // a valid pairing.
     base.output_format = 'png';

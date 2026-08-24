@@ -84,6 +84,11 @@ describe('model input wiring', () => {
     const input = modelInput('openai/gpt-image-2', 'p', 1024);
     expect(input.prompt).toBe('p');
     expect(input.input_images).toBeUndefined();
+    expect(input.quality).toBe('low');
+  });
+
+  it('uses an explicitly selected GPT Image quality tier', () => {
+    expect(modelInput('openai/gpt-image-2', 'p', 1024, [], undefined, false, 'high').quality).toBe('high');
   });
 
   it('keeps a square frame so the compositor never centre-crops off-centre', () => {
