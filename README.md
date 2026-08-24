@@ -23,6 +23,16 @@ radius slider had no effect in squircle mode:
 Where this sits relative to the existing tools, and the gap it takes:
 **[docs/MARKET-RESEARCH.md](docs/MARKET-RESEARCH.md)**.
 
+## Two views
+
+The app opens in a **guided view**: pick a shape, describe the look, generate,
+download. Three inputs and four steps.
+
+**All controls** switches to the full workspace — geometry sliders, shape
+conditioning, the determinism check, drift comparison, per-platform export, and
+the measurement tools. Everything below describes that view; none of it is
+needed to get an icon out.
+
 ## Quick start
 
 ```bash
