@@ -235,3 +235,13 @@ button.tiny { padding: 4px 9px; font-size: 11px; }
 }
 .plate img { width: 56px; height: 56px; border-radius: 6px; display: block; }
 .plate span { color: var(--muted); font-size: 11.5px; }
+
+.toggle-row { margin-bottom: 6px; }
+
+.trace-body { display: grid; grid-template-columns: 160px 1fr; gap: 16px; align-items: center; margin-bottom: 12px; }
+.trace-preview { width: 100%; height: auto; border-radius: 10px; display: block; }
+.trace-stats { margin: 0; display: grid; gap: 6px; font-size: 12.5px; }
+.trace-stats div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid rgba(38, 49, 73, 0.5); padding-bottom: 5px; }
+.trace-stats dt { color: var(--muted); }
+.trace-stats dd { margin: 0; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .trace-body { grid-template-columns: 1fr; } }

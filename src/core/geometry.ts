@@ -134,7 +134,7 @@ function resampleByShape(
  *    transition. Centripetal weighting is the standard fix and keeps the
  *    contour inside the box it was specified in.
  */
-function ringToCubicPath(points: Point[]): string {
+export function ringToCubicPath(points: Point[]): string {
   const n = points.length;
   if (n < 3) return '';
 
@@ -217,18 +217,79 @@ function circlePath(cx: number, cy: number, r: number): string {
 
 /**
  * Rescale a custom path authored in a 0..1000 viewBox into the inner box.
- * Only the numeric literals are touched; command letters pass through, so an
- * arbitrary path from Figma or Illustrator survives intact.
+ *
+ * Parsing is command-aware rather than "transform every other number". That
+ * naive approach works for M/L/C, whose numbers are all coordinate pairs, but
+ * silently corrupts anything else: an arc is `A rx ry rotation large-arc sweep
+ * x y`, so alternating axes would translate its flags and rotation as though
+ * they were coordinates. Traced master contours are a primary input now, and a
+ * user pasting a path out of Figma or Illustrator will hit arcs immediately.
+ *
+ * Relative commands (lowercase) are scaled but never translated, since their
+ * numbers are deltas.
  */
+const PATH_ARITY: Record<string, number> = {
+  m: 2, l: 2, t: 2, h: 1, v: 1, c: 6, s: 4, q: 4, a: 7, z: 0,
+};
+
 function scaleCustomPath(path: string, x: number, y: number, edge: number): string {
   const k = edge / 1000;
-  let axis = 0;
-  return path.replace(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi, (match) => {
-    const value = Number(match);
-    const mapped = axis % 2 === 0 ? x + value * k : y + value * k;
-    axis++;
-    return String(fixed(mapped));
-  });
+  const tokens = path.match(/[a-zA-Z]|-?\d*\.?\d+(?:e[-+]?\d+)?/gi) ?? [];
+  const out: string[] = [];
+
+  let command = '';
+  let index = 0;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+
+    if (/[a-zA-Z]/.test(token)) {
+      command = token;
+      out.push(token);
+      index++;
+      if (command.toLowerCase() === 'z') continue;
+    }
+
+    const arity = PATH_ARITY[command.toLowerCase()] ?? 2;
+    if (arity === 0) continue;
+
+    const relative = command === command.toLowerCase();
+    const numbers: number[] = [];
+    for (let i = 0; i < arity && index < tokens.length; i++, index++) {
+      numbers.push(Number(tokens[index]));
+    }
+    if (numbers.length < arity) break;
+
+    const mapX = (value: number) => fixed(relative ? value * k : x + value * k);
+    const mapY = (value: number) => fixed(relative ? value * k : y + value * k);
+
+    switch (command.toLowerCase()) {
+      case 'h':
+        out.push(String(mapX(numbers[0])));
+        break;
+      case 'v':
+        out.push(String(mapY(numbers[0])));
+        break;
+      case 'a':
+        // rx, ry scale; rotation and both flags pass through untouched.
+        out.push(
+          String(fixed(numbers[0] * k)),
+          String(fixed(numbers[1] * k)),
+          String(numbers[2]),
+          String(numbers[3]),
+          String(numbers[4]),
+          String(mapX(numbers[5])),
+          String(mapY(numbers[6])),
+        );
+        break;
+      default:
+        for (let i = 0; i < numbers.length; i += 2) {
+          out.push(String(mapX(numbers[i])), String(mapY(numbers[i + 1])));
+        }
+    }
+  }
+
+  return out.join(' ');
 }
 
 /**

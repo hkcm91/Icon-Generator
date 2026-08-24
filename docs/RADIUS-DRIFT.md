@@ -170,6 +170,31 @@ Requires a model that accepts a mask — `black-forest-labs/flux-fill-dev` is
 wired up for this. Mask convention confirmed against the FLUX Fill docs: white
 areas are inpainted, black areas are preserved.
 
+### Transparency
+
+`gpt-image-2` supports `background: "transparent"` **in preview**, paired with a
+png or webp output format. When enabled, the glyph comes back with a real alpha
+channel instead of a chroma field to key out.
+
+Two artefacts are reported against that preview and both are handled in
+`cleanGeneratedAlpha`:
+
+- **Opaque areas return at alpha 252-254 rather than 255.** Left alone every
+  "solid" pixel is faintly transparent, which shows as a wash once composited.
+  Near-opaque alpha is snapped to solid.
+- **A thin grey halo rings the subject**, because edge pixels keep a blend of
+  the background that was notionally removed. Partially-transparent pixels are
+  repainted with the colour of their opaque neighbours, so the edge fades out in
+  the subject's own colour.
+
+Support varies by model snapshot — some pinned versions reject the parameter —
+so the request is retried once without it and falls back to chroma keying, with
+the UI saying which path ran.
+
+Because the container silhouette comes from the spec, transparency matters far
+less here than in a pipeline where the model draws the shape: it improves the
+*glyph* cut-out, not the geometry.
+
 ### What is never done
 
 Sending the geometry as **text**. `radius 30%`, `squircle`, `padding 8%` — the
@@ -180,6 +205,57 @@ re-applied afterwards regardless of what comes back.
 Conditioning images are built by `src/core/condition.ts` from the same
 `containerPath` the compositor and exporter use, so the plate, the mask and the
 final clip cannot disagree — asserted in `test/condition.test.ts`.
+
+## Deriving the spec from your approved master
+
+Picking a preset and hoping it matches the master is the same mistake in a
+smaller form: if the master is itself slightly irregular, an idealised shape
+bakes a mismatch into every icon that follows. `src/core/trace.ts` derives the
+spec from the master instead.
+
+**Tracing** is radial: rays are cast from the centre and the outermost coverage
+crossing along each is recorded, sub-pixel. Icon containers are star-convex
+about their centre, which is what makes this valid, and it yields an ordered,
+already-resampled ring — no separate edge-walk-then-order step. Taking the
+*last* crossing rather than the first makes it immune to a glyph or a hole
+inside the container; only the outer shell is traced.
+
+Three outputs, because "faithful" and "clean" are different goals:
+
+| Mode | What you get | When |
+|---|---|---|
+| **Traced, evened out** | The master's own corner curve, mirrored across both axes and averaged | Usually right — keeps the approved curve, drops per-corner noise |
+| **Traced, verbatim** | The contour exactly as drawn, asymmetry included | When the master is the spec, warts and all |
+| **Closest ideal shape** | The nearest clean superellipse | Only when the reported deviation is small |
+
+Traced modes emit a `custom-path` spec, so they compile through exactly the same
+pipeline as a preset — deterministic, exportable, conditioned, clipped.
+
+The panel reports **off-ideal** (how far the master strays from the nearest
+superellipse) and **asymmetry** (largest difference between mirrored points), so
+the choice is informed rather than guessed. Above about 1% off-ideal,
+idealising visibly changes the shape you signed off.
+
+### Two bugs worth recording
+
+**Mirror indices were off by one.** For a ray at angle t = 2*pi*i/n the mirrors
+are at `n/2 - i`, `n/2 + i` and `n - i`. An earlier version used
+`n/2 - 1 - i` and `n - 1 - i`, which pairs each ray with one 1.4 degrees away
+from its true mirror. Symmetrising then left visible residual asymmetry in
+shapes that were in fact symmetric.
+
+**The mirror group is degenerate at four points.** Indices `0`, `n/4`, `n/2` and
+`3n/4` — the edge midpoints — map to only two distinct rays, where every other
+index maps to four. On an asymmetric master those two averages differ from their
+neighbours' four-averages, which put a ~6px inward spike at each edge midpoint,
+clearly visible in the preview.
+
+Those four indices are now re-estimated from their neighbours by symmetric
+parabolic interpolation, `r(0) ~= (4*(r[-1] + r[1]) - (r[-2] + r[2])) / 6`,
+which is exact for a quadratic. That precision matters because an edge midpoint
+is a genuine local extremum — for a superellipse, the minimum — so a plain
+neighbour mean overshoots it by the local curvature, measured at 0.24px on a
+400px master. Smoothing the whole ring has the same problem at every corner.
 
 ## Measuring the drift you already have
 

@@ -22,15 +22,23 @@ export interface GenerateResult {
  *  - 'inpaint' takes a base image plus a mask and repaints only the white area
  *  - 'none'    text only, so geometry can be enforced by clipping alone
  */
+/**
+ * `alpha` records whether the model can return a real alpha channel rather than
+ * a painted-on background. Transparent backgrounds are in **preview** for
+ * gpt-image-2 via `background: "transparent"` with a png or webp output format;
+ * whether a given host exposes that preview is another matter, so every alpha
+ * request degrades gracefully (see `generateImage`).
+ */
 export const MODELS = [
-  { slug: 'google/nano-banana-pro', label: 'Nano Banana Pro', conditioning: 'edit' },
-  { slug: 'google/nano-banana', label: 'Nano Banana', conditioning: 'edit' },
-  { slug: 'openai/gpt-image-2', label: 'GPT Image 2', conditioning: 'edit' },
-  { slug: 'bytedance/seedream-4', label: 'Seedream 4', conditioning: 'edit' },
+  { slug: 'google/nano-banana-pro', label: 'Nano Banana Pro', conditioning: 'edit', alpha: false },
+  { slug: 'google/nano-banana', label: 'Nano Banana', conditioning: 'edit', alpha: false },
+  { slug: 'openai/gpt-image-2', label: 'GPT Image 2', conditioning: 'edit', alpha: true },
+  { slug: 'bytedance/seedream-4', label: 'Seedream 4', conditioning: 'edit', alpha: false },
   {
     slug: 'black-forest-labs/flux-fill-dev',
     label: 'FLUX Fill (masked)',
     conditioning: 'inpaint',
+    alpha: false,
   },
 ] as const;
 
@@ -38,6 +46,10 @@ export type ModelSlug = (typeof MODELS)[number]['slug'];
 
 export function modelConditioning(slug: string): 'edit' | 'inpaint' | 'none' {
   return MODELS.find((entry) => entry.slug === slug)?.conditioning ?? 'none';
+}
+
+export function modelSupportsAlpha(slug: string): boolean {
+  return MODELS.find((entry) => entry.slug === slug)?.alpha ?? false;
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -60,6 +72,33 @@ export async function testConnection(): Promise<string> {
 
 export function generate(model: string, input: Record<string, unknown>) {
   return post<GenerateResult>('/api/generate', { model, input });
+}
+
+/**
+ * Generate, retrying without the transparency request if the host rejects it.
+ *
+ * Transparent background is a preview feature and support varies by model
+ * snapshot: some pinned versions return an error for
+ * `background: "transparent"` outright. Rather than making the user discover
+ * that as a failed run, the request is retried once without the flag and the
+ * caller is told which path succeeded, so it can fall back to chroma keying.
+ */
+export async function generateImage(
+  model: string,
+  input: Record<string, unknown>,
+): Promise<GenerateResult & { alphaRequested: boolean; alphaAccepted: boolean }> {
+  const wantsAlpha = input.background === 'transparent';
+  try {
+    const result = await generate(model, input);
+    return { ...result, alphaRequested: wantsAlpha, alphaAccepted: wantsAlpha };
+  } catch (error) {
+    const message = (error as Error).message ?? '';
+    if (!wantsAlpha || !/background|transparent|unsupported|invalid/i.test(message)) throw error;
+
+    const { background: _background, ...withoutAlpha } = input;
+    const result = await generate(model, withoutAlpha);
+    return { ...result, alphaRequested: true, alphaAccepted: false };
+  }
 }
 
 /**
@@ -111,12 +150,15 @@ export function conditionedMaterialPrompt(description: string): string {
  * models silently ignore alpha requests; `keyOutBackground` recovers the alpha
  * afterwards, which works whether or not the model cooperated.
  */
-export function glyphPrompt(subject: string, style: string): string {
+export function glyphPrompt(subject: string, style: string, nativeAlpha = false): string {
   return [
     `A single centered ${subject.trim() || 'symbol'} icon glyph.`,
     style.trim() ? `Style: ${style.trim()}.` : '',
-    'Isolated on a completely flat uniform #00FF00 chroma-green background',
-    'with no gradient, no vignette, and no color spill.',
+    // With a real alpha channel the background must not be described at all:
+    // naming one invites the model to draw it despite the transparency flag.
+    nativeAlpha
+      ? 'Nothing behind or around the glyph.'
+      : 'Isolated on a completely flat uniform #00FF00 chroma-green background with no gradient, no vignette, and no color spill.',
     'The glyph is fully visible, centered, with generous even margin on all four sides.',
     'Front-facing orthographic view.',
     'No container, tile, badge, frame, card, rounded rectangle, circle backing, border,',
@@ -137,6 +179,7 @@ export function modelInput(
   size: number,
   references: string[] = [],
   conditioning?: Conditioning,
+  wantAlpha = false,
 ): Record<string, unknown> {
   const base: Record<string, unknown> = { prompt };
   // Replicate accepts data URIs wherever it accepts a file input, so the
@@ -159,7 +202,10 @@ export function modelInput(
   if (model.startsWith('openai/gpt-image')) {
     base.aspect_ratio = '1:1';
     base.quality = 'high';
+    // png (or webp) is required alongside a transparent background; jpeg is not
+    // a valid pairing.
     base.output_format = 'png';
+    if (wantAlpha && modelSupportsAlpha(model)) base.background = 'transparent';
     if (images.length) base.input_images = images;
     return base;
   }

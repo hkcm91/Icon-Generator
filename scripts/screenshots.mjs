@@ -82,7 +82,7 @@ await page.waitForTimeout(400);
 await shot('02-determinism', page.locator('.column').nth(2));
 
 // --- 4. Feed the drifting PNGs to the estimator ----------------------------
-await page.locator('.dropzone input[type=file]').setInputFiles(files);
+await page.locator('.panel:has-text("Measure imported") input[type=file]').setInputFiles(files);
 await page.waitForSelector('.measure-table', { timeout: 30000 });
 await page.waitForTimeout(400);
 await shot('03-measure', page.locator('.panel', { hasText: 'Measure imported' }));
@@ -91,6 +91,49 @@ await shot('03-measure', page.locator('.panel', { hasText: 'Measure imported' })
 const table = await page.locator('.measure-table').innerText();
 const verdict = await page.locator('.panel', { hasText: 'Measure imported' }).locator('.verdict').innerText();
 writeFileSync(`${OUT}/measured.txt`, `${verdict}\n\n${table}\n`);
+
+// --- 4b. Trace a deliberately lopsided master ------------------------------
+// Superellipse with the top-left quadrant pulled in, so the tracer has real
+// asymmetry to report rather than a shape it can fit perfectly.
+const masterUrl = await page.evaluate(() => {
+  const size = 512;
+  const a = 200;
+  const c = size / 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const frame = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let hits = 0;
+      for (let sy = 0; sy < 4; sy++) {
+        for (let sx = 0; sx < 4; sx++) {
+          const px = (x + (sx + 0.5) / 4 - c) / a;
+          const py = (y + (sy + 0.5) / 4 - c) / a;
+          const k = px < 0 && py < 0 ? 0.88 : 1;
+          if (Math.pow(Math.abs(px) / k, 5) + Math.pow(Math.abs(py) / k, 5) <= 1) hits++;
+        }
+      }
+      const at = (y * size + x) * 4;
+      frame.data[at] = frame.data[at + 1] = frame.data[at + 2] = 232;
+      frame.data[at + 3] = Math.round((hits / 16) * 255);
+    }
+  }
+  ctx.putImageData(frame, 0, 0);
+  return canvas.toDataURL('image/png');
+});
+
+await page.locator('.panel:has-text("Trace a master") input[type=file]').setInputFiles({
+  name: 'approved-master.png',
+  mimeType: 'image/png',
+  buffer: Buffer.from(masterUrl.split(',')[1], 'base64'),
+});
+await page.waitForSelector('.trace-stats', { timeout: 30000 });
+await page.waitForTimeout(400);
+await shot('08-trace', page.locator('.panel', { hasText: 'Trace a master' }));
+
+const traceStats = await page.locator('.trace-stats').innerText();
+writeFileSync(`${OUT}/traced.txt`, traceStats + '\n');
 
 // --- 5. Apply a measured spec, then show the drift lab ---------------------
 await page.locator('.measure-table tbody tr').nth(1).getByRole('button', { name: 'Use' }).click();

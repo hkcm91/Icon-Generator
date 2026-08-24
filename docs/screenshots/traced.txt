@@ -1,0 +1,8 @@
+Closest exponent
+n ≈ 4.99
+Off-ideal
+29.5px (7.38%)
+Asymmetry
+29.6px
+Optical padding
+10.94%

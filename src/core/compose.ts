@@ -252,3 +252,85 @@ export function keyOutBackground(
   ctx.putImageData(frame, 0, 0);
   return canvas;
 }
+
+/**
+ * Clean up alpha that arrived from a model rather than from a keying pass.
+ *
+ * Two artefacts are documented against gpt-image-2's transparent-background
+ * preview, and both bite here:
+ *
+ *  1. Fully-opaque areas come back at alpha 252-254 rather than 255. Left
+ *     alone, every "solid" pixel is faintly transparent, which shows up as a
+ *     wash once the icon is composited over a real background.
+ *  2. A thin grey halo rings the subject, because edge pixels keep a blend of
+ *     the background that was notionally removed.
+ *
+ * The first is fixed by snapping near-opaque alpha to solid. The second by
+ * repainting partially-transparent pixels with the colour of their opaque
+ * neighbours, so the edge fades out in the subject's own colour instead of
+ * through grey.
+ */
+export function cleanGeneratedAlpha(
+  image: CanvasImageSource,
+  size: number,
+  opaqueFloor = 250,
+): HTMLCanvasElement {
+  const canvas = createCanvas(size);
+  const ctx = context2d(canvas);
+  drawContain(ctx, image, 0, 0, size, size);
+
+  const frame = ctx.getImageData(0, 0, size, size);
+  const data = frame.data;
+  const original = new Uint8ClampedArray(data);
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const at = (y * size + x) * 4;
+      const alpha = data[at + 3];
+
+      if (alpha >= opaqueFloor && alpha < 255) {
+        data[at + 3] = 255;
+        continue;
+      }
+      if (alpha === 0 || alpha === 255) continue;
+
+      // Partially transparent: borrow colour from opaque neighbours so the
+      // fringe carries the subject's hue rather than the old background's.
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let weight = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+          const near = (ny * size + nx) * 4;
+          if (original[near + 3] < opaqueFloor) continue;
+          r += original[near];
+          g += original[near + 1];
+          b += original[near + 2];
+          weight++;
+        }
+      }
+      if (weight) {
+        data[at] = Math.round(r / weight);
+        data[at + 1] = Math.round(g / weight);
+        data[at + 2] = Math.round(b / weight);
+      }
+    }
+  }
+
+  ctx.putImageData(frame, 0, 0);
+  return canvas;
+}
+
+/** True when the image carries meaningful alpha, i.e. its corners are clear. */
+export function hasNativeAlpha(image: CanvasImageSource, size = 64): boolean {
+  const canvas = createCanvas(size);
+  const ctx = context2d(canvas);
+  drawContain(ctx, image, 0, 0, size, size);
+  const data = ctx.getImageData(0, 0, size, size).data;
+  const corners = [0, (size - 1) * 4, (size - 1) * size * 4, ((size - 1) * size + size - 1) * 4];
+  return corners.every((index) => data[index + 3] < 8);
+}

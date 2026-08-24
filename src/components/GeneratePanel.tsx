@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { keyOutBackground } from '../core/compose';
+import { cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground } from '../core/compose';
 import {
   buildConditioning,
   type ConditioningMode,
@@ -7,12 +7,13 @@ import {
 import {
   MODELS,
   conditionedMaterialPrompt,
-  generate,
+  generateImage,
   glyphPrompt,
   loadImage,
   materialPrompt,
   modelConditioning,
   modelInput,
+  modelSupportsAlpha,
   testConnection,
 } from '../core/replicate';
 import type { ContainerSpec } from '../core/spec';
@@ -52,6 +53,9 @@ export default function GeneratePanel(props: Props) {
   const [showPrompts, setShowPrompts] = useState(false);
   const [mode, setMode] = useState<ConditioningMode>('reference');
   const [platePreview, setPlatePreview] = useState<string>('');
+  const [wantAlpha, setWantAlpha] = useState(true);
+
+  const alphaCapable = modelSupportsAlpha(props.model);
 
   const supports = modelConditioning(props.model);
   // Masked fill needs a model that takes a mask; everything else can still be
@@ -77,7 +81,8 @@ export default function GeneratePanel(props: Props) {
     effectiveMode === 'off'
       ? materialPrompt(props.materialDescription)
       : conditionedMaterialPrompt(props.materialDescription);
-  const glyph = glyphPrompt(props.glyphSubject, props.glyphStyle);
+  const useNativeAlpha = alphaCapable && wantAlpha;
+  const glyph = glyphPrompt(props.glyphSubject, props.glyphStyle, useNativeAlpha);
 
   const check = async () => {
     setStatus({ kind: 'busy', what: 'Testing connection' });
@@ -92,7 +97,7 @@ export default function GeneratePanel(props: Props) {
     setStatus({ kind: 'busy', what: 'Generating material' });
     try {
       const conditioning = await buildConditioning(props.spec, effectiveMode);
-      const result = await generate(
+      const result = await generateImage(
         props.model,
         modelInput(props.model, material, props.spec.size, [], conditioning),
       );
@@ -112,12 +117,31 @@ export default function GeneratePanel(props: Props) {
   const runGlyph = async () => {
     setStatus({ kind: 'busy', what: 'Generating glyph' });
     try {
-      const result = await generate(props.model, modelInput(props.model, glyph, props.spec.size));
+      // The glyph is deliberately never shape-conditioned: showing it the
+      // container silhouette is an invitation to draw a container.
+      const result = await generateImage(
+        props.model,
+        modelInput(props.model, glyph, props.spec.size, [], undefined, useNativeAlpha),
+      );
       const image = await loadImage(result.images[0]);
-      // Models routinely ignore "transparent background", so the flat chroma
-      // field requested in the prompt is keyed out here instead.
-      props.onGlyph(keyOutBackground(image, props.spec.size));
-      setStatus({ kind: 'ok', message: 'Glyph applied and clipped to the safe area.' });
+
+      // Prefer a real alpha channel when one actually came back; fall back to
+      // keying the flat chroma field the prompt asked for otherwise.
+      const native = result.alphaAccepted && hasNativeAlpha(image);
+      props.onGlyph(
+        native
+          ? cleanGeneratedAlpha(image, props.spec.size)
+          : keyOutBackground(image, props.spec.size),
+      );
+
+      setStatus({
+        kind: 'ok',
+        message: native
+          ? 'Glyph applied using the model alpha channel, de-fringed and snapped to solid.'
+          : result.alphaRequested
+            ? 'Transparency was refused or ignored, so the glyph was chroma-keyed instead.'
+            : 'Glyph applied and clipped to the safe area.',
+      });
     } catch (error) {
       setStatus({ kind: 'error', message: (error as Error).message });
     }
@@ -144,6 +168,21 @@ export default function GeneratePanel(props: Props) {
           ))}
         </select>
       </label>
+
+      <label className="toggle toggle-row">
+        <input
+          type="checkbox"
+          checked={wantAlpha && alphaCapable}
+          disabled={!alphaCapable}
+          onChange={(event) => setWantAlpha(event.target.checked)}
+        />
+        Request a real alpha channel
+      </label>
+      <p className="hint">
+        {alphaCapable
+          ? 'Preview feature. If the host refuses it, the run retries without it and falls back to chroma keying.'
+          : 'This model has no transparent-background parameter; glyphs are chroma-keyed.'}
+      </p>
 
       <label className="field">
         <span className="field-label">Shape conditioning</span>

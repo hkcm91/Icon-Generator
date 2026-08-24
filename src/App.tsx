@@ -4,6 +4,7 @@ import DriftLab from './components/DriftLab';
 import ExportPanel from './components/ExportPanel';
 import GeneratePanel from './components/GeneratePanel';
 import MeasurePanel from './components/MeasurePanel';
+import TracePanel from './components/TracePanel';
 import Preview from './components/Preview';
 import SpecPanel from './components/SpecPanel';
 import type { ComposeLayers } from './core/compose';
@@ -99,6 +100,7 @@ export default function App() {
           </section>
 
           <DriftLab spec={project.spec} />
+          <TracePanel spec={project.spec} onApply={(next) => setSpec(next)} />
           <MeasurePanel onApply={setSpec} />
         </div>
 

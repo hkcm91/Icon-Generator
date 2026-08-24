@@ -91,6 +91,14 @@ with known geometry: **radius within 0.13px** across 20–200px radii, and
 Each row has a **Use** button that writes that file's measured geometry into the
 spec. The container you already liked becomes the one you get every time.
 
+### Trace a master into the spec
+
+Better than measuring after the fact: drop the master you already approved and
+its outline *becomes* the container. Three modes — traced and evened out
+(recommended), traced verbatim, or the closest clean superellipse — with
+**off-ideal** and **asymmetry** reported so the choice is informed. Traced modes
+emit a `custom-path` spec that compiles through the same pipeline as any preset.
+
 Images that arrive fully opaque — which is most model output, whatever the
 prompt asked for — are keyed against the flat background before measuring, and
 flagged as `keyed` in the table.
