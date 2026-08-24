@@ -111,9 +111,10 @@ checkable in CI.
 ## Commands
 
 ```bash
-npm run dev        # app + proxy
-npm run build      # typecheck + production build
-npm test           # geometry and determinism tests
+npm run dev          # app + proxy
+npm run build        # typecheck + production build
+npm test             # geometry and determinism tests
+npm run screenshots  # capture docs/screenshots (needs `vite preview` running)
 ```
 
 ## Notes

@@ -40,11 +40,14 @@ function classify(measurement: Measurement): { label: string; patch: Partial<Con
   if (Number.isFinite(circleResidual) && circleResidual < 0.8) {
     return {
       label: 'rounded rect',
-      patch: { shape: 'rounded-rect', radius: Math.min(50, radiusPercent) },
+      patch: { shape: 'rounded-rect', radius: Number(Math.min(50, radiusPercent).toFixed(2)) },
     };
   }
   if (Number.isFinite(exponent) && exponentResidual < 0.05) {
-    return { label: `superellipse n≈${exponent.toFixed(2)}`, patch: { shape: 'superellipse', exponent } };
+    return {
+      label: `superellipse n≈${exponent.toFixed(2)}`,
+      patch: { shape: 'superellipse', exponent: Number(exponent.toFixed(3)) },
+    };
   }
   return { label: 'irregular', patch: {} };
 }
@@ -171,7 +174,10 @@ export default function MeasurePanel({ onApply }: Props) {
                         className="ghost tiny"
                         disabled={!Object.keys(verdict.patch).length}
                         onClick={() =>
-                          onApply({ ...verdict.patch, padding: row.measurement.padding })
+                          onApply({
+                            ...verdict.patch,
+                            padding: Number(row.measurement.padding.toFixed(2)),
+                          })
                         }
                       >
                         Use

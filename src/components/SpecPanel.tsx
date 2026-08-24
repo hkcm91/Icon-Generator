@@ -35,7 +35,9 @@ function Slider({
       <span className="field-label">
         {label}
         <b>
-          {value}
+          {/* Measured values arrive as raw floats; show at most two decimals so
+              a value applied from the Measure panel does not print 14 of them. */}
+          {Number(value.toFixed(2))}
           {suffix}
         </b>
       </span>

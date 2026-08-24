@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "screenshots": "node scripts/screenshots.mjs",
     "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false"
   },
   "dependencies": {
@@ -25,6 +26,7 @@
     "concurrently": "^9.1.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
+    "playwright": "^1.62.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
     "vitest": "^2.1.4"

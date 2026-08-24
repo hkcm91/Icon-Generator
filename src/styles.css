@@ -173,12 +173,12 @@ summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-bottom
 .status-error { color: var(--bad); }
 .status-ok { color: var(--ok); }
 
-.drift-row { margin-bottom: 14px; }
-.drift-label { display: block; font-size: 12px; margin-bottom: 6px; font-weight: 600; }
+.drift-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
+.drift-pair figure { margin: 0; }
+.drift-pair canvas { display: block; background: #0a0e17; border-radius: 10px; }
+.drift-pair figcaption { margin-top: 8px; font-size: 12px; font-weight: 600; }
 .drift-label-ok { color: var(--ok); }
 .drift-label-bad { color: var(--bad); }
-.drift-strip { display: flex; gap: 8px; flex-wrap: wrap; }
-.drift-tile { width: 64px; height: 64px; background: #0a0e17; border-radius: 6px; }
 
 .dropzone {
   display: grid;
@@ -207,7 +207,10 @@ summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-bottom
 }
 .measure-table td { padding: 7px 8px 7px 0; border-bottom: 1px solid rgba(38, 49, 73, 0.5); }
 .measure-table .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.ellipsis { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ellipsis { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Keep the action column from being the thing that gets squeezed out. */
+.measure-table th:last-child, .measure-table td:last-child { width: 1%; white-space: nowrap; }
+.measure-table td:nth-child(4) { white-space: nowrap; }
 
 .tag {
   margin-left: 6px;

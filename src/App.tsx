@@ -32,7 +32,6 @@ export default function App() {
       <div className="columns">
         <div className="column">
           <SpecPanel spec={project.spec} onChange={setSpec} />
-          <MeasurePanel onApply={setSpec} />
         </div>
 
         <div className="column column-center">
@@ -100,6 +99,7 @@ export default function App() {
           </section>
 
           <DriftLab spec={project.spec} />
+          <MeasurePanel onApply={setSpec} />
         </div>
 
         <div className="column">
