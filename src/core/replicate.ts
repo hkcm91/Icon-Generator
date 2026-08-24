@@ -125,6 +125,15 @@ interface Polled {
   error?: string;
 }
 
+const activePredictions = new Set<string>();
+
+/** Cancel every prediction created by this browser tab that has not finished yet. */
+export async function cancelActiveGenerations(): Promise<number> {
+  const ids = [...activePredictions];
+  await Promise.allSettled(ids.map((id) => post('/api/cancel', { id })));
+  return ids.length;
+}
+
 /** Poll interval. Image models take tens of seconds; sub-second polling is waste. */
 const POLL_MS = 1500;
 const POLL_TIMEOUT_MS = 6 * 60 * 1000;
@@ -161,9 +170,14 @@ export async function generate(
   input: Record<string, unknown>,
 ): Promise<GenerateResult> {
   const started = await post<Started>('/api/generate', { model, input });
-  const finished = await waitFor(started.id);
-  if (!finished.images?.length) throw new Error('The model returned no image.');
-  return { images: finished.images, predictionId: started.id };
+  activePredictions.add(started.id);
+  try {
+    const finished = await waitFor(started.id);
+    if (!finished.images?.length) throw new Error('The model returned no image.');
+    return { images: finished.images, predictionId: started.id };
+  } finally {
+    activePredictions.delete(started.id);
+  }
 }
 
 /** Run a vision model and return its text. */
@@ -172,8 +186,13 @@ export async function describeImage(
   input: Record<string, unknown>,
 ): Promise<string> {
   const started = await post<Started>('/api/describe', { model, input });
-  const finished = await waitFor(started.id);
-  return finished.text ?? '';
+  activePredictions.add(started.id);
+  try {
+    const finished = await waitFor(started.id);
+    return finished.text ?? '';
+  } finally {
+    activePredictions.delete(started.id);
+  }
 }
 
 /**

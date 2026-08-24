@@ -174,6 +174,10 @@ export default function App() {
           onExportApprovedOnly={(value) => setField('exportApprovedOnly', value)}
           exportSelectedOnly={project.exportSelectedOnly}
           onExportSelectedOnly={(value) => setField('exportSelectedOnly', value)}
+          calibrationRequired={project.calibrationRequired}
+          onCalibrationRequired={(value) => setField('calibrationRequired', value)}
+          maxBatchCost={project.maxBatchCost}
+          onMaxBatchCost={(value) => setField('maxBatchCost', value)}
           master={project.master}
           onMaster={(next) => setField('master', next)}
           items={project.items}

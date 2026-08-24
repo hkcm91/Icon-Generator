@@ -12,6 +12,7 @@ import {
   modelSupportsAlpha,
 } from '../core/replicate';
 import type { ContainerSpec } from '../core/spec';
+import { GENERATION_CACHE, blobToImage, canvasToBlobAsync, getBlob, putBlob } from '../core/store';
 
 export type GenStatus =
   | { kind: 'idle' }
@@ -45,6 +46,41 @@ export interface GenerationOptions {
 function recipePrompt(prompt: string, options: GenerationOptions): string {
   return [prompt, options.familyPrompt?.trim(), options.negativePrompt?.trim()
     ? `Avoid: ${options.negativePrompt.trim()}` : ''].filter(Boolean).join('\n');
+}
+
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stable(entry)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function cacheKey(kind: string, model: string, input: Record<string, unknown>): Promise<string> {
+  const bytes = new TextEncoder().encode(`${kind}\n${model}\n${stable(input)}`);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function cachedLayer(key: string): Promise<CanvasImageSource | null> {
+  const blob = await getBlob(GENERATION_CACHE, key);
+  return blob ? blobToImage(blob) : null;
+}
+
+async function rememberLayer(key: string, image: CanvasImageSource) {
+  let canvas: HTMLCanvasElement;
+  if (image instanceof HTMLCanvasElement) canvas = image;
+  else {
+    const width = (image as HTMLImageElement).naturalWidth || (image as ImageBitmap).width || 1024;
+    const height = (image as HTMLImageElement).naturalHeight || (image as ImageBitmap).height || 1024;
+    canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext('2d')?.drawImage(image, 0, 0, width, height);
+  }
+  const blob = await canvasToBlobAsync(canvas);
+  if (blob) await putBlob(GENERATION_CACHE, key, blob);
 }
 
 /**
@@ -86,11 +122,14 @@ export function useGeneration() {
     );
 
     const references = [...(options.references ?? []), ...(options.master ? [options.master] : [])];
-    const result = await generateImage(
-      options.model,
-      modelInput(options.model, prompt, options.spec.size, references, conditioning, false, options.quality),
-    );
-    return loadImage(result.images[0]);
+    const input = modelInput(options.model, prompt, options.spec.size, references, conditioning, false, options.quality);
+    const key = await cacheKey('material', options.model, input);
+    const cached = await cachedLayer(key);
+    if (cached) return cached;
+    const result = await generateImage(options.model, input);
+    const image = await loadImage(result.images[0]);
+    await rememberLayer(key, image);
+    return image;
   }, []);
 
   const runGlyph = useCallback(async (options: GenerationOptions, subject?: string) => {
@@ -101,9 +140,7 @@ export function useGeneration() {
     // Never shape-condition the glyph: showing it the container silhouette is
     // an invitation to draw a container. The master still goes in as a style
     // reference — that is a different thing from a shape plate.
-    const result = await generateImage(
-      options.model,
-      modelInput(
+    const input = modelInput(
         options.model,
         recipePrompt(
           glyphPrompt(
@@ -119,17 +156,19 @@ export function useGeneration() {
         undefined,
         wantAlpha,
         options.quality,
-      ),
-    );
+      );
+    const key = await cacheKey('glyph', options.model, input);
+    const cached = await cachedLayer(key);
+    if (cached) return { layer: cached, native: true, cached: true };
+    const result = await generateImage(options.model, input);
 
     const image = await loadImage(result.images[0]);
     const native = result.alphaAccepted && hasNativeAlpha(image);
-    return {
-      layer: native
+    const layer = native
         ? cleanGeneratedAlpha(image, options.spec.size)
-        : keyOutBackground(image, options.spec.size),
-      native,
-    };
+        : keyOutBackground(image, options.spec.size);
+    await rememberLayer(key, layer);
+    return { layer, native, cached: false };
   }, []);
 
   const generateMaterial = useCallback(

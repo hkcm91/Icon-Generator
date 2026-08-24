@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import describe from '../api/describe.js';
+import cancel from '../api/cancel.js';
 import generate from '../api/generate.js';
 import image from '../api/image.js';
 import prediction from '../api/prediction.js';
@@ -42,6 +43,7 @@ app.use(express.json({ limit: '24mb' }));
 app.get('/api/status', status);
 app.post('/api/token', token);
 app.post('/api/generate', generate);
+app.post('/api/cancel', cancel);
 app.get('/api/prediction', prediction);
 app.post('/api/describe', describe);
 app.get('/api/image', image);

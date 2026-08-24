@@ -37,6 +37,10 @@ export interface Project {
   items: IconItem[];
   /** How many generations run at once. */
   concurrency: number;
+  /** Require a small approved sample before releasing a paid family batch. */
+  calibrationRequired: boolean;
+  /** Hard ceiling for one click's estimated image-generation spend. */
+  maxBatchCost: number;
 }
 
 const DEFAULT_PROJECT: Project = {
@@ -64,6 +68,8 @@ const DEFAULT_PROJECT: Project = {
   exportSelectedOnly: false,
   items: [],
   concurrency: 3,
+  calibrationRequired: true,
+  maxBatchCost: 1,
 };
 
 export function hydrateProject(parsed: Partial<Project>): Project {
@@ -74,6 +80,8 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     model: migrateExpensiveDefault ? 'openai/gpt-image-2' : (parsed.model ?? DEFAULT_PROJECT.model),
     quality: parsed.quality ?? 'low',
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
+    calibrationRequired: parsed.calibrationRequired ?? true,
+    maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
     spec: normalizeSpec(parsed.spec),
     compose: { ...DEFAULT_COMPOSE, ...(parsed.compose ?? {}) },
     items: (parsed.items ?? []).map((item) =>
