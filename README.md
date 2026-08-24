@@ -28,6 +28,11 @@ Where this sits relative to the existing tools, and the gap it takes:
 The app opens in a **guided view**: pick a shape, describe the look, generate,
 download. Three inputs and four steps.
 
+Uploading a master through **From my icon** does everything in one step: traces
+the outline into the spec, reads the palette and finish, and fills the Surface
+field and base colour. Naming the symbol needs a vision model; everything else
+is measured from the pixels, so it works offline and is identical on every run.
+
 **All controls** switches to the full workspace — geometry sliders, shape
 conditioning, the determinism check, drift comparison, per-platform export, and
 the measurement tools. Everything below describes that view; none of it is

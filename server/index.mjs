@@ -156,6 +156,67 @@ app.post('/api/generate', async (request, response) => {
   }
 });
 
+/**
+ * Run a vision-language model and return its text, not an image.
+ *
+ * Kept separate from /api/generate because the shapes differ: text models
+ * stream their output as an array of token strings that must be joined, and
+ * they have no image URL to proxy. Folding both into one handler made the
+ * "did we get an image or a caption" check the caller's problem.
+ */
+app.post('/api/describe', async (request, response) => {
+  if (!requireToken(response)) return;
+
+  const { model, input } = request.body ?? {};
+  if (typeof model !== 'string' || !model.includes('/')) {
+    return response.status(400).json({ error: 'Provide a vision model slug like "owner/name".' });
+  }
+
+  const [owner, ...rest] = model.split('/');
+  try {
+    const created = await fetch(`${API}/models/${owner}/${rest.join('/')}/predictions`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ input: input ?? {} }),
+    });
+    let prediction = await created.json().catch(() => ({}));
+
+    if (!created.ok) {
+      return response.status(created.status).json({
+        error:
+          created.status === 404
+            ? `Replicate has no model called "${model}". Set a different vision model in All controls.`
+            : prediction.detail || prediction.error || `Replicate returned ${created.status}.`,
+      });
+    }
+
+    const pollUrl = prediction?.urls?.get ?? `${API}/predictions/${prediction?.id}`;
+    const deadline = Date.now() + 90 * 1000;
+    while (prediction && (prediction.status === 'starting' || prediction.status === 'processing')) {
+      if (Date.now() > deadline) {
+        return response.status(504).json({ error: 'The vision model timed out.' });
+      }
+      await sleep(1000);
+      const poll = await fetch(pollUrl, { headers: authHeaders() });
+      prediction = await poll.json().catch(() => prediction);
+    }
+
+    if (!prediction || prediction.status !== 'succeeded') {
+      return response
+        .status(502)
+        .json({ error: prediction?.error || `Description ${prediction?.status ?? 'failed'}.` });
+    }
+
+    // Token-streaming models return an array of fragments; single-shot models
+    // return one string.
+    const output = prediction.output;
+    const text = Array.isArray(output) ? output.join('') : String(output ?? '');
+    response.json({ text: text.trim() });
+  } catch (error) {
+    response.status(502).json({ error: `Description failed: ${error.message}` });
+  }
+});
+
 /** Re-serve a generated image from our own origin. */
 app.get('/api/image', async (request, response) => {
   const url = String(request.query.url ?? '');
