@@ -33,6 +33,19 @@ the outline into the spec, reads the palette and finish, and fills the Surface
 field and base colour. Naming the symbol needs a vision model; everything else
 is measured from the pixels, so it works offline and is identical on every run.
 
+The master is not only analysed — it is passed as a reference to **every**
+generation, so the whole family inherits one look rather than drifting apart
+prompt by prompt.
+
+**Make a whole family** imports an icon list — a CSV, a JSON manifest, or one
+name per line, hundreds at a time — as cards. Select any number, generate them
+as a bounded-concurrency batch, and redo individual cards that came out wrong.
+
+Rendered icons persist across a refresh. Layers are stored as PNG blobs in
+IndexedDB rather than in the project JSON — localStorage caps out around 5MB and
+a single 1024px render is a few hundred KB as a data URL — so a family of
+several hundred survives a reload intact.
+
 **All controls** switches to the full workspace — geometry sliders, shape
 conditioning, the determinism check, drift comparison, per-platform export, and
 the measurement tools. Everything below describes that view; none of it is

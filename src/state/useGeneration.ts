@@ -28,6 +28,12 @@ export interface GenerationOptions {
   /** 'auto' picks the strongest conditioning the chosen model supports. */
   conditioning: ConditioningMode | 'auto';
   wantAlpha: boolean;
+  /**
+   * The approved master, as a data URL. Passed as a reference to *every*
+   * generation so the whole family inherits one look, which is the entire
+   * point of having a master rather than a mood board.
+   */
+  master?: string | null;
 }
 
 /**
@@ -66,24 +72,32 @@ export function useGeneration() {
     const prompt =
       mode === 'off' ? materialPrompt(options.material) : conditionedMaterialPrompt(options.material);
 
+    const references = options.master ? [options.master] : [];
     const result = await generateImage(
       options.model,
-      modelInput(options.model, prompt, options.spec.size, [], conditioning),
+      modelInput(options.model, prompt, options.spec.size, references, conditioning),
     );
     return loadImage(result.images[0]);
   }, []);
 
-  const runGlyph = useCallback(async (options: GenerationOptions) => {
+  const runGlyph = useCallback(async (options: GenerationOptions, subject?: string) => {
     const wantAlpha = options.wantAlpha && modelSupportsAlpha(options.model);
+    const references = options.master ? [options.master] : [];
     // Never shape-condition the glyph: showing it the container silhouette is
-    // an invitation to draw a container.
+    // an invitation to draw a container. The master still goes in as a style
+    // reference — that is a different thing from a shape plate.
     const result = await generateImage(
       options.model,
       modelInput(
         options.model,
-        glyphPrompt(options.glyphSubject, options.glyphStyle, wantAlpha),
+        glyphPrompt(
+          subject ?? options.glyphSubject,
+          options.glyphStyle,
+          wantAlpha,
+          Boolean(options.master),
+        ),
         options.spec.size,
-        [],
+        references,
         undefined,
         wantAlpha,
       ),
@@ -152,5 +166,15 @@ export function useGeneration() {
     [runMaterial, runGlyph],
   );
 
-  return { status, setStatus, generateMaterial, generateGlyph, generateIcon };
+  /**
+   * Glyph for one library card. Kept separate from `generateGlyph` because the
+   * batch runner drives its own status and error reporting per card, and a
+   * shared status string cannot represent twelve cards at once.
+   */
+  const generateForItem = useCallback(
+    async (options: GenerationOptions, subject: string) => (await runGlyph(options, subject)).layer,
+    [runGlyph],
+  );
+
+  return { status, setStatus, generateMaterial, generateGlyph, generateIcon, generateForItem };
 }
