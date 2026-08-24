@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_COMPOSE, type ComposeOptions } from '../core/compose';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../core/spec';
+import { DEFAULT_VISION_MODEL } from '../core/vision';
 
 const STORAGE_KEY = 'icon-generator-project-v1';
 
@@ -10,6 +11,8 @@ export interface Project {
   spec: ContainerSpec;
   compose: ComposeOptions;
   model: string;
+  /** Vision model used to name the symbol in an uploaded master. */
+  visionModel: string;
   materialDescription: string;
   glyphSubject: string;
   glyphStyle: string;
@@ -20,6 +23,7 @@ const DEFAULT_PROJECT: Project = {
   spec: DEFAULT_SPEC,
   compose: DEFAULT_COMPOSE,
   model: 'google/nano-banana-pro',
+  visionModel: DEFAULT_VISION_MODEL,
   materialDescription: 'brushed deep indigo metal',
   glyphSubject: 'a paper plane, solid white',
   glyphStyle: 'rounded geometric, even stroke weight',

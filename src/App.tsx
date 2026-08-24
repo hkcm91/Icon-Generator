@@ -51,6 +51,7 @@ export default function App() {
           compose={project.compose}
           layers={layers}
           model={project.model}
+          visionModel={project.visionModel}
           material={project.materialDescription}
           glyph={project.glyphSubject}
           onSpec={setSpec}

@@ -315,3 +315,6 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 
 .row-tight { margin: 0; }
 .row-tight button { flex: none; }
+
+.notes { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+.notes li { margin-bottom: 3px; }

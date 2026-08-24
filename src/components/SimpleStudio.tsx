@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import Preview from './Preview';
 import { containerPath } from '../core/geometry';
 import { traceMaster } from '../core/trace';
+import { describeMaster } from '../core/describe';
+import { nameSymbol } from '../core/vision';
 import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '../core/spec';
 import type { ComposeLayers, ComposeOptions } from '../core/compose';
 import { useGeneration } from '../state/useGeneration';
@@ -22,6 +24,7 @@ interface Props {
   compose: ComposeOptions;
   layers: ComposeLayers;
   model: string;
+  visionModel: string;
   material: string;
   glyph: string;
   onSpec: (patch: Partial<ContainerSpec>) => void;
@@ -42,7 +45,8 @@ function ShapeChip({ spec }: { spec: ContainerSpec }) {
   );
 }
 
-async function readPixels(file: File): Promise<ImageData> {
+/** Decode once, returning both the pixels to analyse and a URL to send. */
+async function readMaster(file: File): Promise<{ pixels: ImageData; dataUrl: string }> {
   const bitmap = await createImageBitmap(file);
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width;
@@ -51,7 +55,10 @@ async function readPixels(file: File): Promise<ImageData> {
   if (!ctx) throw new Error('This browser did not provide a 2D canvas context.');
   ctx.drawImage(bitmap, 0, 0);
   bitmap.close();
-  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return {
+    pixels: ctx.getImageData(0, 0, canvas.width, canvas.height),
+    dataUrl: canvas.toDataURL('image/png'),
+  };
 }
 
 /**
@@ -66,22 +73,63 @@ async function readPixels(file: File): Promise<ImageData> {
 export default function SimpleStudio(props: Props) {
   const { status, generateIcon } = useGeneration();
   const [tracing, setTracing] = useState('');
+  const [notes, setNotes] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const active = matchPreset(props.spec);
 
+  /**
+   * One upload does everything: shape, colour, material wording, and — where a
+   * vision model is reachable — the name of the symbol. Every field it fills
+   * stays editable; this is a starting point, not a decision.
+   */
   const useMaster = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file) return;
-    setTracing('Reading your master…');
+    setTracing('Reading your icon…');
+    setNotes([]);
+
+    let dataUrl = '';
     try {
-      const result = traceMaster(await readPixels(file), 'symmetric', props.spec);
-      props.onSpec(result.spec);
+      const master = await readMaster(file);
+      dataUrl = master.dataUrl;
+
+      const traced = traceMaster(master.pixels, 'symmetric', props.spec);
+      props.onSpec(traced.spec);
+
+      const described = describeMaster(master.pixels, traced.spec.glyphInset);
+      props.onMaterial(described.material);
+      props.onCompose({ baseColor: described.baseColor });
+      setNotes(described.notes);
       setTracing(
-        `Shape taken from ${file.name}. Corner curve n ≈ ${result.exponent.toFixed(1)}.`,
+        `Shape and colours taken from ${file.name}. Corner curve n ≈ ${traced.exponent.toFixed(1)}.`,
+      );
+
+      if (!described.glyph.present) {
+        props.onGlyph('');
+        return;
+      }
+      // Local analysis can prove a symbol is there and what colour it is, but
+      // not what it depicts. Only that last step needs the network.
+      // Clear first: whatever is in the field describes the *previous* icon,
+      // and leaving it would have the field assert something about this master
+      // that was never established.
+      props.onGlyph('');
+      setTracing('Working out what the symbol is…');
+      const named = await nameSymbol(dataUrl, props.visionModel);
+      props.onGlyph(named ? `${named}, ${described.glyph.colorName}` : '');
+      setTracing(
+        named
+          ? `Read everything from ${file.name}. Edit anything below.`
+          : `Read ${file.name}. Could not name the symbol — describe it yourself.`,
       );
     } catch (error) {
-      setTracing(`Could not read that image: ${(error as Error).message}`);
+      // A vision failure must not lose the shape and colour work already done.
+      setTracing(
+        dataUrl
+          ? `Shape and colours read. Naming the symbol failed: ${(error as Error).message}`
+          : `Could not read that image: ${(error as Error).message}`,
+      );
     }
   };
 
@@ -170,6 +218,13 @@ export default function SimpleStudio(props: Props) {
             />
           </div>
           {tracing && <p className="hint">{tracing}</p>}
+          {notes.length > 0 && (
+            <ul className="notes">
+              {notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          )}
         </li>
 
         <li>
