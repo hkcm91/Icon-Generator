@@ -12,7 +12,7 @@
  */
 
 import express from 'express';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -39,7 +39,14 @@ app.use(express.json({ limit: '24mb' }));
 const PORT = Number(process.env.PORT || 8787);
 const API = 'https://api.replicate.com/v1';
 
-const token = () => process.env.REPLICATE_API_TOKEN || '';
+/**
+ * The token, held in memory once set from the UI so it never has to be typed
+ * into a file. It is never sent back to the browser — only whether one exists
+ * and which account it belongs to.
+ */
+let sessionToken = '';
+const token = () => sessionToken || process.env.REPLICATE_API_TOKEN || '';
+const tokenSource = () => (sessionToken ? 'session' : process.env.REPLICATE_API_TOKEN ? 'env' : 'none');
 const authHeaders = () => ({
   Authorization: `Bearer ${token()}`,
   'Content-Type': 'application/json',
@@ -56,6 +63,101 @@ const requireToken = (res) => {
 };
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/** Whether a token is present, and whose it is. Never the token itself. */
+app.get('/api/status', async (_request, response) => {
+  if (!token()) return response.json({ connected: false, source: 'none' });
+  try {
+    const result = await fetch(`${API}/account`, { headers: authHeaders() });
+    const body = await result.json().catch(() => ({}));
+    response.json({
+      connected: result.ok,
+      source: tokenSource(),
+      account: result.ok ? body.username || body.name || 'connected' : undefined,
+      error: result.ok ? undefined : 'The saved token was rejected by Replicate.',
+    });
+  } catch {
+    response.json({ connected: false, source: tokenSource(), error: 'Could not reach Replicate.' });
+  }
+});
+
+/**
+ * Accept a token from the UI.
+ *
+ * Validated against Replicate before it is kept, so a typo is reported here
+ * rather than surfacing later as a failed generation. `remember` additionally
+ * writes it to .env; without it the token lives only as long as the process,
+ * which is the right default for something pasted into a browser.
+ */
+app.post('/api/token', async (request, response) => {
+  const { token: candidate, remember } = request.body ?? {};
+  if (typeof candidate !== 'string' || !candidate.trim()) {
+    return response.status(400).json({ error: 'Paste your Replicate API token.' });
+  }
+  const trimmed = candidate.trim();
+  if (!trimmed.startsWith('r8_')) {
+    return response
+      .status(400)
+      .json({ error: 'Replicate tokens start with r8_. Copy it from your API tokens page.' });
+  }
+
+  try {
+    const result = await fetch(`${API}/account`, {
+      headers: { Authorization: `Bearer ${trimmed}`, 'Content-Type': 'application/json' },
+    });
+    const body = await result.json().catch(() => ({}));
+    if (!result.ok) {
+      return response.status(result.status).json({
+        error:
+          result.status === 401
+            ? 'Replicate rejected that token. Create a fresh one and try again.'
+            : body.detail || `Replicate returned ${result.status}.`,
+      });
+    }
+
+    sessionToken = trimmed;
+    let saved = false;
+    if (remember) {
+      try {
+        const envPath = resolve(here, '..', '.env');
+        let existing = '';
+        try {
+          existing = readFileSync(envPath, 'utf8');
+        } catch {
+          // No .env yet; one is about to be created.
+        }
+        const without = existing
+          .split('\n')
+          .filter((line) => !/^\s*REPLICATE_API_TOKEN\s*=/.test(line))
+          .join('\n')
+          .replace(/\n+$/, '');
+        writeFileSync(
+          envPath,
+          `${without ? `${without}\n` : ''}REPLICATE_API_TOKEN=${trimmed}\n`,
+          { mode: 0o600 },
+        );
+        saved = true;
+      } catch (error) {
+        // Failing to persist must not invalidate a token that already works.
+        console.warn('Could not write .env:', error.message);
+      }
+    }
+
+    response.json({
+      connected: true,
+      account: body.username || body.name || 'connected',
+      saved,
+    });
+  } catch (error) {
+    response.status(502).json({ error: `Could not reach Replicate: ${error.message}` });
+  }
+});
+
+/** Forget a session token. */
+app.post('/api/token/clear', (_request, response) => {
+  sessionToken = '';
+  response.json({ connected: Boolean(token()), source: tokenSource() });
+});
 
 /** Confirm the token works before the user spends a generation finding out. */
 app.get('/api/account', async (_request, response) => {

@@ -1,11 +1,15 @@
 import { useRef, useState } from 'react';
 import { containerPath } from '../core/geometry';
 import { traceMaster, type TraceMode, type TraceResult } from '../core/trace';
+import { describeMaster, type MasterDescription } from '../core/describe';
 import type { ContainerSpec } from '../core/spec';
 
 interface Props {
   spec: ContainerSpec;
   onApply: (spec: ContainerSpec) => void;
+  /** Same analysis the guided view runs, so the two cannot diverge. */
+  onDescribe: (description: MasterDescription) => void;
+  onMaster: (master: { name: string; dataUrl: string }) => void;
 }
 
 const MODES: Array<{ value: TraceMode; label: string; blurb: string }> = [
@@ -26,7 +30,7 @@ const MODES: Array<{ value: TraceMode; label: string; blurb: string }> = [
   },
 ];
 
-async function readPixels(file: File): Promise<ImageData> {
+async function readPixels(file: File): Promise<{ pixels: ImageData; stored: string }> {
   const bitmap = await createImageBitmap(file);
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width;
@@ -35,7 +39,18 @@ async function readPixels(file: File): Promise<ImageData> {
   if (!ctx) throw new Error('This browser did not provide a 2D canvas context.');
   ctx.drawImage(bitmap, 0, 0);
   bitmap.close();
-  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  // Downscaled copy for persistence and for use as a generation reference.
+  const small = document.createElement('canvas');
+  const scale = Math.min(1, 384 / Math.max(canvas.width, canvas.height));
+  small.width = Math.round(canvas.width * scale);
+  small.height = Math.round(canvas.height * scale);
+  small.getContext('2d')?.drawImage(canvas, 0, 0, small.width, small.height);
+
+  return {
+    pixels: ctx.getImageData(0, 0, canvas.width, canvas.height),
+    stored: small.toDataURL('image/png'),
+  };
 }
 
 /**
@@ -46,8 +61,9 @@ async function readPixels(file: File): Promise<ImageData> {
  * bakes that mismatch into every icon that follows — so the master defines the
  * container, not the other way round.
  */
-export default function TracePanel({ spec, onApply }: Props) {
+export default function TracePanel({ spec, onApply, onDescribe, onMaster }: Props) {
   const [pixels, setPixels] = useState<ImageData | null>(null);
+  const [notes, setNotes] = useState<string[]>([]);
   const [name, setName] = useState('');
   const [mode, setMode] = useState<TraceMode>('symmetric');
   const [result, setResult] = useState<TraceResult | null>(null);
@@ -69,10 +85,18 @@ export default function TracePanel({ spec, onApply }: Props) {
     const file = files?.[0];
     if (!file) return;
     try {
-      const data = await readPixels(file);
+      const { pixels: data, stored } = await readPixels(file);
       setPixels(data);
       setName(file.name);
+      onMaster({ name: file.name, dataUrl: stored });
       run(data, mode);
+
+      // The guided view fills the prompt fields from the master; doing it only
+      // there meant the full view silently skipped the analysis and looked
+      // broken to anyone working in it.
+      const described = describeMaster(data, spec.glyphInset);
+      onDescribe(described);
+      setNotes(described.notes);
     } catch (cause) {
       setError((cause as Error).message);
     }
@@ -106,6 +130,13 @@ export default function TracePanel({ spec, onApply }: Props) {
       </div>
 
       {error && <p className="status status-error">{error}</p>}
+      {notes.length > 0 && (
+        <ul className="notes">
+          {notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      )}
 
       {result && (
         <>

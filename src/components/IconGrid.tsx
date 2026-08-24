@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { composeIcon, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { parseLibrary, type IconItem } from '../core/library';
+import LibraryPicker from './LibraryPicker';
 import { runPool, type PoolProgress } from '../core/queue';
 import type { ContainerSpec } from '../core/spec';
 import type { GenerationOptions } from '../state/useGeneration';
@@ -50,6 +51,7 @@ export default function IconGrid(props: Props) {
   const [progress, setProgress] = useState<PoolProgress | null>(null);
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState('');
+  const [browsing, setBrowsing] = useState(false);
   const stopped = useRef(false);
   const input = useRef<HTMLInputElement>(null);
 
@@ -143,8 +145,11 @@ export default function IconGrid(props: Props) {
       </div>
 
       <div className="row">
+        <button type="button" className="primary" onClick={() => setBrowsing((c) => !c)}>
+          Browse glyphs
+        </button>
         <button type="button" className="ghost" onClick={() => input.current?.click()}>
-          Import list
+          Import file
         </button>
         <button type="button" className="ghost" onClick={() => setAll(true)} disabled={!props.items.length}>
           Select all
@@ -176,8 +181,19 @@ export default function IconGrid(props: Props) {
         />
       </div>
 
+      {browsing && (
+        <LibraryPicker
+          existing={props.items}
+          onClose={() => setBrowsing(false)}
+          onAdd={(added) => {
+            props.onItems([...props.items, ...added]);
+            setMessage(`Added ${added.length.toLocaleString()} icon${added.length === 1 ? '' : 's'}.`);
+          }}
+        />
+      )}
+
       <p className="hint">
-        A CSV, a JSON manifest, or just one name per line. Hundreds at a time is fine.
+        7,400 glyphs are built in. Or import your own: a CSV, a JSON manifest, or one name per line.
       </p>
 
       <div className="row">

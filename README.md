@@ -37,8 +37,10 @@ The master is not only analysed — it is passed as a reference to **every**
 generation, so the whole family inherits one look rather than drifting apart
 prompt by prompt.
 
-**Make a whole family** imports an icon list — a CSV, a JSON manifest, or one
-name per line, hundreds at a time — as cards. Select any number, generate them
+**Make a whole family** gives you **7,400 built-in glyphs** — Material Symbols
+(3,899), brand marks (3,453) and the Y2K Dream set (48) — searchable, add any
+number at once. Or import your own list: a CSV, a JSON manifest, or one name per
+line, hundreds at a time. Select any number, generate them
 as a bounded-concurrency batch, and redo individual cards that came out wrong.
 
 Rendered icons persist across a refresh. Layers are stored as PNG blobs in
@@ -55,11 +57,13 @@ needed to get an icon out.
 
 ```bash
 npm install
-cp .env.example .env      # add your Replicate token (r8_...)
 npm run dev               # web on :5173, proxy on :8787
 ```
 
-The token stays server-side. The browser never receives it.
+Then click **Add API key** in the header and paste your Replicate token. It is
+sent to the local proxy, checked against Replicate before being kept, and never
+sent back to the browser. Tick *Save to .env* for it to survive a restart, or
+set `REPLICATE_API_TOKEN` yourself — either works.
 
 Without a token everything except generation still works — spec editing,
 preview, determinism check, and all exports.

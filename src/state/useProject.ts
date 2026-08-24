@@ -31,9 +31,12 @@ const DEFAULT_PROJECT: Project = {
   compose: DEFAULT_COMPOSE,
   model: 'google/nano-banana-pro',
   visionModel: DEFAULT_VISION_MODEL,
-  materialDescription: 'brushed deep indigo metal',
-  glyphSubject: 'a paper plane, solid white',
-  glyphStyle: 'rounded geometric, even stroke weight',
+  // Empty by design. A pre-filled default is indistinguishable from a field
+  // that auto-fill failed to touch, which is exactly the confusion to avoid
+  // when uploading a master is supposed to write these for you.
+  materialDescription: '',
+  glyphSubject: '',
+  glyphStyle: '',
   master: null,
   items: [],
   concurrency: 3,
