@@ -42,6 +42,9 @@ interface Props {
   concurrency: number;
   onConcurrency: (value: number) => void;
   materialLayer: CanvasImageSource | null;
+  glyphs: Map<string, CanvasImageSource>;
+  onItemGlyph: (id: string, image: CanvasImageSource) => void;
+  onClearGlyphs: () => void;
 }
 
 /** Small filled thumbnail of a shape, for the preset buttons. */
@@ -330,6 +333,9 @@ export default function SimpleStudio(props: Props) {
             onItems={props.onItems}
             onConcurrency={props.onConcurrency}
             generate={generateForItem}
+            glyphs={props.glyphs}
+            onItemGlyph={props.onItemGlyph}
+            onClearGlyphs={props.onClearGlyphs}
             options={{
               spec: props.spec,
               model: props.model,

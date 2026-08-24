@@ -15,6 +15,10 @@ interface Props {
   onItems: (items: IconItem[]) => void;
   onConcurrency: (value: number) => void;
   generate: (options: GenerationOptions, subject: string) => Promise<CanvasImageSource>;
+  /** Rendered glyphs, restored from storage and shared with the exporter. */
+  glyphs: Map<string, CanvasImageSource>;
+  onItemGlyph: (id: string, image: CanvasImageSource) => void;
+  onClearGlyphs: () => void;
 }
 
 /** Thumbnail for one card: the real container, with this card's glyph in it. */
@@ -38,11 +42,11 @@ function Thumb({
  * The library grid: one card per icon, select any number, generate them as a
  * batch, regenerate the ones that came out wrong.
  *
- * Glyph images are held here rather than in the persisted project because a few
- * hundred PNG data URLs would exceed the localStorage quota several times over.
+ * Rendered glyphs live in IndexedDB rather than in the project JSON — a few
+ * hundred PNG data URLs would exceed the localStorage quota several times over
+ * — and are passed in so the exporter can reach the same images.
  */
 export default function IconGrid(props: Props) {
-  const [glyphs, setGlyphs] = useState<Map<string, CanvasImageSource>>(new Map());
   const [progress, setProgress] = useState<PoolProgress | null>(null);
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState('');
@@ -107,7 +111,7 @@ export default function IconGrid(props: Props) {
             { ...props.options, glyphSubject: item.concept || item.name },
             item.concept || item.name,
           );
-          setGlyphs((previous) => new Map(previous).set(item.id, layer));
+          props.onItemGlyph(item.id, layer);
           // Deselect on success, so the next "Generate selected" targets only
           // what still needs doing.
           apply(item.id, { status: 'ready', revision: item.revision + 1, selected: false });
@@ -149,7 +153,17 @@ export default function IconGrid(props: Props) {
           Select none
         </button>
         {props.items.length > 0 && (
-          <button type="button" className="ghost" onClick={() => props.onItems([])} disabled={running}>
+          <button
+            type="button"
+            className="ghost"
+            disabled={running}
+            onClick={() => {
+              props.onItems([]);
+              // Drop the stored renders too, or the database keeps every glyph
+              // from every library the user has ever imported.
+              props.onClearGlyphs();
+            }}
+          >
             Clear
           </button>
         )}
@@ -222,7 +236,7 @@ export default function IconGrid(props: Props) {
               <Thumb
                 spec={props.spec}
                 compose={props.compose}
-                layers={{ material: props.material, glyph: glyphs.get(item.id) ?? null }}
+                layers={{ material: props.material, glyph: props.glyphs.get(item.id) ?? null }}
               />
 
               <div className="card-name" title={item.concept || item.name}>

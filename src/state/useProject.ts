@@ -49,10 +49,14 @@ function load(): Project {
       ...parsed,
       spec: normalizeSpec(parsed.spec),
       compose: { ...DEFAULT_COMPOSE, ...(parsed.compose ?? {}) },
-      // Rendered glyphs live only in memory — persisting a few hundred PNG
-      // data URLs would blow the localStorage quota — so every restored card
-      // starts from draft regardless of how it finished last session.
-      items: (parsed.items ?? []).map((item) => ({ ...item, status: 'draft' as const, error: undefined })),
+      // Rendered glyphs live in IndexedDB, so a card that finished last
+      // session can come back ready. Only genuinely interrupted work is reset:
+      // a queued or generating card had no result when the tab closed.
+      items: (parsed.items ?? []).map((item) =>
+        item.status === 'queued' || item.status === 'generating'
+          ? { ...item, status: 'draft' as const, error: undefined }
+          : item,
+      ),
     };
   } catch {
     // A corrupt autosave should cost the user their layout, not the app.
