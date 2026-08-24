@@ -129,3 +129,43 @@ The app ships a **Determinism check** that re-renders the current icon 10 or 50
 times and hashes every frame's raw RGBA. Identical hashes, or it is not fixed.
 The **Drift comparison** strip shows six spec-compiled renders against six with
 simulated prompted-geometry jitter, side by side.
+
+## Measuring the drift you already have
+
+`src/core/measure.ts` reads finished PNGs and reports what geometry they
+actually contain, so the problem can be quantified rather than described.
+
+Given a batch of previously generated containers it returns, per file:
+
+- **Corner radius** in px and as a percentage of the silhouette, measured by
+  walking the 45-degree diagonal inward from the bounding-box corner. For a
+  circular-arc corner of radius r the contour sits at `r(√2 − 1)` along that
+  diagonal, so the gap inverts directly to a radius — the same definition
+  `effectiveCornerRadius` applies to a spec, which is what makes a measured
+  number and a specified number comparable.
+- **Best-fit superellipse exponent**, solved per contour point by bisection on
+  `u^n + v^n = 1` and reduced by median so a few bad rows cannot drag it.
+- **Shape classification.** A least-squares circle is fitted to the corner arcs
+  alongside the superellipse fit; a true rounded rectangle fits a circle to well
+  under a pixel while a squircle does not. This distinguishes "your container is
+  a rounded rect with radius r" from "your container has continuous curvature",
+  which changes which spec field you should carry forward.
+- **Corner spread** — max minus min across the four corners, i.e. asymmetry
+  inside a single image.
+- **Batch spread and σ** on both radius and exponent. That is the drift.
+
+Two details that mattered for accuracy:
+
+- **Coverage is sampled bilinearly at pixel centres.** Pixel `(px, py)` carries
+  the value at `(px + 0.5, py + 0.5)`; measuring from integer indices instead
+  introduces a consistent half-pixel bias, which is fatal for a tool built to
+  quantify sub-pixel drift.
+- **The diagonal is walked at 0.2px steps.** Consecutive whole-pixel samples
+  along a diagonal are √2 apart — wider than the ~1px antialiasing band — so an
+  integer walk can step clean over the ramp. Fixing both took the worst-case
+  error from **2.14px to 0.13px**.
+
+Validated by round-tripping against analytically rasterised shapes of known
+geometry, using rasterisers written independently of the app's own path code:
+radius within **0.13px** over 20–200px, exponent within **0.03%** over n = 2–10.
+Fully opaque sources are keyed against the flat background first and flagged.

@@ -3,6 +3,7 @@ import DeterminismPanel from './components/DeterminismPanel';
 import DriftLab from './components/DriftLab';
 import ExportPanel from './components/ExportPanel';
 import GeneratePanel from './components/GeneratePanel';
+import MeasurePanel from './components/MeasurePanel';
 import Preview from './components/Preview';
 import SpecPanel from './components/SpecPanel';
 import type { ComposeLayers } from './core/compose';
@@ -31,6 +32,7 @@ export default function App() {
       <div className="columns">
         <div className="column">
           <SpecPanel spec={project.spec} onChange={setSpec} />
+          <MeasurePanel onApply={setSpec} />
         </div>
 
         <div className="column column-center">

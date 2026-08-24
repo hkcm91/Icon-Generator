@@ -65,6 +65,23 @@ would fight the spec. Open **Prompts actually sent** in the app to see them.
 raw RGBA. Identical hashes or it isn't fixed. **Drift comparison** shows six
 spec-compiled renders against six with simulated prompted-geometry jitter.
 
+**Measure imported PNGs** does the same job against your *real* output. Drop in
+a batch of previously generated containers and it reports, per file, the corner
+radius in px and as a percentage, the best-fit superellipse exponent, and
+whether the silhouette is genuinely a rounded rect or a continuous-curvature
+squircle — plus the spread across the batch, which is the drift, measured.
+
+Accuracy, validated by round-tripping against analytically rasterised shapes
+with known geometry: **radius within 0.13px** across 20–200px radii, and
+**exponent within 0.03%** across n = 2–10.
+
+Each row has a **Use** button that writes that file's measured geometry into the
+spec. The container you already liked becomes the one you get every time.
+
+Images that arrive fully opaque — which is most model output, whatever the
+prompt asked for — are keyed against the flat background before measuring, and
+flagged as `keyed` in the table.
+
 ## Exports
 
 Every size is a **fresh render from the path**, not a downscale of one master —

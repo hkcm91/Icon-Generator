@@ -179,3 +179,43 @@ summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-bottom
 .drift-label-bad { color: var(--bad); }
 .drift-strip { display: flex; gap: 8px; flex-wrap: wrap; }
 .drift-tile { width: 64px; height: 64px; background: #0a0e17; border-radius: 6px; }
+
+.dropzone {
+  display: grid;
+  place-items: center;
+  padding: 22px 12px;
+  margin-bottom: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.dropzone:hover { border-color: var(--accent); color: var(--text); }
+
+.table-scroll { overflow-x: auto; margin-bottom: 10px; }
+
+.measure-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.measure-table th {
+  text-align: left;
+  padding: 6px 8px 6px 0;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.measure-table td { padding: 7px 8px 7px 0; border-bottom: 1px solid rgba(38, 49, 73, 0.5); }
+.measure-table .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ellipsis { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tag {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--warn);
+  font-size: 10px;
+}
+
+button.tiny { padding: 4px 9px; font-size: 11px; }
