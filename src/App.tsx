@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import ApiKeyBar from './components/ApiKeyBar';
 import DeterminismPanel from './components/DeterminismPanel';
 import DriftLab from './components/DriftLab';
 import ExportPanel from './components/ExportPanel';
@@ -56,6 +57,7 @@ export default function App() {
           </p>
         </div>
         <div className="row row-tight">
+          <ApiKeyBar />
           <button
             type="button"
             className="ghost"
@@ -176,7 +178,15 @@ export default function App() {
               </div>
             </section>
 
-            <TracePanel spec={project.spec} onApply={(next) => setSpec(next)} />
+            <TracePanel
+              spec={project.spec}
+              onApply={(next) => setSpec(next)}
+              onMaster={(next) => setField('master', next)}
+              onDescribe={(described) => {
+                setField('materialDescription', described.material);
+                setCompose({ baseColor: described.baseColor });
+              }}
+            />
             <DriftLab spec={project.spec} />
             <MeasurePanel onApply={setSpec} />
           </div>
