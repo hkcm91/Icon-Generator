@@ -34,6 +34,9 @@ export interface ComposeOptions {
   shadowOffsetY: number;
   /** Scale applied to the glyph inside its safe area. */
   glyphScale: number;
+  /** Optical offsets as a percentage of the container edge. */
+  glyphOffsetX: number;
+  glyphOffsetY: number;
 }
 
 export const DEFAULT_COMPOSE: ComposeOptions = {
@@ -44,6 +47,8 @@ export const DEFAULT_COMPOSE: ComposeOptions = {
   shadowColor: 'rgba(15, 23, 42, 0.35)',
   shadowOffsetY: 0,
   glyphScale: 1,
+  glyphOffsetX: 0,
+  glyphOffsetY: 0,
 };
 
 export function createCanvas(size: number): HTMLCanvasElement {
@@ -173,8 +178,8 @@ export function composeIcon(
     drawContain(
       ctx,
       layers.glyph,
-      box.cx - safeEdge / 2,
-      box.cy - safeEdge / 2,
+      box.cx - safeEdge / 2 + box.edge * options.glyphOffsetX / 100,
+      box.cy - safeEdge / 2 + box.edge * options.glyphOffsetY / 100,
       safeEdge,
       safeEdge,
     );

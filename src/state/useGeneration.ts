@@ -34,6 +34,17 @@ export interface GenerationOptions {
    * point of having a master rather than a mood board.
    */
   master?: string | null;
+  /** Optional authoritative artwork for a styled catalog/custom glyph. */
+  glyphReference?: string | null;
+  references?: string[];
+  familyPrompt?: string;
+  negativePrompt?: string;
+  quality?: 'low' | 'medium' | 'high';
+}
+
+function recipePrompt(prompt: string, options: GenerationOptions): string {
+  return [prompt, options.familyPrompt?.trim(), options.negativePrompt?.trim()
+    ? `Avoid: ${options.negativePrompt.trim()}` : ''].filter(Boolean).join('\n');
 }
 
 /**
@@ -69,20 +80,24 @@ export function useGeneration() {
   const runMaterial = useCallback(async (options: GenerationOptions) => {
     const mode = resolveConditioning(options.model, options.conditioning);
     const conditioning = await buildConditioning(options.spec, mode);
-    const prompt =
-      mode === 'off' ? materialPrompt(options.material) : conditionedMaterialPrompt(options.material);
+    const prompt = recipePrompt(
+      mode === 'off' ? materialPrompt(options.material) : conditionedMaterialPrompt(options.material),
+      options,
+    );
 
-    const references = options.master ? [options.master] : [];
+    const references = [...(options.references ?? []), ...(options.master ? [options.master] : [])];
     const result = await generateImage(
       options.model,
-      modelInput(options.model, prompt, options.spec.size, references, conditioning),
+      modelInput(options.model, prompt, options.spec.size, references, conditioning, false, options.quality),
     );
     return loadImage(result.images[0]);
   }, []);
 
   const runGlyph = useCallback(async (options: GenerationOptions, subject?: string) => {
     const wantAlpha = options.wantAlpha && modelSupportsAlpha(options.model);
-    const references = options.master ? [options.master] : [];
+    const references = [options.glyphReference, ...(options.references ?? []), options.master].filter(
+      (value): value is string => Boolean(value),
+    );
     // Never shape-condition the glyph: showing it the container silhouette is
     // an invitation to draw a container. The master still goes in as a style
     // reference — that is a different thing from a shape plate.
@@ -90,16 +105,20 @@ export function useGeneration() {
       options.model,
       modelInput(
         options.model,
-        glyphPrompt(
-          subject ?? options.glyphSubject,
-          options.glyphStyle,
-          wantAlpha,
-          Boolean(options.master),
+        recipePrompt(
+          glyphPrompt(
+            subject ?? options.glyphSubject,
+            options.glyphStyle,
+            wantAlpha,
+            Boolean(options.master),
+          ),
+          options,
         ),
         options.spec.size,
         references,
         undefined,
         wantAlpha,
+        options.quality,
       ),
     );
 

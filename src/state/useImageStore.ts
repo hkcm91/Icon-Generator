@@ -14,6 +14,44 @@ import {
 const MATERIAL_KEY = 'material';
 const SINGLE_GLYPH_KEY = 'glyph';
 
+export interface ImageBundle {
+  material: string | null;
+  glyph: string | null;
+  glyphs: Record<string, string>;
+  revisions?: Record<string, string>;
+}
+
+function blobDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('Could not encode saved artwork.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function imageDataUrl(image: CanvasImageSource | null): string | null {
+  if (!image) return null;
+  const width = (image as HTMLImageElement).naturalWidth || (image as HTMLCanvasElement).width || 1024;
+  const height = (image as HTMLImageElement).naturalHeight || (image as HTMLCanvasElement).height || 1024;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL('image/png');
+}
+
+function dataUrlImage(source: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('A saved project image could not be decoded.'));
+    image.src = source;
+  });
+}
+
 /**
  * Rendered layers, kept in memory and mirrored to IndexedDB so a refresh does
  * not throw away work that cost API calls to produce.
@@ -40,6 +78,7 @@ export function useImageStore() {
     (async () => {
       const restored = new Map<string, CanvasImageSource>();
       for (const key of await allKeys(GLYPHS)) {
+        if (key.includes('@v')) continue;
         const blob = await getBlob(GLYPHS, key);
         if (!blob) continue;
         try {
@@ -77,8 +116,17 @@ export function useImageStore() {
   /** Persist whatever the compositor produced; canvases become PNG blobs. */
   const persist = useCallback(async (store: string, key: string, image: CanvasImageSource | null) => {
     if (!image) return deleteBlob(store, key);
-    if (!(image instanceof HTMLCanvasElement)) return;
-    const blob = await canvasToBlobAsync(image);
+    let canvas: HTMLCanvasElement;
+    if (image instanceof HTMLCanvasElement) canvas = image;
+    else {
+      const width = (image as HTMLImageElement).naturalWidth || (image as ImageBitmap).width || 1024;
+      const height = (image as HTMLImageElement).naturalHeight || (image as ImageBitmap).height || 1024;
+      canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d')?.drawImage(image, 0, 0, width, height);
+    }
+    const blob = await canvasToBlobAsync(canvas);
     if (blob) await putBlob(store, key, blob);
   }, []);
 
@@ -99,12 +147,22 @@ export function useImageStore() {
   );
 
   const setItemGlyph = useCallback(
-    (id: string, image: CanvasImageSource) => {
+    (id: string, image: CanvasImageSource, revision?: number) => {
       setGlyphs((previous) => new Map(previous).set(id, image));
       void persist(GLYPHS, id, image);
+      if (revision) void persist(GLYPHS, `${id}@v${revision}`, image);
     },
     [persist],
   );
+
+  const restoreItemRevision = useCallback(async (id: string, revision: number) => {
+    const blob = await getBlob(GLYPHS, `${id}@v${revision}`);
+    if (!blob) return false;
+    const image = await blobToImage(blob);
+    setGlyphs((previous) => new Map(previous).set(id, image));
+    await persist(GLYPHS, id, image);
+    return true;
+  }, [persist]);
 
   const clearGlyphs = useCallback(() => {
     for (const [key, url] of urls.current) {
@@ -127,6 +185,48 @@ export function useImageStore() {
     void clearStore(LAYERS);
   }, []);
 
+  const exportImages = useCallback(async (): Promise<ImageBundle> => {
+    const encoded: Record<string, string> = {};
+    const revisions: Record<string, string> = {};
+    for (const [id, image] of glyphs) {
+      const value = imageDataUrl(image);
+      if (value) encoded[id] = value;
+    }
+    for (const key of await allKeys(GLYPHS)) {
+      if (!key.includes('@v')) continue;
+      const blob = await getBlob(GLYPHS, key);
+      if (blob) revisions[key] = await blobDataUrl(blob);
+    }
+    return {
+      material: imageDataUrl(material),
+      glyph: imageDataUrl(glyph),
+      glyphs: encoded,
+      revisions,
+    };
+  }, [glyphs, material, glyph]);
+
+  const importImages = useCallback(async (bundle: ImageBundle) => {
+    await clearStore(GLYPHS);
+    await clearStore(LAYERS);
+    const restored = new Map<string, CanvasImageSource>();
+    for (const [id, source] of Object.entries(bundle.glyphs ?? {})) {
+      const image = await dataUrlImage(source);
+      restored.set(id, image);
+      await persist(GLYPHS, id, image);
+    }
+    for (const [key, source] of Object.entries(bundle.revisions ?? {})) {
+      const response = await fetch(source);
+      await putBlob(GLYPHS, key, await response.blob());
+    }
+    const nextMaterial = bundle.material ? await dataUrlImage(bundle.material) : null;
+    const nextGlyph = bundle.glyph ? await dataUrlImage(bundle.glyph) : null;
+    setGlyphs(restored);
+    setMaterialState(nextMaterial);
+    setGlyphState(nextGlyph);
+    await persist(LAYERS, MATERIAL_KEY, nextMaterial);
+    await persist(LAYERS, SINGLE_GLYPH_KEY, nextGlyph);
+  }, [persist]);
+
   return {
     loaded,
     glyphs,
@@ -135,7 +235,10 @@ export function useImageStore() {
     setMaterial,
     setGlyph,
     setItemGlyph,
+    restoreItemRevision,
     clearGlyphs,
     clearAll,
+    exportImages,
+    importImages,
   };
 }

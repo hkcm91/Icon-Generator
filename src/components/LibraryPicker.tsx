@@ -3,6 +3,7 @@ import { makeItem, type IconItem } from '../core/library';
 
 interface CatalogEntry {
   name: string;
+  slug?: string;
   concept?: string;
   category?: string;
   keywords?: string[];
@@ -13,6 +14,7 @@ interface Catalog {
   label: string;
   file: string;
   note?: string;
+  source?: (entry: CatalogEntry) => string | undefined;
 }
 
 /**
@@ -21,11 +23,17 @@ interface Catalog {
  * wasteful to ship to someone who only wants four icons.
  */
 const CATALOGS: Catalog[] = [
-  { id: 'material', label: 'Material Symbols', file: '/libraries/material-symbols.json' },
+  {
+    id: 'material',
+    label: 'Material Symbols',
+    file: '/libraries/material-symbols.json',
+    source: (entry) => entry.slug ? `/libraries/glyphs/material/${entry.slug}-fill.svg` : undefined,
+  },
   {
     id: 'brands',
     label: 'Brands',
     file: '/libraries/simple-icons.json',
+    source: (entry) => entry.slug ? `/libraries/glyphs/brands/${entry.slug}.svg` : undefined,
     note: 'Brand names are trademarks of their owners. See SIMPLE-ICONS-DISCLAIMER.md.',
   },
   { id: 'y2k', label: 'Y2K Dream', file: '/libraries/y2k-dream.json' },
@@ -96,6 +104,8 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
           concept: entry.concept ?? '',
           category: entry.category,
           keywords: entry.keywords,
+          sourceUrl: catalog.source?.(entry),
+          sourceMode: catalog.source?.(entry) ? 'exact' : 'styled',
         }),
       );
 
@@ -170,6 +180,9 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
                       })
                     }
                   />
+                  {catalog.source?.(entry) && (
+                    <img className="picker-glyph" src={catalog.source(entry)} alt="" loading="lazy" />
+                  )}
                   <span className="picker-name">{entry.name}</span>
                   {have && <span className="badge">added</span>}
                   {entry.concept && <span className="picker-concept">{entry.concept}</span>}

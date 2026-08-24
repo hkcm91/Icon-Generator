@@ -20,10 +20,26 @@ export interface IconItem {
   concept: string;
   category?: string;
   keywords?: string[];
+  notes?: string;
+  complexity?: 'simple' | 'medium' | 'complex';
+  role?: 'standard' | 'wide' | 'tall' | 'circular' | 'complex' | 'hero';
+  opticalScale?: number;
+  opticalOffsetX?: number;
+  opticalOffsetY?: number;
+  anchor?: boolean;
+  calibration?: boolean;
+  /** Original glyph artwork. Bundled catalog entries point at a real SVG. */
+  sourceUrl?: string;
+  /** Exact keeps source pixels; styled uses the source as generation guidance. */
+  sourceMode?: 'exact' | 'styled';
   selected: boolean;
   status: ItemStatus;
   /** Increments on every successful render, so regenerations are countable. */
   revision: number;
+  /** Revision currently shown/exported; revision remains the latest number. */
+  activeRevision?: number;
+  /** Explicit production sign-off for the current revision. */
+  approved?: boolean;
   error?: string;
 }
 
