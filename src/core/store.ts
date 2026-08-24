@@ -12,12 +12,14 @@
  */
 
 const DB_NAME = 'icon-generator';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 /** Per-library-card glyphs, keyed by item id. */
 export const GLYPHS = 'glyphs';
 /** Single-icon layers and anything else global, keyed by a fixed name. */
 export const LAYERS = 'layers';
+/** Deduplicated model results, keyed by a hash of model + exact input. */
+export const GENERATION_CACHE = 'generation-cache';
 
 let connection: Promise<IDBDatabase | null> | null = null;
 
@@ -37,6 +39,7 @@ function open(): Promise<IDBDatabase | null> {
       const db = request.result;
       if (!db.objectStoreNames.contains(GLYPHS)) db.createObjectStore(GLYPHS);
       if (!db.objectStoreNames.contains(LAYERS)) db.createObjectStore(LAYERS);
+      if (!db.objectStoreNames.contains(GENERATION_CACHE)) db.createObjectStore(GENERATION_CACHE);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => resolve(null);

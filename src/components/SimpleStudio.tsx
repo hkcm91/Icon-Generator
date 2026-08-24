@@ -20,6 +20,7 @@ import {
   renderAtSize,
   svgMask,
 } from '../core/export';
+import { modelOutputCost } from '../core/cost';
 
 interface Props {
   familyName: string;
@@ -67,14 +68,10 @@ interface Props {
   onExportApprovedOnly: (value: boolean) => void;
   exportSelectedOnly: boolean;
   onExportSelectedOnly: (value: boolean) => void;
-}
-
-function estimatedCost(model: string, quality: 'low' | 'medium' | 'high'): number | null {
-  if (model === 'openai/gpt-image-2') return { low: 0.012, medium: 0.047, high: 0.128 }[quality];
-  if (model === 'google/nano-banana-pro') return 0.15;
-  if (model === 'google/nano-banana') return 0.039;
-  if (model === 'bytedance/seedream-4') return 0.03;
-  return null;
+  calibrationRequired: boolean;
+  onCalibrationRequired: (value: boolean) => void;
+  maxBatchCost: number;
+  onMaxBatchCost: (value: number) => void;
 }
 
 /** Small filled thumbnail of a shape, for the preset buttons. */
@@ -139,7 +136,7 @@ export default function SimpleStudio(props: Props) {
   const lockedInput = useRef<HTMLInputElement>(null);
   const referenceInput = useRef<HTMLInputElement>(null);
   const active = matchPreset(props.spec);
-  const cost = estimatedCost(props.model, props.quality);
+  const cost = modelOutputCost(props.model, props.quality);
   const premiumBlocked = cost !== null && cost > 0.05 && !props.premiumAllowed;
   const premiumMessage = premiumBlocked
     ? `Premium generation is locked: this setting is about $${cost.toFixed(3)} per output.`
@@ -578,6 +575,21 @@ export default function SimpleStudio(props: Props) {
           <h3>
             <span className="step-num">4</span> Make a whole family
           </h3>
+          <div className="scale-saver">
+            <strong>Scale saver</strong>
+            <label className="toggle">
+              <input type="checkbox" checked={props.calibrationRequired}
+                onChange={(event) => props.onCalibrationRequired(event.target.checked)} />
+              Generate and approve six paid samples before the full batch
+            </label>
+            <label className="field field-inline">
+              <span className="field-label">Hard limit per batch</span>
+              <span>$</span>
+              <input type="number" min={0} step={0.25} value={props.maxBatchCost}
+                onChange={(event) => props.onMaxBatchCost(Math.max(0, Number(event.target.value) || 0))} />
+            </label>
+            <p className="hint">Exact SVG/custom artwork renders locally for $0. Identical AI requests reuse the saved result.</p>
+          </div>
           <IconGrid
             spec={props.spec}
             compose={props.compose}
@@ -606,6 +618,8 @@ export default function SimpleStudio(props: Props) {
               quality: props.quality,
             }}
             generationBlocked={premiumMessage}
+            calibrationRequired={props.calibrationRequired}
+            maxBatchCost={props.maxBatchCost}
           />
         </li>
 

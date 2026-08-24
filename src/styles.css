@@ -481,3 +481,14 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.scale-saver {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: color-mix(in srgb, var(--panel) 88%, #e7f8ef);
+}
+
+.scale-saver > strong { display: block; margin-bottom: 8px; }
+.scale-saver .field-inline { margin-top: 10px; max-width: 270px; }
+.scale-saver input[type='number'] { width: 90px; }

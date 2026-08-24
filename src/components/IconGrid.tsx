@@ -7,6 +7,8 @@ import type { ContainerSpec } from '../core/spec';
 import type { GenerationOptions } from '../state/useGeneration';
 import { exactGlyph, fileDataUrl, imageSourceDataUrl, sourceReference } from '../core/images';
 import { makeItem } from '../core/library';
+import { estimateGlyphBatch, needsPaidGeneration } from '../core/cost';
+import { cancelActiveGenerations } from '../core/replicate';
 
 interface Props {
   spec: ContainerSpec;
@@ -25,6 +27,8 @@ interface Props {
   onRestoreRevision: (id: string, revision: number) => Promise<boolean>;
   generationBlocked?: string;
   onClearGlyphs: () => void;
+  calibrationRequired: boolean;
+  maxBatchCost: number;
 }
 
 /** Thumbnail for one card: the real container, with this card's glyph in it. */
@@ -62,6 +66,20 @@ export default function IconGrid(props: Props) {
   const artworkInput = useRef<HTMLInputElement>(null);
 
   const selectedCount = props.items.filter((item) => item.selected).length;
+  const selectedItems = props.items.filter((item) => item.selected);
+  const selectedEstimate = estimateGlyphBatch(selectedItems, props.options.model, props.options.quality);
+  const paidFamily = props.items.filter(needsPaidGeneration);
+  const explicitCalibration = paidFamily.filter((item) => item.calibration);
+  const calibrationSample = (explicitCalibration.length ? explicitCalibration : paidFamily)
+    .slice(0, Math.min(6, paidFamily.length));
+  const calibrationPending = props.calibrationRequired && calibrationSample.some((item) => !item.approved);
+  const calibrationEstimate = estimateGlyphBatch(
+    calibrationSample.filter((item) => item.status !== 'ready'),
+    props.options.model,
+    props.options.quality,
+  );
+  const nextEstimate = calibrationPending ? calibrationEstimate : selectedEstimate;
+  const budgetBlocked = nextEstimate.cost !== null && nextEstimate.cost > props.maxBatchCost;
   const composeFor = (item: IconItem): ComposeOptions => ({
     ...props.compose,
     glyphScale: props.compose.glyphScale * (item.opticalScale ?? 1),
@@ -112,17 +130,39 @@ export default function IconGrid(props: Props) {
 
   const runBatch = async (targets: IconItem[]) => {
     if (!targets.length || running) return;
-    const needsPaidGeneration = targets.some((item) => !item.sourceUrl || item.sourceMode === 'styled');
-    if (needsPaidGeneration && props.generationBlocked) {
+    const hasPaidGeneration = targets.some(needsPaidGeneration);
+    if (hasPaidGeneration && props.generationBlocked) {
       setMessage(props.generationBlocked);
       return;
     }
     const pendingAnchors = props.items.filter((item) => item.anchor && !item.approved);
-    const batchTargets = pendingAnchors.length && targets.some((item) => !item.anchor)
+    let batchTargets = pendingAnchors.length && targets.some((item) => !item.anchor)
       ? targets.filter((item) => item.anchor)
       : targets;
+    let autoCalibration = new Set<string>();
+    if (props.calibrationRequired && !pendingAnchors.length) {
+      const paidFamily = props.items.filter(needsPaidGeneration);
+      const explicit = paidFamily.filter((item) => item.calibration);
+      const sample = (explicit.length ? explicit : paidFamily).slice(0, Math.min(6, paidFamily.length));
+      const approved = sample.filter((item) => item.approved).length;
+      if (approved < sample.length) {
+        const sampleIds = new Set(sample.map((item) => item.id));
+        const waiting = sample.filter((item) => item.status === 'ready' && !item.approved);
+        if (waiting.length) {
+          setMessage(`Approve the ${waiting.length} finished calibration icon${waiting.length === 1 ? '' : 's'} before releasing the family.`);
+          return;
+        }
+        batchTargets = targets.filter((item) => sampleIds.has(item.id) && item.status !== 'ready');
+        autoCalibration = sampleIds;
+      }
+    }
     if (!batchTargets.length) {
       setMessage('Generate and approve the marked style anchors before the rest of the family.');
+      return;
+    }
+    const estimate = estimateGlyphBatch(batchTargets, props.options.model, props.options.quality);
+    if (estimate.cost !== null && estimate.cost > props.maxBatchCost) {
+      setMessage(`Blocked: this click is estimated at $${estimate.cost.toFixed(2)}, above the $${props.maxBatchCost.toFixed(2)} batch limit.`);
       return;
     }
     stopped.current = false;
@@ -130,16 +170,17 @@ export default function IconGrid(props: Props) {
     setMessage('');
 
     if (batchTargets.length !== targets.length) {
-      setMessage('Generating anchors first. Approve them, then run the remaining family.');
+      setMessage(autoCalibration.size
+        ? 'Generating the low-cost calibration sample first. Approve it, then run the remaining family.'
+        : 'Generating anchors first. Approve them, then run the remaining family.');
     }
     const ids = new Set(batchTargets.map((item) => item.id));
-    props.onItems(
-      props.items.map((item) =>
-        ids.has(item.id) ? { ...item, status: 'queued', error: undefined } : item,
-      ),
-    );
+    const queuedItems: IconItem[] = props.items.map((item) =>
+        ids.has(item.id) ? { ...item, calibration: item.calibration || autoCalibration.has(item.id), status: 'queued' as const, error: undefined } : item,
+      );
+    props.onItems(queuedItems);
 
-    let current = props.items;
+    let current = queuedItems;
     const apply = (id: string, change: Partial<IconItem>) => {
       current = current.map((item) => (item.id === id ? { ...item, ...change } : item));
       props.onItems(current);
@@ -276,15 +317,22 @@ export default function IconGrid(props: Props) {
         <button
           type="button"
           className="primary"
-          disabled={!selectedCount || running || Boolean(props.generationBlocked && props.items.some(
+          disabled={!selectedCount || running || budgetBlocked || Boolean(props.generationBlocked && props.items.some(
             (item) => item.selected && (!item.sourceUrl || item.sourceMode === 'styled'),
           ))}
           onClick={() => runBatch(props.items.filter((item) => item.selected))}
         >
-          {running ? 'Generating…' : `Generate ${selectedCount || ''} selected`}
+          {running ? 'Generating…' : calibrationPending
+            ? `Calibrate ${calibrationSample.length}${nextEstimate.cost !== null ? ` · ~$${nextEstimate.cost.toFixed(2)}` : ''}`
+            : `Generate ${selectedCount || ''} selected${nextEstimate.cost !== null ? ` · ~$${nextEstimate.cost.toFixed(2)}` : ''}`}
         </button>
         {running && (
-          <button type="button" className="ghost" onClick={() => { stopped.current = true; }}>
+          <button type="button" className="ghost" onClick={() => {
+            stopped.current = true;
+            void cancelActiveGenerations().then((count) => setMessage(
+              count ? `Stopping and canceling ${count} in-flight generation${count === 1 ? '' : 's'}…` : 'Stopping after the current local render…',
+            ));
+          }}>
             Stop
           </button>
         )}
@@ -300,6 +348,13 @@ export default function IconGrid(props: Props) {
           />
         </label>
       </div>
+
+      {selectedCount > 0 && (
+        <p className={budgetBlocked ? 'status status-error' : 'hint'}>
+          {calibrationPending ? 'Next click: calibration sample · ' : ''}{nextEstimate.local} local/$0 · {nextEstimate.paid} paid output{nextEstimate.paid === 1 ? '' : 's'}
+          {nextEstimate.cost !== null ? ` · estimated $${nextEstimate.cost.toFixed(2)} of $${props.maxBatchCost.toFixed(2)} limit` : ''}
+        </p>
+      )}
 
       {progress && (
         <p className="status status-busy">
