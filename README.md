@@ -67,6 +67,18 @@ npm run dev               # web on :5173, proxy on :8787
 Then click **Add API key** in the header and paste your Replicate token. It is
 checked against Replicate before being kept, then attached to each request.
 
+## Agent automation through MCP
+
+The repository now includes a remote Streamable HTTP MCP service for Codex and
+Claude. It plans and cost-checks a family before spending, starts resumable
+jobs with idempotency protection, advances the bounded queue through Replicate
+completion webhooks, persists outputs, exposes structured per-icon errors, and
+supports selective retry, cancellation, long polling, and manifest export.
+
+Production jobs use Supabase rather than browser storage. See
+**[docs/MCP-AUTOMATION.md](docs/MCP-AUTOMATION.md)** for the database migration,
+environment variables, tool workflow, and Codex/Claude connection commands.
+
 ## Deploying
 
 The API lives in `api/` as serverless functions, so deploying the repository is

@@ -19,6 +19,8 @@ import image from '../api/image.js';
 import prediction from '../api/prediction.js';
 import status from '../api/status.js';
 import token from '../api/token.js';
+import mcp from '../api/mcp.js';
+import automationWebhook from '../api/automation-webhook.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -47,6 +49,9 @@ app.post('/api/cancel', cancel);
 app.get('/api/prediction', prediction);
 app.post('/api/describe', describe);
 app.get('/api/image', image);
+app.post('/api/mcp', mcp);
+app.post('/mcp', mcp);
+app.post('/api/automation-webhook', automationWebhook);
 
 const PORT = Number(process.env.PORT || 8787);
 app.listen(PORT, () => {

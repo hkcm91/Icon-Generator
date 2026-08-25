@@ -71,7 +71,7 @@ export async function checkToken(token) {
  * completion inside one request works locally and times out when deployed. The
  * client polls `/api/prediction` instead.
  */
-export async function createPrediction(token, model, input) {
+export async function createPrediction(token, model, input, options = {}) {
   const [owner, ...rest] = model.split('/');
   const endpoint = `${API}/models/${owner}/${rest.join('/')}/predictions`;
 
@@ -79,7 +79,11 @@ export async function createPrediction(token, model, input) {
     const created = await fetch(endpoint, {
       method: 'POST',
       headers: authHeaders(token),
-      body: JSON.stringify({ input: input ?? {} }),
+      body: JSON.stringify({
+        input: input ?? {},
+        ...(options.webhook ? { webhook: options.webhook } : {}),
+        ...(options.webhookEventsFilter ? { webhook_events_filter: options.webhookEventsFilter } : {}),
+      }),
     });
     const prediction = await created.json().catch(() => ({}));
 
