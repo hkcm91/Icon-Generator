@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { estimateGlyphBatch, modelOutputCost, needsPaidGeneration } from '../src/core/cost';
 import {
+  containerGenerationUsesAlpha,
   frameVariantTarget,
   makeItem,
   repairedTransparentOutputMode,
@@ -10,6 +11,12 @@ import {
 import { hydrateProject } from '../src/state/useProject';
 
 describe('generation cost controls', () => {
+  it('makes construction authoritative over legacy transparency state', () => {
+    expect(containerGenerationUsesAlpha('filled')).toBe(false);
+    expect(containerGenerationUsesAlpha('open-frame')).toBe(true);
+    expect(containerGenerationUsesAlpha('isolated')).toBe(true);
+  });
+
   it('bounds decorative frame pools from one to six reusable variants', () => {
     expect(frameVariantTarget(-20)).toBe(1);
     expect(frameVariantTarget(0)).toBe(1);

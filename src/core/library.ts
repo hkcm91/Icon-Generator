@@ -15,6 +15,11 @@ export type ItemStatus = 'draft' | 'queued' | 'generating' | 'ready' | 'failed';
 export type IconOutputMode = 'transparent' | 'framed' | 'composed' | 'complete';
 export type ContainerMode = 'isolated' | 'open-frame' | 'filled';
 
+/** The construction picker is authoritative over legacy alpha preferences. */
+export function containerGenerationUsesAlpha(mode: ContainerMode): boolean {
+  return mode !== 'filled';
+}
+
 /** 0% reuses one frame; 100% spreads the family across six approved frames. */
 export function frameVariantTarget(detailVariation: number): number {
   const value = Math.max(0, Math.min(100, Number(detailVariation) || 0));
