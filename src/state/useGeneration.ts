@@ -16,6 +16,8 @@ import {
 import { materialPalettePrompt, type MaterialPalette } from '../core/materialPalette';
 import type { ContainerSpec } from '../core/spec';
 import { GENERATION_CACHE, blobToImage, canvasToBlobAsync, getBlob, putBlob } from '../core/store';
+import { deleteBlob } from '../core/store';
+import { inspectOpenFrame } from '../core/frameValidation';
 
 export type GenStatus =
   | { kind: 'idle' }
@@ -272,12 +274,19 @@ export function useGeneration() {
     );
     const key = await cacheKey('open-frame', options.model, input);
     const cached = await cachedLayer(key);
-    if (cached) return cached;
+    if (cached) {
+      if (!inspectOpenFrame(cached, options.spec.size).subjectLikely) return cached;
+      await deleteBlob(GENERATION_CACHE, key);
+    }
     const result = await generateImage(options.model, input);
     const image = await loadImage(result.images[0]);
     const frame = result.alphaAccepted && hasNativeAlpha(image)
       ? preserveAlphaLayer(image, options.spec.size)
       : keyOutBackground(image, options.spec.size);
+    const inspection = inspectOpenFrame(frame, options.spec.size);
+    if (inspection.subjectLikely) {
+      throw new Error('The model left a large central subject in the extracted frame. Nothing was approved or cached; press Extract clean frame again for a new attempt.');
+    }
     await rememberLayer(key, frame);
     return frame;
   }, []);

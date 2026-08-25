@@ -24,6 +24,7 @@ import {
 } from '../core/export';
 import { modelOutputCost, needsPaidGeneration } from '../core/cost';
 import { mergeMaterialPalette, type MaterialPalette, type MaterialRole } from '../core/materialPalette';
+import { inspectOpenFrame } from '../core/frameValidation';
 
 interface Props {
   familyName: string;
@@ -232,6 +233,18 @@ export default function SimpleStudio(props: Props) {
     return () => { cancelled = true; };
   }, [props.master, props.materialLayer, props.onMaterialLayer]);
 
+  useEffect(() => {
+    if (props.containerMode !== 'open-frame' || !props.frameReady || !props.materialLayer) return;
+    const inspection = inspectOpenFrame(props.materialLayer, props.spec.size);
+    if (!inspection.subjectLikely) return;
+    props.onFrameReady(false);
+    props.onClearFrameVariants();
+    setStatus({
+      kind: 'error',
+      message: `The current frame still contains a large central object (${Math.round(inspection.centralCoverage * 100)}% of the safe area). Re-extract it before generating the family.`,
+    });
+  }, [props.containerMode, props.frameReady, props.materialLayer, props.spec.size, props.onFrameReady, props.onClearFrameVariants, setStatus]);
+
   // Older versions could save a transparent AI layer but mark its card for
   // container composition. Once IndexedDB restores those pixels, repair only
   // the affected AI results and persist the corrected display/export mode.
@@ -423,6 +436,7 @@ export default function SimpleStudio(props: Props) {
       setStatus({ kind: 'error', message: 'Upload a finished reference before extracting an open frame.' });
       return;
     }
+    props.onFrameReady(false);
     const success = await generateOpenFrame({
       spec: props.spec,
       model: props.model,
@@ -449,6 +463,21 @@ export default function SimpleStudio(props: Props) {
       props.onFrameReady(true);
       props.onClearFrameVariants();
     }
+  };
+
+  const approveExistingFrame = () => {
+    if (!props.materialLayer) return;
+    const inspection = inspectOpenFrame(props.materialLayer, props.spec.size);
+    if (inspection.subjectLikely) {
+      setStatus({
+        kind: 'error',
+        message: `This artwork still occupies ${Math.round(inspection.centralCoverage * 100)}% of the central safe area. It cannot be approved as a subject-free frame.`,
+      });
+      props.onFrameReady(false);
+      return;
+    }
+    props.onFrameReady(true);
+    setStatus({ kind: 'ok', message: 'The existing artwork passed the empty-center check.' });
   };
 
   const targetFrameCount = frameVariantTarget(props.detailVariation);
@@ -783,7 +812,7 @@ export default function SimpleStudio(props: Props) {
                   {props.frameReady ? 'Re-extract clean frame' : 'Extract clean frame'}
                 </button>
                 {!props.frameReady && props.master && (
-                  <button type="button" className="ghost" onClick={() => props.onFrameReady(true)}>
+                  <button type="button" className="ghost" onClick={approveExistingFrame}>
                     Frame already has no subject
                   </button>
                 )}
