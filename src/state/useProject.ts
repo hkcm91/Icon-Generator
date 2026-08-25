@@ -81,9 +81,9 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     ...DEFAULT_PROJECT,
     ...parsed,
     model: migrateExpensiveDefault ? 'openai/gpt-image-2' : (parsed.model ?? DEFAULT_PROJECT.model),
-    // Front-icon Scale Saver never inherits an old Medium/High selection.
-    // Those tiers reach $0.047/$0.128 per output and caused silent cost jumps.
-    quality: 'low',
+    // GPT tiers are now explicit entries in the model dropdown. Preserve the
+    // chosen entry, but reject malformed/stale values back to Low.
+    quality: parsed.quality === 'medium' || parsed.quality === 'high' ? parsed.quality : 'low',
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
     calibrationRequired: parsed.calibrationRequired ?? true,
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
