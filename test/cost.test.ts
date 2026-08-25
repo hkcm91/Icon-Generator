@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateGlyphBatch, modelOutputCost } from '../src/core/cost';
+import { estimateGlyphBatch, modelOutputCost, needsPaidGeneration } from '../src/core/cost';
 import { makeItem, repairedTransparentOutputMode, resolveIconOutputMode } from '../src/core/library';
 import { hydrateProject } from '../src/state/useProject';
 
@@ -15,6 +15,17 @@ describe('generation cost controls', () => {
     const named = makeItem('Named');
     expect(estimateGlyphBatch([exact, styled, named], 'openai/gpt-image-2', 'low')).toEqual({
       paid: 2, local: 1, outputs: 2, cost: 0.024,
+    });
+  });
+
+  it('always routes built-in Material glyphs through paid AI generation', () => {
+    const staleExact = makeItem('Home', {
+      sourceUrl: '/libraries/glyphs/material/home-fill.svg',
+      sourceMode: 'exact',
+    });
+    expect(needsPaidGeneration(staleExact)).toBe(true);
+    expect(estimateGlyphBatch([staleExact], 'openai/gpt-image-2', 'low')).toEqual({
+      paid: 1, local: 0, outputs: 1, cost: 0.012,
     });
   });
 

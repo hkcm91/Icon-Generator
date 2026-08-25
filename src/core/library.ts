@@ -60,6 +60,11 @@ export function defaultGlyphSourceMode(sourceUrl?: string): 'exact' | 'styled' {
   return !sourceUrl || isAiGuidedCatalogSource(sourceUrl) ? 'styled' : 'exact';
 }
 
+/** Built-in glyphs are references only, even if stale saved metadata says exact. */
+export function usesAiGeneration(item: IconItem): boolean {
+  return isAiGuidedCatalogSource(item.sourceUrl) || !item.sourceUrl || item.sourceMode === 'styled';
+}
+
 export interface BuiltinGlyphRepair {
   items: IconItem[];
   clearedIds: string[];
@@ -79,7 +84,9 @@ export function repairLegacyBuiltinGlyphModes(items: IconItem[]): BuiltinGlyphRe
       ...item,
       sourceMode: 'styled' as const,
       status: 'draft' as const,
-      selected: true,
+      // Preserve batch selection. Auto-selecting hundreds of migrated cards
+      // can exceed the cost guard and make Generate appear broken.
+      selected: item.selected,
       revision: 0,
       activeRevision: undefined,
       outputMode: undefined,
@@ -94,7 +101,7 @@ export function repairLegacyBuiltinGlyphModes(items: IconItem[]): BuiltinGlyphRe
 export function resolveIconOutputMode(item: IconItem, wantAlpha: boolean): IconOutputMode {
   if (item.outputMode) return item.outputMode;
   if (wantAlpha) return 'transparent';
-  return !item.sourceUrl || item.sourceMode === 'styled' ? 'complete' : 'composed';
+  return usesAiGeneration(item) ? 'complete' : 'composed';
 }
 
 /**
@@ -106,7 +113,7 @@ export function repairedTransparentOutputMode(
   item: IconItem,
   hasRealAlpha: boolean,
 ): IconOutputMode | undefined {
-  const generated = !item.sourceUrl || item.sourceMode === 'styled';
+  const generated = usesAiGeneration(item);
   return generated && hasRealAlpha
     ? 'transparent'
     : item.outputMode;

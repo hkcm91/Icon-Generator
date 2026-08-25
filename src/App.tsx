@@ -153,8 +153,11 @@ export default function App() {
 
   /** Repair the catalog regression once per saved project. */
   useEffect(() => {
-    if (!store.loaded || project.builtinGlyphStyleVersion >= 1) return;
+    if (!store.loaded) return;
     const repair = repairLegacyBuiltinGlyphModes(project.items);
+    // Enforce reference-only behavior even if a v1 project was later switched
+    // back to exact mode before that choice was removed.
+    if (!repair.clearedIds.length && project.builtinGlyphStyleVersion >= 1) return;
     if (repair.clearedIds.length) store.clearItemGlyphs(repair.clearedIds);
     setProject((current) => ({
       ...current,

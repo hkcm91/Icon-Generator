@@ -1,4 +1,4 @@
-import type { IconItem } from './library';
+import { usesAiGeneration, type IconItem } from './library';
 
 export type ImageQuality = 'low' | 'medium' | 'high';
 
@@ -10,9 +10,9 @@ export function modelOutputCost(model: string, quality: ImageQuality = 'low'): n
   return null;
 }
 
-/** Exact catalog/custom artwork is composited locally and never reaches the image API. */
+/** Exact brand/custom artwork is local; built-in shape glyphs always use the image API. */
 export function needsPaidGeneration(item: IconItem): boolean {
-  return !item.sourceUrl || item.sourceMode === 'styled';
+  return usesAiGeneration(item);
 }
 
 export function estimateGlyphBatch(
