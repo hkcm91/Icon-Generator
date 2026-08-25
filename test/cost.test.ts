@@ -52,7 +52,7 @@ describe('generation cost controls', () => {
   });
 
   it('removes added containers from existing AI results with real alpha', () => {
-    const generated = makeItem('Generated', { status: 'ready', revision: 1, outputMode: 'complete' });
+    const generated = makeItem('Generated', { status: 'draft', revision: 1, outputMode: 'complete' });
     const exact = makeItem('Exact', {
       status: 'ready', revision: 1, outputMode: 'composed', sourceUrl: '/glyph.svg', sourceMode: 'exact',
     });

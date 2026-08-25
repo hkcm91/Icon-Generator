@@ -167,7 +167,7 @@ export default function SimpleStudio(props: Props) {
   useEffect(() => {
     let changed = false;
     const repaired = props.items.map((item) => {
-      if (item.status !== 'ready' || item.outputMode === 'transparent') return item;
+      if (item.outputMode === 'transparent') return item;
       if (item.sourceUrl && item.sourceMode !== 'styled') return item;
       const image = props.glyphs.get(item.id);
       if (!image) return item;
@@ -551,7 +551,7 @@ export default function SimpleStudio(props: Props) {
               onChange={(event) => {
                 const legacyMode = props.glyphTransparency ? 'transparent' : undefined;
                 props.onItems(props.items.map((item) => {
-                  if (item.status !== 'ready' || item.outputMode || !props.glyphs.has(item.id)) return item;
+                  if (item.outputMode || !props.glyphs.has(item.id)) return item;
                   return {
                     ...item,
                     outputMode: legacyMode ?? (needsPaidGeneration(item) ? 'complete' : 'composed'),
