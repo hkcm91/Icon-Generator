@@ -385,7 +385,9 @@ export default function IconGrid(props: Props) {
               <Thumb
                 spec={props.spec}
                 compose={composeFor(item)}
-                layers={{ material: props.material, glyph: props.glyphs.get(item.id) ?? null }}
+                layers={props.options.wantAlpha || !needsPaidGeneration(item)
+                  ? { material: props.material, glyph: props.glyphs.get(item.id) ?? null }
+                  : { material: props.glyphs.get(item.id) ?? null, glyph: null }}
               />
 
               <div className="card-name" title={item.concept || item.name}>

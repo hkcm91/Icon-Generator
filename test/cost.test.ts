@@ -18,8 +18,9 @@ describe('generation cost controls', () => {
     });
   });
 
-  it('does not restore a legacy high-cost front-page tier', () => {
-    expect(hydrateProject({ quality: 'high', premiumAllowed: true }).quality).toBe('low');
+  it('persists the explicitly selected GPT model tier', () => {
+    expect(hydrateProject({ quality: 'high', premiumAllowed: true }).quality).toBe('high');
+    expect(hydrateProject({ quality: 'automatic' as never }).quality).toBe('low');
   });
 
   it("persists the user's native-transparency choice", () => {

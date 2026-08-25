@@ -300,6 +300,24 @@ export function glyphPrompt(
     .join(' ');
 }
 
+/** One-pass artwork used when the user asks the model to include the container. */
+export function completeIconPrompt(
+  subject: string,
+  material: string,
+  hasMaster = false,
+): string {
+  return [
+    `Create one complete finished app icon depicting ${subject.trim() || 'a simple symbol'}.`,
+    material.trim() ? `Material and finish: ${material.trim()}.` : '',
+    hasMaster
+      ? 'Use the reference as the authoritative container, material, palette, lighting, camera, and proportions. Keep the container and replace only its symbol with the requested subject.'
+      : 'Include a polished, fully visible icon container behind the symbol.',
+    'Return a fully opaque PNG containing the complete container and symbol together.',
+    'Exactly one centered icon, square composition, consistent empty margins.',
+    'No transparency, isolated glyph, chroma screen, contact sheet, text, label, watermark, device, or mockup.',
+  ].filter(Boolean).join(' ');
+}
+
 /**
  * Per-model input shaping. Each model names its parameters differently, and
  * getting a square aspect ratio matters here — a non-square frame would be
@@ -338,7 +356,7 @@ export function modelInput(
     // png (or webp) is required alongside a transparent background; jpeg is not
     // a valid pairing.
     base.output_format = 'png';
-    if (wantAlpha && modelSupportsAlpha(model)) base.background = 'transparent';
+    base.background = wantAlpha && modelSupportsAlpha(model) ? 'transparent' : 'opaque';
     if (images.length) base.input_images = images;
     return base;
   }

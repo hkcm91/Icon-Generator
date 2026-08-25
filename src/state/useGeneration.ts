@@ -3,6 +3,7 @@ import { cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground } from '../core/c
 import { buildConditioning, type ConditioningMode } from '../core/condition';
 import {
   conditionedMaterialPrompt,
+  completeIconPrompt,
   generateImage,
   glyphPrompt,
   loadImage,
@@ -171,6 +172,31 @@ export function useGeneration() {
     return { layer, native, cached: false };
   }, []);
 
+  const runCompleteIcon = useCallback(async (options: GenerationOptions, subject?: string) => {
+    const references = [options.glyphReference, options.master, ...(options.references ?? [])].filter(
+      (value): value is string => Boolean(value),
+    );
+    const input = modelInput(
+      options.model,
+      recipePrompt(
+        completeIconPrompt(subject ?? options.glyphSubject, options.material, Boolean(options.master)),
+        options,
+      ),
+      options.spec.size,
+      references,
+      undefined,
+      false,
+      options.quality,
+    );
+    const key = await cacheKey('complete-icon', options.model, input);
+    const cached = await cachedLayer(key);
+    if (cached) return cached;
+    const result = await generateImage(options.model, input);
+    const image = await loadImage(result.images[0]);
+    await rememberLayer(key, image);
+    return image;
+  }, []);
+
   const generateMaterial = useCallback(
     async (options: GenerationOptions, onMaterial: (image: CanvasImageSource) => void) => {
       setStatus({ kind: 'busy', what: 'Painting the surface' });
@@ -196,6 +222,24 @@ export function useGeneration() {
       }
     },
     [runGlyph],
+  );
+
+  const generateCompleteIcon = useCallback(
+    async (
+      options: GenerationOptions,
+      onComplete: (image: CanvasImageSource) => void,
+      onGlyph: (image: CanvasImageSource | null) => void,
+    ) => {
+      setStatus({ kind: 'busy', what: 'Drawing the complete icon' });
+      try {
+        onComplete(await runCompleteIcon(options));
+        onGlyph(null);
+        setStatus({ kind: 'ok', message: 'Complete opaque icon generated with its container.' });
+      } catch (error) {
+        setStatus({ kind: 'error', message: (error as Error).message });
+      }
+    },
+    [runCompleteIcon],
   );
 
   /** One press, both layers — what the guided view uses. */
@@ -230,9 +274,11 @@ export function useGeneration() {
    * shared status string cannot represent twelve cards at once.
    */
   const generateForItem = useCallback(
-    async (options: GenerationOptions, subject: string) => (await runGlyph(options, subject)).layer,
-    [runGlyph],
+    async (options: GenerationOptions, subject: string) => options.wantAlpha
+      ? (await runGlyph(options, subject)).layer
+      : runCompleteIcon(options, subject),
+    [runCompleteIcon, runGlyph],
   );
 
-  return { status, setStatus, generateMaterial, generateGlyph, generateIcon, generateForItem };
+  return { status, setStatus, generateMaterial, generateGlyph, generateCompleteIcon, generateIcon, generateForItem };
 }

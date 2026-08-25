@@ -1,14 +1,13 @@
 import { createPrediction, requireToken } from './_replicate.js';
 
 /**
- * Front Icon is a scale workflow, so GPT generation is always one Low output.
- * Enforce this at the API boundary as well as in React: an old open tab or
- * stale localStorage value must never be able to restore $0.128 High calls.
+ * Front Icon exposes GPT tiers explicitly, but always creates one output.
+ * Invalid or omitted qualities fall back to Low at the API boundary.
  */
 export function clampFrontIconCost(model, input) {
   const safe = input && typeof input === 'object' && !Array.isArray(input) ? { ...input } : {};
   if (model === 'openai/gpt-image-2' || model === 'openai/gpt-image-1.5') {
-    safe.quality = 'low';
+    safe.quality = ['low', 'medium', 'high'].includes(safe.quality) ? safe.quality : 'low';
     safe.number_of_images = 1;
   }
   return safe;

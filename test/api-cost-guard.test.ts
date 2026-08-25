@@ -4,13 +4,20 @@ import { describe, expect, it } from 'vitest';
 import { clampFrontIconCost } from '../api/generate.js';
 
 describe('Front Icon server cost guard', () => {
-  it('overrides stale GPT High and multiple-output requests', () => {
+  it('preserves an explicit GPT tier but clamps multiple outputs', () => {
     expect(clampFrontIconCost('openai/gpt-image-2', {
       prompt: 'moon',
       quality: 'high',
       number_of_images: 4,
     })).toMatchObject({
       prompt: 'moon',
+      quality: 'high',
+      number_of_images: 1,
+    });
+  });
+
+  it('falls back to Low for an invalid GPT tier', () => {
+    expect(clampFrontIconCost('openai/gpt-image-2', { quality: 'auto' })).toMatchObject({
       quality: 'low',
       number_of_images: 1,
     });

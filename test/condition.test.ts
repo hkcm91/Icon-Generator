@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildConditioning, edgeSvg, maskSvg, shapeReferenceSvg } from '../src/core/condition';
 import { containerPath } from '../src/core/geometry';
-import { glyphPrompt, modelConditioning, modelInput } from '../src/core/replicate';
+import { completeIconPrompt, glyphPrompt, modelConditioning, modelInput } from '../src/core/replicate';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../src/core/spec';
 
 const spec = (overrides: Partial<ContainerSpec> = {}) =>
@@ -85,10 +85,16 @@ describe('model input wiring', () => {
     expect(input.prompt).toBe('p');
     expect(input.input_images).toBeUndefined();
     expect(input.quality).toBe('low');
+    expect(input.background).toBe('opaque');
   });
 
   it('uses an explicitly selected GPT Image quality tier', () => {
     expect(modelInput('openai/gpt-image-2', 'p', 1024, [], undefined, false, 'high').quality).toBe('high');
+  });
+
+  it('sends transparent only when native-alpha output is selected', () => {
+    expect(modelInput('openai/gpt-image-2', 'p', 1024, [], undefined, true).background).toBe('transparent');
+    expect(modelInput('openai/gpt-image-2', 'p', 1024, [], undefined, false).background).toBe('opaque');
   });
 
   it('keeps a square frame so the compositor never centre-crops off-centre', () => {
@@ -108,5 +114,14 @@ describe('glyph isolation prompt', () => {
 
   it('uses chroma green when transparency is turned off', () => {
     expect(glyphPrompt('moon', 'pearl', false, false)).toContain('#00FF00');
+  });
+});
+
+describe('complete icon prompt', () => {
+  it('requires the container and explicitly forbids transparent output', () => {
+    const prompt = completeIconPrompt('moon', 'pearl glass', true);
+    expect(prompt).toContain('complete container and symbol together');
+    expect(prompt).toContain('fully opaque PNG');
+    expect(prompt).toContain('No transparency');
   });
 });

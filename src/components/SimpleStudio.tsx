@@ -20,7 +20,7 @@ import {
   renderAtSize,
   svgMask,
 } from '../core/export';
-import { modelOutputCost } from '../core/cost';
+import { modelOutputCost, needsPaidGeneration } from '../core/cost';
 
 interface Props {
   familyName: string;
@@ -130,7 +130,7 @@ function downscale(source: HTMLCanvasElement, size: number): string {
  * supposed to be settled.
  */
 export default function SimpleStudio(props: Props) {
-  const { status, generateIcon, generateGlyph, generateForItem, setStatus } = useGeneration();
+  const { status, generateIcon, generateGlyph, generateCompleteIcon, generateForItem, setStatus } = useGeneration();
   const [tracing, setTracing] = useState('');
   const [notes, setNotes] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
@@ -138,8 +138,10 @@ export default function SimpleStudio(props: Props) {
   const lockedInput = useRef<HTMLInputElement>(null);
   const referenceInput = useRef<HTMLInputElement>(null);
   const active = matchPreset(props.spec);
-  const scaleSaverQuality = 'low' as const;
-  const cost = modelOutputCost(props.model, scaleSaverQuality);
+  const selectedModel = props.model === 'openai/gpt-image-2'
+    ? `${props.model}#${props.quality}`
+    : props.model;
+  const cost = modelOutputCost(props.model, props.quality);
   const premiumBlocked = cost !== null && cost > 0.05 && !props.premiumAllowed;
   const premiumMessage = premiumBlocked
     ? `Premium generation is locked: this setting is about $${cost.toFixed(3)} per output.`
@@ -229,14 +231,19 @@ export default function SimpleStudio(props: Props) {
         glyphStyle: '',
         conditioning: 'auto',
         wantAlpha: props.glyphTransparency,
-        // A locked container is output artwork, not a glyph-style reference.
-        // Sending it here teaches the model to repaint the whole tile.
-        master: props.lockedContainer ? null : (props.master?.dataUrl ?? null),
+        // Isolated mode keeps the container out of the glyph request. Complete
+        // mode deliberately sends it because repainting the whole icon is the
+        // selected outcome.
+        master: props.glyphTransparency && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
         references: props.references.map((reference) => reference.dataUrl),
         familyPrompt: props.familyPrompt,
         negativePrompt: props.negativePrompt,
-        quality: scaleSaverQuality,
+        quality: props.quality,
       };
+    if (!props.glyphTransparency) {
+      void generateCompleteIcon(options, props.onMaterialLayer, props.onGlyphLayer);
+      return;
+    }
     if (props.lockedContainer && props.materialLayer) {
       if (!props.glyph.trim()) {
         setStatus({ kind: 'ok', message: 'Approved container kept exactly; no glyph requested.' });
@@ -273,7 +280,10 @@ export default function SimpleStudio(props: Props) {
 
       for (const { item, glyph } of targets) {
         const stem = safe(item.name);
-        const layers = { material: props.materialLayer, glyph };
+        const completeFamilyIcon = 'sourceMode' in item && !props.glyphTransparency && needsPaidGeneration(item as IconItem);
+        const layers = !completeFamilyIcon
+          ? { material: props.materialLayer, glyph }
+          : { material: glyph ?? props.materialLayer, glyph: null };
         const itemCompose: ComposeOptions = {
           ...props.compose,
           glyphScale: props.compose.glyphScale * ('opticalScale' in item ? (item.opticalScale ?? 1) : 1),
@@ -477,15 +487,21 @@ export default function SimpleStudio(props: Props) {
           </label>
           <label className="field">
             <span className="field-label">Generation model</span>
-            <input value={props.model} placeholder="owner/model" onChange={(event) => props.onModel(event.target.value)} />
+            <select value={selectedModel} onChange={(event) => {
+              const [model, quality] = event.target.value.split('#');
+              props.onModel(model);
+              if (model === 'openai/gpt-image-2' && (quality === 'low' || quality === 'medium' || quality === 'high')) {
+                props.onQuality(quality);
+              }
+            }}>
+              <option value="openai/gpt-image-2#low">GPT Image 2 · Low — ~$0.012</option>
+              <option value="openai/gpt-image-2#medium">GPT Image 2 · Medium — ~$0.047</option>
+              <option value="openai/gpt-image-2#high">GPT Image 2 · High — ~$0.128</option>
+              <option value="bytedance/seedream-4">Seedream 4 — ~$0.030</option>
+              <option value="google/nano-banana">Nano Banana — ~$0.039</option>
+              <option value="google/nano-banana-pro">Nano Banana Pro — ~$0.150</option>
+            </select>
           </label>
-          {props.model === 'openai/gpt-image-2' && (
-            <div className="field">
-              <span className="field-label">Quality and cost</span>
-              <div className="scale-saver-quality">Scale Saver Low — about $0.012/output</div>
-              <p className="hint">Final exports keep this tier; size and finishing are handled locally.</p>
-            </div>
-          )}
           <label className="toggle glyph-alpha-toggle">
             <input type="checkbox" checked={props.glyphTransparency}
               disabled={props.model !== 'openai/gpt-image-2'}
@@ -494,7 +510,7 @@ export default function SimpleStudio(props: Props) {
               <b>Transparent glyph only</b>
               <small>{props.glyphTransparency
                 ? 'Native alpha; the locked container is never sent to the glyph model.'
-                : 'Off; generate on chroma green and remove the background locally.'}</small>
+                : 'Off; generate one complete opaque image containing the container and symbol.'}</small>
             </span>
           </label>
           {cost !== null && <p className={cost > 0.05 ? 'status status-error' : 'status status-ok'}>
@@ -565,7 +581,7 @@ export default function SimpleStudio(props: Props) {
           </h3>
           <div className="row">
             <button type="button" className="primary" onClick={run} disabled={busy || premiumBlocked}>
-              {busy ? 'Working…' : `Generate icon${cost !== null ? ` · ~${(cost * (props.glyph.trim() ? 2 : 1)).toFixed(3)}` : ''}`}
+              {busy ? 'Working…' : `Generate icon${cost !== null ? ` · ~${(cost * (!props.glyphTransparency || !props.glyph.trim() ? 1 : 2)).toFixed(3)}` : ''}`}
             </button>
             <button
               type="button"
@@ -624,11 +640,11 @@ export default function SimpleStudio(props: Props) {
               glyphStyle: '',
               conditioning: 'auto',
               wantAlpha: props.glyphTransparency,
-              master: props.lockedContainer ? null : (props.master?.dataUrl ?? null),
+              master: props.glyphTransparency && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
               references: props.references.map((reference) => reference.dataUrl),
               familyPrompt: props.familyPrompt,
               negativePrompt: props.negativePrompt,
-              quality: scaleSaverQuality,
+              quality: props.quality,
             }}
             generationBlocked={premiumMessage}
             calibrationRequired={props.calibrationRequired}
