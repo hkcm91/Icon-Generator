@@ -70,8 +70,6 @@ interface Props {
   onExportApprovedOnly: (value: boolean) => void;
   exportSelectedOnly: boolean;
   onExportSelectedOnly: (value: boolean) => void;
-  calibrationRequired: boolean;
-  onCalibrationRequired: (value: boolean) => void;
   maxBatchCost: number;
   onMaxBatchCost: (value: number) => void;
 }
@@ -610,12 +608,7 @@ export default function SimpleStudio(props: Props) {
             <span className="step-num">4</span> Make a whole family
           </h3>
           <details className="scale-saver">
-            <summary><strong>Batch cost safeguards</strong></summary>
-            <label className="toggle">
-              <input type="checkbox" checked={props.calibrationRequired}
-                onChange={(event) => props.onCalibrationRequired(event.target.checked)} />
-              Generate and approve six paid samples before the full batch
-            </label>
+            <summary><strong>Batch cost limit</strong></summary>
             <label className="field field-inline">
               <span className="field-label">Hard limit per batch</span>
               <span>$</span>
@@ -652,7 +645,6 @@ export default function SimpleStudio(props: Props) {
               quality: props.quality,
             }}
             generationBlocked={premiumMessage}
-            calibrationRequired={props.calibrationRequired}
             maxBatchCost={props.maxBatchCost}
           />
         </li>

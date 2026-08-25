@@ -43,8 +43,6 @@ export interface Project {
   items: IconItem[];
   /** How many generations run at once. */
   concurrency: number;
-  /** Require a small approved sample before releasing a paid family batch. */
-  calibrationRequired: boolean;
   /** Hard ceiling for one click's estimated image-generation spend. */
   maxBatchCost: number;
 }
@@ -77,7 +75,6 @@ const DEFAULT_PROJECT: Project = {
   exportSelectedOnly: false,
   items: [],
   concurrency: 3,
-  calibrationRequired: true,
   maxBatchCost: 1,
 };
 
@@ -96,7 +93,6 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     qualitySelectionVersion: 1,
     borderlessVersion: 1,
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
-    calibrationRequired: parsed.calibrationRequired ?? true,
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
     glyphTransparency: parsed.glyphTransparency ?? true,
     spec: normalizeSpec(parsed.spec),
