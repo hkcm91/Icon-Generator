@@ -18,6 +18,7 @@ import {
   download,
   ICO_SIZES,
   renderAtSize,
+  renderCompleteAtSize,
   renderOpenFrameAtSize,
   renderTransparentAtSize,
   svgMask,
@@ -659,7 +660,9 @@ export default function SimpleStudio(props: Props) {
           ? renderTransparentAtSize(props.spec, size, glyph, itemCompose)
           : outputMode === 'framed'
             ? renderOpenFrameAtSize(props.spec, size, layers, itemCompose)
-            : renderAtSize(props.spec, size, layers, itemCompose);
+            : outputMode === 'complete'
+              ? renderCompleteAtSize(props.spec, size, glyph, itemCompose)
+              : renderAtSize(props.spec, size, layers, itemCompose);
         for (const target of PLATFORM_TARGETS) {
           const canvas = render(target.size);
           files.push({

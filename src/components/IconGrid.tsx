@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { composeIcon, composeOpenFrame, preserveMasterContainerRim, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { composeCompleteIcon, composeIcon, composeOpenFrame, preserveMasterContainerRim, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
   containerGenerationUsesAlpha,
@@ -68,7 +68,9 @@ function Thumb({
         ? renderTransparentLayer({ ...spec, size: 128 }, layers.glyph, compose)
         : mode === 'framed'
           ? composeOpenFrame({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 })
-          : composeIcon({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 });
+          : mode === 'complete'
+            ? composeCompleteIcon({ ...spec, size: 128 }, layers.material, { ...compose, rimWidth: 0 })
+            : composeIcon({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 });
     if (empty) canvas.width = canvas.height = 128;
     return canvas.toDataURL('image/png');
   }, [spec, compose, layers, empty, mode]);
