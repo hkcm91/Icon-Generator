@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
+import { cleanGeneratedAlpha, clearOpenFrameCenter, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
 import { buildConditioning, type ConditioningMode } from '../core/condition';
 import {
   conditionedMaterialPrompt,
@@ -275,14 +275,16 @@ export function useGeneration() {
     const key = await cacheKey('open-frame', options.model, input);
     const cached = await cachedLayer(key);
     if (cached) {
-      if (!inspectOpenFrame(cached, options.spec.size).subjectLikely) return cached;
+      const cleaned = clearOpenFrameCenter(options.spec, cached);
+      if (!inspectOpenFrame(cleaned, options.spec.size).subjectLikely) return cleaned;
       await deleteBlob(GENERATION_CACHE, key);
     }
     const result = await generateImage(options.model, input);
     const image = await loadImage(result.images[0]);
-    const frame = result.alphaAccepted && hasNativeAlpha(image)
+    const rawFrame = result.alphaAccepted && hasNativeAlpha(image)
       ? preserveAlphaLayer(image, options.spec.size)
       : keyOutBackground(image, options.spec.size);
+    const frame = clearOpenFrameCenter(options.spec, rawFrame);
     const inspection = inspectOpenFrame(frame, options.spec.size);
     if (inspection.subjectLikely) {
       throw new Error('The model left a large central subject in the extracted frame. Nothing was approved or cached; press Extract clean frame again for a new attempt.');

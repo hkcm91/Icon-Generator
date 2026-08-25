@@ -5,7 +5,7 @@ import { traceMaster } from '../core/trace';
 import { describeMaster } from '../core/describe';
 import { analyzeReference, type ThemeSuggestion } from '../core/vision';
 import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '../core/spec';
-import { hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { clearOpenFrameCenter, hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
 import { frameVariantTarget, makeItem, repairedTransparentOutputMode, resolveIconOutputMode, stableFrameIndex, type ContainerMode, type IconItem } from '../core/library';
@@ -234,16 +234,25 @@ export default function SimpleStudio(props: Props) {
   }, [props.master, props.materialLayer, props.onMaterialLayer]);
 
   useEffect(() => {
-    if (props.containerMode !== 'open-frame' || !props.frameReady || !props.materialLayer) return;
-    const inspection = inspectOpenFrame(props.materialLayer, props.spec.size);
-    if (!inspection.subjectLikely) return;
-    props.onFrameReady(false);
-    props.onClearFrameVariants();
-    setStatus({
-      kind: 'error',
-      message: `The current frame still contains a large central object (${Math.round(inspection.centralCoverage * 100)}% of the safe area). Re-extract it before generating the family.`,
-    });
-  }, [props.containerMode, props.frameReady, props.materialLayer, props.spec.size, props.onFrameReady, props.onClearFrameVariants, setStatus]);
+    if (props.containerMode !== 'open-frame' || !props.materialLayer) return;
+    const cleaned = clearOpenFrameCenter(props.spec, props.materialLayer);
+    const inspection = inspectOpenFrame(cleaned, props.spec.size);
+    if (!inspection.subjectLikely) {
+      if (!props.frameReady) {
+        props.onFrameReady(true);
+        setStatus({ kind: 'ok', message: 'Central subject removed locally. The frame is ready.' });
+      }
+      return;
+    }
+    if (props.frameReady) {
+      props.onFrameReady(false);
+      props.onClearFrameVariants();
+      setStatus({
+        kind: 'error',
+        message: 'Part of the source subject extends into the decorative frame. Extract a clean frame before generating the family.',
+      });
+    }
+  }, [props.containerMode, props.frameReady, props.materialLayer, props.spec, props.onFrameReady, props.onClearFrameVariants, setStatus]);
 
   // Older versions could save a transparent AI layer but mark its card for
   // container composition. Once IndexedDB restores those pixels, repair only
@@ -467,7 +476,7 @@ export default function SimpleStudio(props: Props) {
 
   const approveExistingFrame = () => {
     if (!props.materialLayer) return;
-    const inspection = inspectOpenFrame(props.materialLayer, props.spec.size);
+    const inspection = inspectOpenFrame(clearOpenFrameCenter(props.spec, props.materialLayer), props.spec.size);
     if (inspection.subjectLikely) {
       setStatus({
         kind: 'error',

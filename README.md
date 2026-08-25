@@ -72,9 +72,9 @@ The palette is active automatically and collapsed to one swatch row in the
 guided view; its detected recipes can be inspected without adding another
 required setup screen.
 
-Open-frame composition clears the entire glyph safe area to true alpha in
-code, so frame decoration can surround a symbol but can never appear behind
-it. Built-in catalog glyphs also receive a final exact-SVG alpha mask after AI
+Open-frame composition clears the central utility-glyph footprint to true
+alpha in code, preserving expressive perimeter decoration without leaving the
+reference subject behind the symbol. Built-in catalog glyphs also receive a final exact-SVG alpha mask after AI
 styling. The model supplies the approved material; the catalog supplies the
 clean silhouette, which keeps utility icons recognizable at launcher sizes.
 
