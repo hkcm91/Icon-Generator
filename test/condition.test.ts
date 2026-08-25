@@ -131,9 +131,20 @@ describe('complete icon prompt', () => {
     expect(prompt).toContain('fully opaque PNG');
     expect(prompt).toContain('fill the square canvas edge to edge');
     expect(prompt).toContain('Zero extra outer padding');
-    expect(prompt).toContain('no black keyline');
+    expect(prompt).toContain('luminous translucent glass rim');
+    expect(prompt).toContain('same relative thickness');
+    expect(prompt).toContain('belongs inside the container silhouette');
+    expect(prompt).toContain('No black or dark keyline');
+    expect(prompt).toContain('debug/template frame');
     expect(prompt).toContain('Never trace or reuse their coordinates');
     expect(prompt).toContain('No transparency');
+  });
+
+  it('adds an integral bevel without inventing an extra frame when no master exists', () => {
+    const prompt = completeIconPrompt('menu', 'pearl glass', false);
+    expect(prompt).toContain('cohesive material edge and softly lit bevel');
+    expect(prompt).toContain('not a second inset card');
+    expect(prompt).toContain('No black or dark keyline');
   });
 
   it('gives each family revision a non-visible composition variation', () => {
