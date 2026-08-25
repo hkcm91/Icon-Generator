@@ -65,6 +65,16 @@ export function usesAiGeneration(item: IconItem): boolean {
   return isAiGuidedCatalogSource(item.sourceUrl) || !item.sourceUrl || item.sourceMode === 'styled';
 }
 
+/**
+ * Built-in SVG pixels are for picker recognition only. Passing them as an
+ * image-model input made the expanded catalog dominate the user's appearance
+ * reference and produced near-copies of the raw glyph. The item name/concept
+ * remains the AI subject prompt. User artwork may still be styled by reference.
+ */
+export function modelGlyphReferenceSource(item: IconItem): string | null {
+  return item.sourceUrl && !isAiGuidedCatalogSource(item.sourceUrl) ? item.sourceUrl : null;
+}
+
 export interface BuiltinGlyphRepair {
   items: IconItem[];
   clearedIds: string[];
@@ -86,6 +96,31 @@ export function repairLegacyBuiltinGlyphModes(items: IconItem[]): BuiltinGlyphRe
       status: 'draft' as const,
       // Preserve batch selection. Auto-selecting hundreds of migrated cards
       // can exceed the cost guard and make Generate appear broken.
+      selected: item.selected,
+      revision: 0,
+      activeRevision: undefined,
+      outputMode: undefined,
+      approved: false,
+      error: undefined,
+    };
+  });
+  return { items: repaired, clearedIds };
+}
+
+/**
+ * Invalidate results made while catalog SVG pixels were sent to the model.
+ * Those outputs can be indistinguishable from pasted glyphs and must not
+ * survive the switch back to text-driven subject generation.
+ */
+export function resetBuiltinGlyphModelResults(items: IconItem[]): BuiltinGlyphRepair {
+  const clearedIds: string[] = [];
+  const repaired = items.map((item) => {
+    if (!isAiGuidedCatalogSource(item.sourceUrl)) return item;
+    clearedIds.push(item.id);
+    return {
+      ...item,
+      sourceMode: 'styled' as const,
+      status: 'draft' as const,
       selected: item.selected,
       revision: 0,
       activeRevision: undefined,

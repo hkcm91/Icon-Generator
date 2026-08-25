@@ -3,8 +3,10 @@ import {
   dedupe,
   defaultGlyphSourceMode,
   makeItem,
+  modelGlyphReferenceSource,
   parseLibrary,
   repairLegacyBuiltinGlyphModes,
+  resetBuiltinGlyphModelResults,
   resetIdCounter,
 } from '../src/core/library';
 import { runPool } from '../src/core/queue';
@@ -123,11 +125,43 @@ describe('dedupe', () => {
 });
 
 describe('built-in glyph generation mode', () => {
-  it('uses Material glyphs as AI guidance but preserves exact brands and uploads', () => {
+  it('routes Material subjects to AI but preserves exact brands and uploads', () => {
     expect(defaultGlyphSourceMode('/libraries/glyphs/material/home-fill.svg')).toBe('styled');
     expect(defaultGlyphSourceMode('/libraries/glyphs/brands/github.svg')).toBe('exact');
     expect(defaultGlyphSourceMode('data:image/png;base64,abc')).toBe('exact');
     expect(defaultGlyphSourceMode()).toBe('styled');
+  });
+
+  it('never sends built-in SVG pixels to the image model', () => {
+    const material = makeItem('Home', {
+      sourceUrl: '/libraries/glyphs/material/home-fill.svg',
+      sourceMode: 'styled',
+    });
+    const upload = makeItem('Custom', {
+      sourceUrl: 'data:image/png;base64,abc',
+      sourceMode: 'styled',
+    });
+    expect(modelGlyphReferenceSource(material)).toBeNull();
+    expect(modelGlyphReferenceSource(upload)).toBe(upload.sourceUrl);
+  });
+
+  it('invalidates catalog results generated from raw SVG model inputs', () => {
+    const material = makeItem('Home', {
+      sourceUrl: '/libraries/glyphs/material/home-fill.svg',
+      sourceMode: 'styled',
+      status: 'ready',
+      selected: true,
+      revision: 2,
+      outputMode: 'transparent',
+    });
+    const ordinary = makeItem('Cloud', { status: 'ready', revision: 1 });
+    const repair = resetBuiltinGlyphModelResults([material, ordinary]);
+    expect(repair.clearedIds).toEqual([material.id]);
+    expect(repair.items[0]).toMatchObject({
+      status: 'draft', selected: true, revision: 0, sourceMode: 'styled',
+    });
+    expect(repair.items[0].outputMode).toBeUndefined();
+    expect(repair.items[1]).toBe(ordinary);
   });
 
   it('clears legacy pasted Material results without changing batch selection', () => {

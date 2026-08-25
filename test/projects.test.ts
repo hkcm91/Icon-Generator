@@ -27,9 +27,16 @@ describe('saved icon sets', () => {
 describe('project catalog migration', () => {
   it('marks legacy projects for one-time stored-glyph repair', () => {
     expect(hydrateProject({ items: [] }).builtinGlyphStyleVersion).toBe(0);
+    expect(hydrateProject({ items: [] }).catalogTextSubjectVersion).toBe(0);
   });
 
   it('does not repeat the repair after catalog mode v1 was saved', () => {
-    expect(hydrateProject({ items: [], builtinGlyphStyleVersion: 1 }).builtinGlyphStyleVersion).toBe(1);
+    const hydrated = hydrateProject({
+      items: [],
+      builtinGlyphStyleVersion: 1,
+      catalogTextSubjectVersion: 1,
+    });
+    expect(hydrated.builtinGlyphStyleVersion).toBe(1);
+    expect(hydrated.catalogTextSubjectVersion).toBe(1);
   });
 });
