@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { makeItem, type IconItem } from '../core/library';
+import { defaultGlyphSourceMode, makeItem, type IconItem } from '../core/library';
 import {
   GLYPH_SECTIONS,
   glyphEntryKey,
@@ -114,7 +114,7 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
           category: entry.category,
           keywords: entry.keywords,
           sourceUrl: catalog.source?.(entry),
-          sourceMode: catalog.source?.(entry) ? 'exact' : 'styled',
+          sourceMode: defaultGlyphSourceMode(catalog.source?.(entry)),
         }),
       );
 

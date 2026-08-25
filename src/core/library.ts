@@ -46,6 +46,50 @@ export interface IconItem {
   error?: string;
 }
 
+/**
+ * Material Symbols are shape references, not finished artwork. They should be
+ * shown to the image model alongside the family's appearance references so the
+ * result is actually redrawn in the requested style. Brand and user-uploaded
+ * artwork remain exact by default because fidelity is normally the point.
+ */
+export function isAiGuidedCatalogSource(sourceUrl?: string): boolean {
+  return Boolean(sourceUrl?.includes('/libraries/glyphs/material/'));
+}
+
+export function defaultGlyphSourceMode(sourceUrl?: string): 'exact' | 'styled' {
+  return !sourceUrl || isAiGuidedCatalogSource(sourceUrl) ? 'styled' : 'exact';
+}
+
+export interface BuiltinGlyphRepair {
+  items: IconItem[];
+  clearedIds: string[];
+}
+
+/**
+ * Before catalog mode v1, built-in Material glyphs were incorrectly pasted
+ * locally and saved as if they were generated results. Convert only those old
+ * cards to AI-guided drafts; never touch brand logos or uploaded artwork.
+ */
+export function repairLegacyBuiltinGlyphModes(items: IconItem[]): BuiltinGlyphRepair {
+  const clearedIds: string[] = [];
+  const repaired = items.map((item) => {
+    if (!isAiGuidedCatalogSource(item.sourceUrl) || item.sourceMode === 'styled') return item;
+    clearedIds.push(item.id);
+    return {
+      ...item,
+      sourceMode: 'styled' as const,
+      status: 'draft' as const,
+      selected: true,
+      revision: 0,
+      activeRevision: undefined,
+      outputMode: undefined,
+      approved: false,
+      error: undefined,
+    };
+  });
+  return { items: repaired, clearedIds };
+}
+
 /** Finished cards keep their stored mode; the global toggle only supplies a draft default. */
 export function resolveIconOutputMode(item: IconItem, wantAlpha: boolean): IconOutputMode {
   if (item.outputMode) return item.outputMode;

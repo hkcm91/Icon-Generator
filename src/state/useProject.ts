@@ -19,6 +19,8 @@ export interface Project {
   qualitySelectionVersion: number;
   /** Versioned proof that a saved rim was chosen after borderless became the default. */
   borderlessVersion: number;
+  /** Built-in Material SVGs are AI shape guidance, not locally pasted results. */
+  builtinGlyphStyleVersion: number;
   premiumAllowed: boolean;
   /** Vision model used to name the symbol in an uploaded master. */
   visionModel: string;
@@ -56,6 +58,7 @@ const DEFAULT_PROJECT: Project = {
   quality: 'low',
   qualitySelectionVersion: 1,
   borderlessVersion: 1,
+  builtinGlyphStyleVersion: 1,
   premiumAllowed: false,
   visionModel: DEFAULT_VISION_MODEL,
   // Empty by design. A pre-filled default is indistinguishable from a field
@@ -93,6 +96,9 @@ export function hydrateProject(parsed: Partial<Project>): Project {
       : 'low',
     qualitySelectionVersion: 1,
     borderlessVersion: 1,
+    // Existing projects need their old locally pasted Material results cleared
+    // after IndexedDB has loaded. App performs that one-time image repair.
+    builtinGlyphStyleVersion: parsed.builtinGlyphStyleVersion ?? (parsed.items ? 0 : 1),
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
     glyphTransparency: savedTransparency,
