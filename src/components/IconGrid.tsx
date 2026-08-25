@@ -36,15 +36,20 @@ function Thumb({
   spec,
   compose,
   layers,
+  empty = false,
 }: {
   spec: ContainerSpec;
   compose: ComposeOptions;
   layers: ComposeLayers;
+  /** Complete-icon drafts stay genuinely empty until their paid result exists. */
+  empty?: boolean;
 }) {
   const src = useMemo(() => {
-    const canvas = composeIcon({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 });
+    const canvas = empty ? document.createElement('canvas')
+      : composeIcon({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 });
+    if (empty) canvas.width = canvas.height = 128;
     return canvas.toDataURL('image/png');
-  }, [spec, compose, layers]);
+  }, [spec, compose, layers, empty]);
   return <img className="card-thumb" src={src} alt="" />;
 }
 
@@ -213,7 +218,7 @@ export default function IconGrid(props: Props) {
     props.onItems(props.items.map((item) => ({ ...item, selected })));
 
   return (
-    <section className="panel">
+    <section className="icon-library">
       <div className="grid-head">
         <h2>Icon library</h2>
         <span className="muted-count">
@@ -357,6 +362,7 @@ export default function IconGrid(props: Props) {
               <Thumb
                 spec={props.spec}
                 compose={composeFor(item)}
+                empty={!props.options.wantAlpha && !props.glyphs.has(item.id)}
                 layers={props.options.wantAlpha || !needsPaidGeneration(item)
                   ? { material: props.material, glyph: props.glyphs.get(item.id) ?? null }
                   : { material: props.glyphs.get(item.id) ?? null, glyph: null }}

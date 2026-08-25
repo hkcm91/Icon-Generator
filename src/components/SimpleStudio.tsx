@@ -398,9 +398,14 @@ export default function SimpleStudio(props: Props) {
         </label>
         <ol className="steps">
         <li>
-          <h3>
-            <span className="step-num">1</span> Pick a shape
-          </h3>
+          <details className="compact-step">
+          <summary>
+            <span className="compact-step-title"><span className="step-num">1</span> Shape or master</span>
+            <span className="compact-step-value">
+              {props.master?.name ?? SHAPE_PRESETS.find((preset) => preset.id === active)?.label ?? 'Custom'}
+            </span>
+          </summary>
+          <div className="compact-step-body">
           <div className="shape-row">
             {SHAPE_PRESETS.map((preset) => (
               <button
@@ -459,12 +464,17 @@ export default function SimpleStudio(props: Props) {
               ))}
             </ul>
           )}
+          </div>
+          </details>
         </li>
 
         <li>
-          <h3>
-            <span className="step-num">2</span> Describe the look
-          </h3>
+          <details className="compact-step">
+          <summary>
+            <span className="compact-step-title"><span className="step-num">2</span> Appearance and model</span>
+            <span className="compact-step-value">{props.glyph.trim() || props.material.trim() || 'Set appearance'}</span>
+          </summary>
+          <div className="compact-step-body compact-fields">
           <label className="field">
             <span className="field-label">Surface</span>
             <input
@@ -511,10 +521,10 @@ export default function SimpleStudio(props: Props) {
               disabled={props.model !== 'openai/gpt-image-2'}
               onChange={(event) => props.onGlyphTransparency(event.target.checked)} />
             <span>
-              <b>Transparent glyph only</b>
+              <b>Transparent glyph output</b>
               <small>{props.glyphTransparency
-                ? 'Native alpha; the locked container is never sent to the glyph model.'
-                : 'Off; generate one complete opaque image containing the container and symbol.'}</small>
+                ? 'On: generated symbols use native alpha over the shared container.'
+                : 'Off: generate complete opaque icons; unfinished cards stay empty checkerboards.'}</small>
             </span>
           </label>
           {cost !== null && <p className={cost > 0.05 ? 'status status-error' : 'status status-ok'}>
@@ -574,6 +584,8 @@ export default function SimpleStudio(props: Props) {
               </label>
             </div>
           </details>
+          </div>
+          </details>
         </li>
 
         <li>
@@ -605,7 +617,7 @@ export default function SimpleStudio(props: Props) {
 
         <li>
           <h3>
-            <span className="step-num">4</span> Make a whole family
+            <span className="step-num">4</span> Build the family
           </h3>
           <details className="scale-saver">
             <summary><strong>Batch cost limit</strong></summary>
