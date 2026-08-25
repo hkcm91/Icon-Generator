@@ -489,6 +489,18 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   border-radius: 12px;
 }
 .picker-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.picker-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.picker-sections .chip { font-size: 11.5px; padding: 5px 9px; }
+.picker-section-note { color: var(--muted); font-size: 11.5px; margin: 0 0 8px; }
 .picker input[type="search"] {
   width: 100%;
   background: var(--panel);
