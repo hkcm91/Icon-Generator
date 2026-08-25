@@ -274,6 +274,7 @@ export function conditionedMaterialPrompt(description: string): string {
     'identical proportions, identical position and scale in frame.',
     'Light it so highlights, bevels and shading follow that exact contour.',
     'Front-facing orthographic view. Keep the surrounding background flat and empty.',
+    'The outer edge is clean and borderless: no black keyline, dark outline, stroke, rim, frame, or halo.',
     'Do not redraw, reshape, straighten, round, or resize the outline.',
     'No glyph, symbol, logo, text, badge, second object, scene, or mockup.',
   ].join(' ');
@@ -329,6 +330,7 @@ export function completeIconPrompt(
       : 'Include a polished, fully visible icon container behind the symbol.',
     'Return a fully opaque PNG containing the complete container and symbol together.',
     'Exactly one centered icon, square composition, consistent empty margins.',
+    'The container has a clean borderless outer edge: no black keyline, dark outline, stroke, rim, frame, or halo.',
     'No transparency, isolated glyph, chroma screen, contact sheet, text, label, watermark, device, or mockup.',
   ].filter(Boolean).join(' ');
 }
