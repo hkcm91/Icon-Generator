@@ -72,6 +72,12 @@ The palette is active automatically and collapsed to one swatch row in the
 guided view; its detected recipes can be inspected without adding another
 required setup screen.
 
+Open-frame composition clears the entire glyph safe area to true alpha in
+code, so frame decoration can surround a symbol but can never appear behind
+it. Built-in catalog glyphs also receive a final exact-SVG alpha mask after AI
+styling. The model supplies the approved material; the catalog supplies the
+clean silhouette, which keeps utility icons recognizable at launcher sizes.
+
 **Make a whole family** gives you **7,400 built-in glyphs** — Material Symbols
 (3,899), brand marks (3,453) and the Y2K Dream set (48) — searchable, add any
 number at once. Or import your own list: a CSV, a JSON manifest, or one name per

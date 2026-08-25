@@ -189,6 +189,16 @@ export function composeOpenFrame(
 
   if (layers.material) drawCover(ctx, layers.material, 0, 0, spec.size, spec.size);
 
+  // An open frame is decoration around a glyph, never artwork underneath it.
+  // Clear the safe area in code so model residue, inward swirls, or a source
+  // subject cannot compete with small symbols regardless of prompt quality.
+  if (layers.material) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fill(new Path2D(glyphSafePath(spec)), 'evenodd');
+    ctx.restore();
+  }
+
   if (layers.glyph) {
     ctx.save();
     ctx.clip(new Path2D(glyphSafePath(spec)), 'evenodd');

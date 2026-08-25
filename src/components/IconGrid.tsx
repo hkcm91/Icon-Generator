@@ -14,7 +14,7 @@ import LibraryPicker from './LibraryPicker';
 import { runPool, type PoolProgress } from '../core/queue';
 import type { ContainerSpec } from '../core/spec';
 import type { GenerationOptions } from '../state/useGeneration';
-import { exactGlyph, fileDataUrl, imageSourceDataUrl, sourceReference } from '../core/images';
+import { exactGlyph, fileDataUrl, imageSourceDataUrl, maskGeneratedGlyph, sourceReference } from '../core/images';
 import { makeItem } from '../core/library';
 import { estimateGlyphBatch, needsPaidGeneration } from '../core/cost';
 import { cancelActiveGenerations } from '../core/replicate';
@@ -203,7 +203,7 @@ export default function IconGrid(props: Props) {
           const referenceSource = modelGlyphReferenceSource(item);
           // Catalog glyphs are reference inputs only. Even stale exact-mode
           // metadata must never paste one into the finished icon frame.
-          const layer = !needsPaidGeneration(item)
+          let layer = !needsPaidGeneration(item)
             ? await exactGlyph(item.sourceUrl!, props.glyphColor)
             : await props.generate(
                 {
@@ -219,6 +219,10 @@ export default function IconGrid(props: Props) {
                 },
                 subject,
               );
+          if (needsPaidGeneration(item) && isAiGuidedCatalogSource(item.sourceUrl)) {
+            const exactMask = await exactGlyph(item.sourceUrl!, '#ffffff');
+            layer = maskGeneratedGlyph(layer, exactMask, props.spec.size);
+          }
           const nextRevision = item.revision + 1;
           const outputMode = props.containerMode === 'open-frame'
             ? 'framed'

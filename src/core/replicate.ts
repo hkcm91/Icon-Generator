@@ -305,7 +305,7 @@ export function glyphPrompt(
     style.trim() ? `Style: ${style.trim()}.` : '',
     subjectStyle.trim() ? `REFERENCE SUBJECT TREATMENT: ${subjectStyle.trim()}.` : '',
     theme.trim()
-      ? `Set theme: ${theme.trim()}. Use the theme only for compatible styling and small supporting details; never replace, disguise, or weaken the requested subject.`
+      ? `Set theme: ${theme.trim()}. Use the theme only for material and palette; do not add themed supporting objects or decoration, and never replace, disguise, or weaken the requested subject.`
       : '',
     // With a real alpha channel the background must not be described at all:
     // naming one invites the model to draw it despite the transparency flag.
@@ -313,18 +313,19 @@ export function glyphPrompt(
       ? 'Return a transparent PNG containing only the isolated glyph pixels. Everything outside the glyph must have zero alpha. No opaque or translucent backing shape, color field, tile, or plate.'
       : 'Isolated on a completely flat uniform #00FF00 chroma-green background with no gradient, no vignette, and no color spill.',
     'The glyph is fully visible, centered, with generous even margin on all four sides.',
+    `SMALL-ICON SIMPLIFICATION: ${requested} must remain instantly recognizable at 24px. Use one clean bold silhouette with the minimum canonical parts required to identify it. Use smooth broad surfaces, thick members, simple holes and crisp separation. No ornamental bubbles, swirls, sparkles, particles, tendrils, secondary objects, busy internal texture, filigree, or clusters of tiny highlights. Material variation belongs inside the large simple form; it must never change the form's geometry.`,
     'Front-facing orthographic view.',
     // With a master supplied, the reference is the authority on *style* only.
     // Saying so explicitly is what stops the model copying its subject, which
     // is the usual failure when a reference image is present.
     hasMaster
-      ? `REFERENCE ROLE — APPEARANCE ONLY: Match material, transparency, palette, iridescence, lighting direction, stroke weight, camera, and level of detail. The reference depicts ${referenceSubject.trim() || 'a different object'}; that object is source content, not a reusable motif. Do not draw it unless the requested subject explicitly asks for it. Do not copy or trace the reference silhouette, anatomy, facial features, or the positions of bubbles, sparkles, particles, highlights, or other decorative accents.`
+      ? `REFERENCE ROLE — APPEARANCE ONLY: Match material, transparency, palette, iridescence, lighting direction, stroke weight and camera, but deliberately simplify the reference's detail for a tiny utility glyph. The reference depicts ${referenceSubject.trim() || 'a different object'}; that object is source content, not a reusable motif. Do not draw it unless the requested subject explicitly asks for it. Do not copy or trace the reference silhouette, anatomy, facial features, or the positions of bubbles, sparkles, particles, highlights, or other decorative accents.`
       : '',
     referenceHasSeparateFrame
       ? `The reference contains TWO DIFFERENT VISUAL ROLES. Render the new ${requested} with the central reference subject's material, opacity, brightness, filled volume, edge treatment and contrast. Do not give it the surrounding frame's ribbon, tendril, hollow-outline or border construction${frameStyle.trim() ? ` (${frameStyle.trim()})` : ''}. Transfer how the reference subject is rendered, never what it depicts.`
       : '',
     referenceHasSeparateFrame
-      ? `LEGIBILITY: ${requested} must read immediately at 48px against transparency and the decorative frame. Use a bold, thick, materially filled silhouette with broad illuminated surfaces and strong separation from the frame. Preserve only holes required to recognize the symbol; do not turn the whole glyph into a thin transparent outline.`
+      ? `LEGIBILITY: ${requested} must read immediately at 24px against transparency. Use a bold, thick, materially filled silhouette with broad illuminated surfaces. Preserve only holes required to recognize the symbol; do not turn the whole glyph into a thin transparent outline.`
       : '',
     'No container, tile, badge, frame, card, rounded rectangle, circle backing, border,',
     'text, label, watermark, mockup, or scene.',

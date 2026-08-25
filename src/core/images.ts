@@ -51,3 +51,26 @@ export function imageSourceDataUrl(image: CanvasImageSource): string {
   canvas.getContext('2d')?.drawImage(image, 0, 0, width, height);
   return canvas.toDataURL('image/png');
 }
+
+/** Keep AI material pixels but force a clean catalog-authored silhouette. */
+export function maskGeneratedGlyph(
+  generated: CanvasImageSource,
+  mask: CanvasImageSource,
+  size: number,
+): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('This browser did not provide a 2D canvas context.');
+  context.drawImage(generated, 0, 0, size, size);
+  const width = (mask as HTMLImageElement).naturalWidth || (mask as HTMLCanvasElement).width || size;
+  const height = (mask as HTMLImageElement).naturalHeight || (mask as HTMLCanvasElement).height || size;
+  const scale = Math.min(size / width, size / height);
+  const drawWidth = width * scale;
+  const drawHeight = height * scale;
+  context.globalCompositeOperation = 'destination-in';
+  context.drawImage(mask, (size - drawWidth) / 2, (size - drawHeight) / 2, drawWidth, drawHeight);
+  context.globalCompositeOperation = 'source-over';
+  return canvas;
+}

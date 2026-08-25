@@ -146,8 +146,11 @@ describe('glyph isolation prompt', () => {
     expect(prompt).toContain('REFERENCE SUBJECT TREATMENT: milky opalescent filled volume');
     expect(prompt).toContain("central reference subject's material");
     expect(prompt).toContain("Do not give it the surrounding frame's ribbon");
-    expect(prompt).toContain('read immediately at 48px');
+    expect(prompt).toContain('read immediately at 24px');
     expect(prompt).toContain('do not turn the whole glyph into a thin transparent outline');
+    expect(prompt).toContain('instantly recognizable at 24px');
+    expect(prompt).toContain('No ornamental bubbles, swirls, sparkles');
+    expect(prompt).toContain('deliberately simplify');
   });
 });
 
