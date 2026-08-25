@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { estimateGlyphBatch, modelOutputCost } from '../src/core/cost';
-import { makeItem, resolveIconOutputMode } from '../src/core/library';
+import { makeItem, repairedTransparentOutputMode, resolveIconOutputMode } from '../src/core/library';
 import { hydrateProject } from '../src/state/useProject';
 
 describe('generation cost controls', () => {
@@ -49,6 +49,16 @@ describe('generation cost controls', () => {
     const complete = makeItem('Complete', { outputMode: 'complete' });
     expect(resolveIconOutputMode(transparent, false)).toBe('transparent');
     expect(resolveIconOutputMode(complete, true)).toBe('complete');
+  });
+
+  it('removes added containers from existing AI results with real alpha', () => {
+    const generated = makeItem('Generated', { status: 'ready', revision: 1, outputMode: 'complete' });
+    const exact = makeItem('Exact', {
+      status: 'ready', revision: 1, outputMode: 'composed', sourceUrl: '/glyph.svg', sourceMode: 'exact',
+    });
+    expect(repairedTransparentOutputMode(generated, true)).toBe('transparent');
+    expect(repairedTransparentOutputMode(generated, false)).toBe('complete');
+    expect(repairedTransparentOutputMode(exact, true)).toBe('composed');
   });
 
   it('clears legacy template rims but preserves a newly selected rim', () => {

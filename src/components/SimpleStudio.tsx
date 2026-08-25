@@ -5,10 +5,10 @@ import { traceMaster } from '../core/trace';
 import { describeMaster } from '../core/describe';
 import { nameSymbol } from '../core/vision';
 import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '../core/spec';
-import type { ComposeLayers, ComposeOptions } from '../core/compose';
+import { hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
-import { resolveIconOutputMode, type IconItem } from '../core/library';
+import { repairedTransparentOutputMode, resolveIconOutputMode, type IconItem } from '../core/library';
 import {
   PLATFORM_TARGETS,
   blobBytes,
@@ -136,6 +136,7 @@ export default function SimpleStudio(props: Props) {
   const input = useRef<HTMLInputElement>(null);
   const lockedInput = useRef<HTMLInputElement>(null);
   const referenceInput = useRef<HTMLInputElement>(null);
+  const alphaRepairChecked = useRef(new Set<string>());
   const active = matchPreset(props.spec);
   const selectedModel = props.model === 'openai/gpt-image-2'
     ? `${props.model}#${props.quality}`
@@ -159,6 +160,27 @@ export default function SimpleStudio(props: Props) {
     image.src = props.master.dataUrl;
     return () => { cancelled = true; };
   }, [props.master, props.materialLayer, props.onMaterialLayer]);
+
+  // Older versions could save a transparent AI layer but mark its card for
+  // container composition. Once IndexedDB restores those pixels, repair only
+  // the affected AI results and persist the corrected display/export mode.
+  useEffect(() => {
+    let changed = false;
+    const repaired = props.items.map((item) => {
+      if (item.status !== 'ready' || item.outputMode === 'transparent') return item;
+      if (item.sourceUrl && item.sourceMode !== 'styled') return item;
+      const image = props.glyphs.get(item.id);
+      if (!image) return item;
+      const repairKey = `${item.id}:v${item.activeRevision ?? item.revision}`;
+      if (alphaRepairChecked.current.has(repairKey)) return item;
+      alphaRepairChecked.current.add(repairKey);
+      const outputMode = repairedTransparentOutputMode(item, hasNativeAlpha(image));
+      if (!outputMode || outputMode === item.outputMode) return item;
+      changed = true;
+      return { ...item, outputMode };
+    });
+    if (changed) props.onItems(repaired);
+  }, [props.glyphs, props.items, props.onItems]);
 
   /**
    * One upload does everything: shape, colour, material wording, and — where a

@@ -53,6 +53,21 @@ export function resolveIconOutputMode(item: IconItem, wantAlpha: boolean): IconO
   return !item.sourceUrl || item.sourceMode === 'styled' ? 'complete' : 'composed';
 }
 
+/**
+ * Repair AI results that already contain real transparency but were previously
+ * displayed through the container compositor. Exact SVG artwork is excluded:
+ * it may have been intentionally composed over the family master.
+ */
+export function repairedTransparentOutputMode(
+  item: IconItem,
+  hasRealAlpha: boolean,
+): IconOutputMode | undefined {
+  const generated = !item.sourceUrl || item.sourceMode === 'styled';
+  return item.status === 'ready' && generated && hasRealAlpha
+    ? 'transparent'
+    : item.outputMode;
+}
+
 let counter = 0;
 /**
  * Ids are sequential rather than random so a re-import of the same file
