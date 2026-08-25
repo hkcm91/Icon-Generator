@@ -28,7 +28,7 @@ const CATALOGS: Catalog[] = [
     id: 'mobile',
     label: 'Mobile essentials',
     file: '/libraries/material-symbols.json',
-    count: 175,
+    count: 250,
     source: (entry) => entry.slug ? `/libraries/glyphs/material/${entry.slug}-fill.svg` : undefined,
   },
   {
