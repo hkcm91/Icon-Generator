@@ -1,6 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
 import { composeIcon, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
-import { isAiGuidedCatalogSource, parseLibrary, resolveIconOutputMode, type IconItem } from '../core/library';
+import {
+  isAiGuidedCatalogSource,
+  modelGlyphReferenceSource,
+  parseLibrary,
+  resolveIconOutputMode,
+  type IconItem,
+} from '../core/library';
 import LibraryPicker from './LibraryPicker';
 import { runPool, type PoolProgress } from '../core/queue';
 import type { ContainerSpec } from '../core/spec';
@@ -181,6 +187,7 @@ export default function IconGrid(props: Props) {
             .map(imageSourceDataUrl);
           const subject = [item.concept || item.name, item.role && `${item.role} icon`, item.complexity && `${item.complexity} detail`]
             .filter(Boolean).join(', ');
+          const referenceSource = modelGlyphReferenceSource(item);
           // Catalog glyphs are reference inputs only. Even stale exact-mode
           // metadata must never paste one into the finished icon frame.
           const layer = !needsPaidGeneration(item)
@@ -192,7 +199,9 @@ export default function IconGrid(props: Props) {
                   // A stable key per revision keeps network retries/cache hits
                   // safe while making every icon and Redo use a new layout.
                   variationKey: hashString(`${item.id}:v${item.revision + 1}`),
-                  glyphReference: item.sourceUrl ? await sourceReference(item.sourceUrl) : null,
+                  // Catalog SVGs choose the subject but never enter the model
+                  // input. This restores the pre-expansion text-driven flow.
+                  glyphReference: referenceSource ? await sourceReference(referenceSource) : null,
                   references: [...anchorReferences, ...(props.options.references ?? [])],
                 },
                 subject,
@@ -313,8 +322,8 @@ export default function IconGrid(props: Props) {
       )}
 
       <p className="hint">
-        Built-in glyphs guide AI shape while your references drive the finished style. Brand logos
-        and uploaded SVG/PNG artwork stay exact unless you switch them to AI generation.
+        Built-in glyphs choose the subject; their SVG pixels never enter the finished card. Your
+        references and style prompt drive the AI result. Brand logos and uploads stay exact by default.
       </p>
 
       <div className="row">
@@ -420,7 +429,7 @@ export default function IconGrid(props: Props) {
                   onChange={(event) => patch(item.id, { concept: event.target.value })}
                 />
                 {item.sourceUrl && isAiGuidedCatalogSource(item.sourceUrl) && (
-                  <span className="badge source-mode">AI reference only</span>
+                  <span className="badge source-mode">Subject reference only</span>
                 )}
                 {item.sourceUrl && !isAiGuidedCatalogSource(item.sourceUrl) && (
                   <button

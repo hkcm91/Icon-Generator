@@ -14,7 +14,7 @@ import { useImageStore } from './state/useImageStore';
 import { hydrateProject, useProject, type Project } from './state/useProject';
 import { download } from './core/export';
 import type { ImageBundle } from './state/useImageStore';
-import { repairLegacyBuiltinGlyphModes } from './core/library';
+import { repairLegacyBuiltinGlyphModes, resetBuiltinGlyphModelResults } from './core/library';
 import {
   deleteProjectSlot,
   listSavedProjects,
@@ -154,17 +154,31 @@ export default function App() {
   /** Repair the catalog regression once per saved project. */
   useEffect(() => {
     if (!store.loaded) return;
-    const repair = repairLegacyBuiltinGlyphModes(project.items);
+    const repair = project.catalogTextSubjectVersion < 1
+      ? resetBuiltinGlyphModelResults(project.items)
+      : repairLegacyBuiltinGlyphModes(project.items);
     // Enforce reference-only behavior even if a v1 project was later switched
     // back to exact mode before that choice was removed.
-    if (!repair.clearedIds.length && project.builtinGlyphStyleVersion >= 1) return;
+    if (
+      !repair.clearedIds.length &&
+      project.builtinGlyphStyleVersion >= 1 &&
+      project.catalogTextSubjectVersion >= 1
+    ) return;
     if (repair.clearedIds.length) store.clearItemGlyphs(repair.clearedIds);
     setProject((current) => ({
       ...current,
       items: repair.items,
       builtinGlyphStyleVersion: 1,
+      catalogTextSubjectVersion: 1,
     }));
-  }, [store.loaded, store.clearItemGlyphs, project.builtinGlyphStyleVersion, project.items, setProject]);
+  }, [
+    store.loaded,
+    store.clearItemGlyphs,
+    project.builtinGlyphStyleVersion,
+    project.catalogTextSubjectVersion,
+    project.items,
+    setProject,
+  ]);
 
   /**
    * Reconcile cards against what actually survived in storage.
