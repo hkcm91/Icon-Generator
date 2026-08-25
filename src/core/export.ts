@@ -7,7 +7,7 @@
  * one, antialiased for 32px — not a smeared resample of a big corner.
  */
 
-import { composeIcon, type ComposeLayers, type ComposeOptions } from './compose';
+import { composeIcon, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from './compose';
 import { containerPath, toSvgDocument } from './geometry';
 import type { ContainerSpec } from './spec';
 
@@ -72,6 +72,16 @@ export function renderAtSize(
       shadowOffsetY: options.shadowOffsetY * k,
     },
   );
+}
+
+/** Re-render an isolated alpha asset at a target size without a backing tile. */
+export function renderTransparentAtSize(
+  spec: ContainerSpec,
+  size: number,
+  image: CanvasImageSource | null | undefined,
+  options: ComposeOptions,
+): HTMLCanvasElement {
+  return renderTransparentLayer({ ...spec, size }, image, options);
 }
 
 // ---------------------------------------------------------------------------

@@ -137,6 +137,35 @@ export function renderMask(spec: ContainerSpec, scale = 1): HTMLCanvasElement {
   return canvas;
 }
 
+/**
+ * Render an isolated asset without inventing a container behind it.
+ *
+ * Transparent generation results already carry their own alpha channel. They
+ * still need the family's optical scale and offsets, but must not pass through
+ * `composeIcon`, which deliberately paints the container base colour first.
+ */
+export function renderTransparentLayer(
+  spec: ContainerSpec,
+  image: CanvasImageSource | null | undefined,
+  options: ComposeOptions = DEFAULT_COMPOSE,
+): HTMLCanvasElement {
+  const canvas = createCanvas(spec.size);
+  if (!image) return canvas;
+
+  const ctx = context2d(canvas);
+  const box = innerBox(spec);
+  const safeEdge = box.edge * (1 - spec.glyphInset / 100) * options.glyphScale;
+  drawContain(
+    ctx,
+    image,
+    box.cx - safeEdge / 2 + box.edge * options.glyphOffsetX / 100,
+    box.cy - safeEdge / 2 + box.edge * options.glyphOffsetY / 100,
+    safeEdge,
+    safeEdge,
+  );
+  return canvas;
+}
+
 export function composeIcon(
   spec: ContainerSpec,
   layers: ComposeLayers,

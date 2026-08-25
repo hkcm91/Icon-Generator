@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { composeIcon, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { composeIcon, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { parseLibrary, type IconItem } from '../core/library';
 import LibraryPicker from './LibraryPicker';
 import { runPool, type PoolProgress } from '../core/queue';
@@ -37,19 +37,24 @@ function Thumb({
   compose,
   layers,
   empty = false,
+  transparent = false,
 }: {
   spec: ContainerSpec;
   compose: ComposeOptions;
   layers: ComposeLayers;
   /** Complete-icon drafts stay genuinely empty until their paid result exists. */
   empty?: boolean;
+  /** Draw the stored asset directly; never synthesize a container behind it. */
+  transparent?: boolean;
 }) {
   const src = useMemo(() => {
     const canvas = empty ? document.createElement('canvas')
-      : composeIcon({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 });
+      : transparent
+        ? renderTransparentLayer({ ...spec, size: 128 }, layers.glyph, compose)
+        : composeIcon({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 });
     if (empty) canvas.width = canvas.height = 128;
     return canvas.toDataURL('image/png');
-  }, [spec, compose, layers, empty]);
+  }, [spec, compose, layers, empty, transparent]);
   return <img className="card-thumb" src={src} alt="" />;
 }
 
@@ -363,8 +368,11 @@ export default function IconGrid(props: Props) {
                 spec={props.spec}
                 compose={composeFor(item)}
                 empty={!props.glyphs.has(item.id)}
-                layers={props.options.wantAlpha || !needsPaidGeneration(item)
-                  ? { material: props.material, glyph: props.glyphs.get(item.id) ?? null }
+                transparent={props.options.wantAlpha}
+                layers={props.options.wantAlpha
+                  ? { material: null, glyph: props.glyphs.get(item.id) ?? null }
+                  : !needsPaidGeneration(item)
+                    ? { material: props.material, glyph: props.glyphs.get(item.id) ?? null }
                   : { material: props.glyphs.get(item.id) ?? null, glyph: null }}
               />
 

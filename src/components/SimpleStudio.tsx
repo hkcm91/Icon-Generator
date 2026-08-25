@@ -18,6 +18,7 @@ import {
   download,
   ICO_SIZES,
   renderAtSize,
+  renderTransparentAtSize,
   svgMask,
 } from '../core/export';
 import { modelOutputCost, needsPaidGeneration } from '../core/cost';
@@ -304,8 +305,11 @@ export default function SimpleStudio(props: Props) {
           glyphOffsetX: 'opticalOffsetX' in item ? (item.opticalOffsetX ?? 0) : 0,
           glyphOffsetY: 'opticalOffsetY' in item ? (item.opticalOffsetY ?? 0) : 0,
         };
+        const render = (size: number) => props.glyphTransparency
+          ? renderTransparentAtSize(props.spec, size, glyph, itemCompose)
+          : renderAtSize(props.spec, size, layers, itemCompose);
         for (const target of PLATFORM_TARGETS) {
-          const canvas = renderAtSize(props.spec, target.size, layers, itemCompose);
+          const canvas = render(target.size);
           files.push({
             name: `${stem}/${target.platform}/${target.name}.png`,
             bytes: await blobBytes(await canvasToBlob(canvas)),
@@ -313,11 +317,11 @@ export default function SimpleStudio(props: Props) {
         }
         const ico = [];
         for (const size of ICO_SIZES) {
-          const canvas = renderAtSize(props.spec, size, layers, itemCompose);
+          const canvas = render(size);
           ico.push({ size, bytes: await blobBytes(await canvasToBlob(canvas)) });
         }
         files.push({ name: `${stem}/windows/${stem}.ico`, bytes: await blobBytes(await buildIco(ico)) });
-        contacts.push({ name: item.name, canvas: renderAtSize(props.spec, 128, layers, itemCompose) });
+        contacts.push({ name: item.name, canvas: render(128) });
       }
       if (contacts.length) {
         const columns = Math.min(5, contacts.length);
@@ -523,7 +527,7 @@ export default function SimpleStudio(props: Props) {
             <span>
               <b>Transparent glyph output</b>
               <small>{props.glyphTransparency
-                ? 'On: generated symbols use native alpha over the shared container.'
+                ? 'On: generated assets stay on a clear canvas; no shared container is added.'
                 : 'Off: generate complete opaque icons; unfinished cards stay empty checkerboards.'}</small>
             </span>
           </label>
