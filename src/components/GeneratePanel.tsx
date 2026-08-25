@@ -6,6 +6,7 @@ import {
 } from '../core/condition';
 import {
   MODELS,
+  completeIconPrompt,
   conditionedMaterialPrompt,
   generateImage,
   glyphPrompt,
@@ -21,6 +22,11 @@ import type { ContainerSpec } from '../core/spec';
 interface Props {
   spec: ContainerSpec;
   model: string;
+  quality: 'low' | 'medium' | 'high';
+  onQuality: (value: 'low' | 'medium' | 'high') => void;
+  wantAlpha: boolean;
+  onWantAlpha: (value: boolean) => void;
+  master?: string | null;
   materialDescription: string;
   glyphSubject: string;
   glyphStyle: string;
@@ -53,9 +59,11 @@ export default function GeneratePanel(props: Props) {
   const [showPrompts, setShowPrompts] = useState(false);
   const [mode, setMode] = useState<ConditioningMode>('reference');
   const [platePreview, setPlatePreview] = useState<string>('');
-  const [wantAlpha, setWantAlpha] = useState(true);
-
   const alphaCapable = modelSupportsAlpha(props.model);
+  const completeMode = props.model === 'openai/gpt-image-2' && !props.wantAlpha;
+  const selectedModel = props.model === 'openai/gpt-image-2'
+    ? `${props.model}#${props.quality}`
+    : props.model;
 
   const supports = modelConditioning(props.model);
   // Masked fill needs a model that takes a mask; everything else can still be
@@ -81,8 +89,10 @@ export default function GeneratePanel(props: Props) {
     effectiveMode === 'off'
       ? materialPrompt(props.materialDescription)
       : conditionedMaterialPrompt(props.materialDescription);
-  const useNativeAlpha = alphaCapable && wantAlpha;
-  const glyph = glyphPrompt(props.glyphSubject, props.glyphStyle, useNativeAlpha);
+  const useNativeAlpha = alphaCapable && props.wantAlpha;
+  const glyph = completeMode
+    ? completeIconPrompt(props.glyphSubject, props.materialDescription, Boolean(props.master))
+    : glyphPrompt(props.glyphSubject, props.glyphStyle, useNativeAlpha);
 
   const check = async () => {
     setStatus({ kind: 'busy', what: 'Testing connection' });
@@ -99,7 +109,7 @@ export default function GeneratePanel(props: Props) {
       const conditioning = await buildConditioning(props.spec, effectiveMode);
       const result = await generateImage(
         props.model,
-        modelInput(props.model, material, props.spec.size, [], conditioning),
+        modelInput(props.model, material, props.spec.size, [], conditioning, false, props.quality),
       );
       props.onMaterial(await loadImage(result.images[0]));
       setStatus({
@@ -115,15 +125,31 @@ export default function GeneratePanel(props: Props) {
   };
 
   const runGlyph = async () => {
-    setStatus({ kind: 'busy', what: 'Generating glyph' });
+    setStatus({ kind: 'busy', what: completeMode ? 'Generating complete icon' : 'Generating glyph' });
     try {
+      const conditioning = completeMode ? await buildConditioning(props.spec, effectiveMode) : undefined;
       // The glyph is deliberately never shape-conditioned: showing it the
       // container silhouette is an invitation to draw a container.
       const result = await generateImage(
         props.model,
-        modelInput(props.model, glyph, props.spec.size, [], undefined, useNativeAlpha),
+        modelInput(
+          props.model,
+          glyph,
+          props.spec.size,
+          props.master ? [props.master] : [],
+          conditioning,
+          useNativeAlpha,
+          props.quality,
+        ),
       );
       const image = await loadImage(result.images[0]);
+
+      if (completeMode) {
+        props.onMaterial(image);
+        props.onGlyph(null);
+        setStatus({ kind: 'ok', message: 'Complete opaque icon generated with its container.' });
+        return;
+      }
 
       // Prefer a real alpha channel when one actually came back; fall back to
       // keying the flat chroma field the prompt asked for otherwise.
@@ -160,8 +186,17 @@ export default function GeneratePanel(props: Props) {
 
       <label className="field">
         <span className="field-label">Model</span>
-        <select value={props.model} onChange={(event) => props.onModel(event.target.value)}>
-          {MODELS.map((entry) => (
+        <select value={selectedModel} onChange={(event) => {
+          const [model, quality] = event.target.value.split('#');
+          props.onModel(model);
+          if (model === 'openai/gpt-image-2' && (quality === 'low' || quality === 'medium' || quality === 'high')) {
+            props.onQuality(quality);
+          }
+        }}>
+          <option value="openai/gpt-image-2#low">GPT Image 2 · Low — ~$0.012</option>
+          <option value="openai/gpt-image-2#medium">GPT Image 2 · Medium — ~$0.047</option>
+          <option value="openai/gpt-image-2#high">GPT Image 2 · High — ~$0.128</option>
+          {MODELS.filter((entry) => entry.slug !== 'openai/gpt-image-2').map((entry) => (
             <option key={entry.slug} value={entry.slug}>
               {entry.label}
             </option>
@@ -172,15 +207,17 @@ export default function GeneratePanel(props: Props) {
       <label className="toggle toggle-row">
         <input
           type="checkbox"
-          checked={wantAlpha && alphaCapable}
+          checked={props.wantAlpha && alphaCapable}
           disabled={!alphaCapable}
-          onChange={(event) => setWantAlpha(event.target.checked)}
+          onChange={(event) => props.onWantAlpha(event.target.checked)}
         />
         Request a real alpha channel
       </label>
       <p className="hint">
         {alphaCapable
-          ? 'Preview feature. If the host refuses it, the run retries without it and falls back to chroma keying.'
+          ? props.wantAlpha
+            ? 'Transparent glyph mode. The request uses native alpha and excludes a container.'
+            : 'Complete icon mode. The request is opaque and includes the container and symbol together.'
           : 'This model has no transparent-background parameter; glyphs are chroma-keyed.'}
       </p>
 
@@ -240,7 +277,7 @@ export default function GeneratePanel(props: Props) {
           Generate material
         </button>
         <button type="button" onClick={runGlyph} disabled={busy}>
-          Generate glyph
+          {completeMode ? 'Generate complete icon' : 'Generate glyph'}
         </button>
       </div>
       <div className="row">
