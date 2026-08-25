@@ -276,6 +276,11 @@ export default function App() {
             <GeneratePanel
               spec={project.spec}
               model={project.model}
+              quality={project.quality}
+              onQuality={(value) => setField('quality', value)}
+              wantAlpha={project.glyphTransparency}
+              onWantAlpha={(value) => setField('glyphTransparency', value)}
+              master={project.master?.dataUrl ?? null}
               materialDescription={project.materialDescription}
               glyphSubject={project.glyphSubject}
               glyphStyle={project.glyphStyle}
