@@ -27,11 +27,53 @@ const named = (names: readonly string[]) => {
 };
 
 export const MATERIAL_ESSENTIALS = [
-  'home', 'search', 'menu', 'settings', 'person', 'favorite', 'star', 'notifications',
-  'mail', 'chat', 'call', 'calendar_month', 'schedule', 'location_on', 'map', 'folder',
-  'description', 'photo', 'camera_alt', 'play_arrow', 'pause', 'download', 'upload', 'share',
-  'edit', 'delete', 'add', 'remove', 'check', 'close', 'lock', 'key', 'shopping_cart',
-  'cloud', 'sunny', 'dark_mode', 'wifi', 'refresh', 'more_horiz',
+  // Navigation and layout (30)
+  'home', 'menu', 'search', 'apps', 'arrow_back', 'arrow_forward', 'arrow_upward',
+  'arrow_downward', 'chevron_left', 'chevron_right', 'keyboard_arrow_up',
+  'keyboard_arrow_down', 'close', 'more_vert', 'more_horiz', 'fullscreen',
+  'fullscreen_exit', 'refresh', 'sync', 'open_in_new', 'first_page', 'last_page',
+  'unfold_more', 'drag_handle', 'dashboard', 'view_list', 'grid_view', 'tab', 'swipe',
+  'shield',
+
+  // Actions and status (35)
+  'add', 'remove', 'check', 'done_all', 'edit', 'delete', 'save', 'share', 'download',
+  'upload', 'content_copy', 'undo', 'redo', 'filter_list', 'sort', 'tune', 'settings',
+  'favorite', 'heart_plus', 'star', 'star_half', 'bookmark', 'bookmark_add', 'info',
+  'help', 'warning', 'error', 'check_circle', 'cancel', 'add_circle', 'do_not_disturb_on',
+  'visibility', 'visibility_off', 'lock', 'lock_open',
+
+  // Communication (20)
+  'mail', 'inbox', 'send', 'reply', 'forward', 'chat', 'forum', 'sms', 'call',
+  'phone_in_talk', 'contacts', 'contact_page', 'notifications', 'notifications_off',
+  'alternate_email', 'language', 'public', 'link', 'attach_file', 'campaign',
+
+  // Files and productivity (20)
+  'folder', 'folder_open', 'create_new_folder', 'description', 'article', 'note_alt',
+  'notes', 'task', 'checklist', 'event', 'calendar_month', 'schedule', 'alarm', 'print',
+  'archive', 'unarchive', 'cloud', 'cloud_upload', 'cloud_download', 'work',
+
+  // Photos, video, and audio (20)
+  'photo', 'image', 'photo_library', 'photo_camera', 'videocam', 'movie', 'music_note',
+  'mic', 'play_arrow', 'pause', 'stop', 'skip_next', 'skip_previous', 'fast_forward',
+  'fast_rewind', 'volume_up', 'volume_off', 'cast', 'palette', 'brush',
+
+  // People and social (12)
+  'person', 'person_add', 'group', 'groups', 'account_circle', 'face', 'mood',
+  'sentiment_satisfied', 'thumb_up', 'thumb_down', 'handshake', 'diversity_3',
+
+  // Shopping and money (12)
+  'shopping_cart', 'shopping_bag', 'store', 'payments', 'credit_card', 'account_balance',
+  'account_balance_wallet', 'receipt_long', 'sell', 'price_check', 'inventory_2',
+  'qr_code_scanner',
+
+  // Maps and travel (12)
+  'location_on', 'map', 'navigation', 'near_me', 'explore', 'directions_car',
+  'directions_bus', 'train', 'flight', 'hotel', 'restaurant', 'local_taxi',
+
+  // Devices, environment, and health (14)
+  'mobile_2', 'tablet', 'laptop_windows', 'desktop_windows', 'watch', 'headphones',
+  'wifi', 'bluetooth', 'battery_full', 'sunny', 'dark_mode', 'water_drop',
+  'fitness_center', 'medical_services',
 ] as const;
 
 const BRAND_POPULAR = [
@@ -43,7 +85,7 @@ const all = (_entry: GlyphCatalogEntry) => true;
 
 export const GLYPH_SECTIONS: Record<GlyphCatalogId, GlyphSection[]> = {
   material: [
-    { id: 'essentials', label: 'Essentials', description: 'A practical starter family of the most reusable app icons.', matches: named(MATERIAL_ESSENTIALS) },
+    { id: 'essentials', label: 'Mobile essentials (175)', description: 'A complete 175-icon starter set for modern mobile apps.', matches: named(MATERIAL_ESSENTIALS) },
     { id: 'files', label: 'Files & work', description: 'Documents, folders, calendars, editing, saving, and productivity.', matches: has(/(folder|file|document|description|article|note|edit|save|archive|calendar|schedule|task|work|print|attach|upload|download)/) },
     { id: 'communication', label: 'Communication', description: 'Mail, chat, calls, contacts, notifications, and sharing.', matches: has(/(mail|email|chat|message|call|phone|contact|person|group|forum|notification|share|send|inbox)/) },
     { id: 'media', label: 'Photos & media', description: 'Photography, video, audio, playback, and creative tools.', matches: has(/(photo|image|camera|video|movie|music|audio|mic|play|pause|volume|album|palette|brush)/) },

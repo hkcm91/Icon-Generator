@@ -44,7 +44,7 @@ const CATALOGS: Catalog[] = [
 ];
 
 /** Rows rendered at once. The full list is thousands long; the DOM need not be. */
-const VISIBLE_LIMIT = 150;
+const VISIBLE_LIMIT = 250;
 
 interface Props {
   existing: IconItem[];
