@@ -274,7 +274,8 @@ export function conditionedMaterialPrompt(description: string): string {
     'identical proportions, identical position and scale in frame.',
     'Light it so highlights, bevels and shading follow that exact contour.',
     'Front-facing orthographic view. Keep the surrounding background flat and empty.',
-    'The outer edge is clean and borderless: no black keyline, dark outline, stroke, rim, frame, or halo.',
+    'Do not introduce a black or near-black technical keyline outside the reference silhouette.',
+    'This exclusion applies only to an accidental dark upload/template artifact. Preserve any intentional bright, colored, translucent, pearlescent, glass, gel, beveled, layered, or decorative rim visible in the reference, including its thickness and highlights.',
     'Do not redraw, reshape, straighten, round, or resize the outline.',
     'No glyph, symbol, logo, text, badge, second object, scene, or mockup.',
   ].join(' ');
@@ -364,8 +365,10 @@ export function completeIconPrompt(
     hasMaster
       ? "Preserve the reference container's outer-edge construction. If it has a luminous translucent glass rim, bright pearlescent bevel, or layered clear border, reproduce that integral edge treatment with the same relative thickness, material, highlights, and depth."
       : 'Give the container a cohesive material edge and softly lit bevel that belongs to the object.',
-    'The luminous bevel belongs inside the container silhouette; it is not a second inset card, detached frame, or added backing plate.',
-    'No black or dark keyline, hard outline, debug/template frame, opaque perimeter stroke, or halo outside the silhouette.',
+    'The luminous bevel and outer rim are essential parts of the container. Keep them fully visible at the reference thickness; do not crop, thin, flatten, fade, recolor, or omit them.',
+    hasMaster
+      ? 'Remove only an unintended black or near-black technical keyline introduced by the upload/template outside the true container edge. This exclusion must never remove or weaken an intentional bright, colored, translucent, pearlescent, glass, gel, beveled, layered, or decorative border from the reference.'
+      : 'Do not add a separate black technical outline outside the finished container. Keep the intentional material edge and bevel fully visible.',
     'Arrange decorative microdetails such as bubbles, sparkles, particles, glints, droplets, and highlights in new positions that suit this subject. Never trace or reuse their coordinates from a reference image or another icon.',
     'No transparency, isolated glyph, chroma screen, contact sheet, text, label, watermark, device, or mockup.',
   ].filter(Boolean).join(' ');

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildConditioning, edgeSvg, maskSvg, shapeReferenceSvg } from '../src/core/condition';
 import { containerPath } from '../src/core/geometry';
-import { completeIconPrompt, glyphPrompt, modelConditioning, modelInput, openFramePrompt } from '../src/core/replicate';
+import { completeIconPrompt, conditionedMaterialPrompt, glyphPrompt, modelConditioning, modelInput, openFramePrompt } from '../src/core/replicate';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../src/core/spec';
 import { recipePrompt } from '../src/state/useGeneration';
 
@@ -165,9 +165,10 @@ describe('complete icon prompt', () => {
     expect(prompt).toContain('Zero extra outer padding');
     expect(prompt).toContain('luminous translucent glass rim');
     expect(prompt).toContain('same relative thickness');
-    expect(prompt).toContain('belongs inside the container silhouette');
-    expect(prompt).toContain('No black or dark keyline');
-    expect(prompt).toContain('debug/template frame');
+    expect(prompt).toContain('outer rim are essential parts');
+    expect(prompt).toContain('do not crop, thin, flatten, fade, recolor, or omit');
+    expect(prompt).toContain('Remove only an unintended black or near-black technical keyline');
+    expect(prompt).toContain('must never remove or weaken an intentional bright, colored, translucent');
     expect(prompt).toContain('Never trace or reuse their coordinates');
     expect(prompt).toContain('No transparency');
   });
@@ -175,8 +176,9 @@ describe('complete icon prompt', () => {
   it('adds an integral bevel without inventing an extra frame when no master exists', () => {
     const prompt = completeIconPrompt('menu', 'pearl glass', false);
     expect(prompt).toContain('cohesive material edge and softly lit bevel');
-    expect(prompt).toContain('not a second inset card');
-    expect(prompt).toContain('No black or dark keyline');
+    expect(prompt).toContain('outer rim are essential parts');
+    expect(prompt).toContain('Do not add a separate black technical outline');
+    expect(prompt).not.toContain('introduced by the upload/template');
   });
 
   it('replaces the reference subject in complete-icon mode', () => {
@@ -198,6 +200,16 @@ describe('complete icon prompt', () => {
     expect(prompt).toContain('Very high style fidelity');
     expect(prompt).toContain('Very high decorative variation');
     expect(prompt).toContain('variation must not weaken the locked style');
+  });
+});
+
+describe('conditioned material prompt', () => {
+  it('excludes only accidental dark upload borders and preserves intentional rims', () => {
+    const prompt = conditionedMaterialPrompt('pearl glass');
+    expect(prompt).toContain('black or near-black technical keyline');
+    expect(prompt).toContain('accidental dark upload/template artifact');
+    expect(prompt).toContain('Preserve any intentional bright, colored, translucent');
+    expect(prompt).not.toContain('no black keyline, dark outline, stroke, rim, frame, or halo');
   });
 });
 
