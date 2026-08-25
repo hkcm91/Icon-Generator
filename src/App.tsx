@@ -328,6 +328,8 @@ export default function App() {
           glyphColor={project.glyphColor}
           referenceSubject={project.referenceSubject}
           styleProfile={project.styleProfile}
+          subjectStyleProfile={project.subjectStyleProfile}
+          frameStyleProfile={project.frameStyleProfile}
           theme={project.theme}
           themeSuggestions={project.themeSuggestions}
           onSpec={setSpec}
@@ -339,6 +341,8 @@ export default function App() {
           onGlyphColor={(value) => setField('glyphColor', value)}
           onReferenceSubject={(value) => setField('referenceSubject', value)}
           onStyleProfile={(value) => setField('styleProfile', value)}
+          onSubjectStyleProfile={(value) => setField('subjectStyleProfile', value)}
+          onFrameStyleProfile={(value) => setField('frameStyleProfile', value)}
           onTheme={(value) => setField('theme', value)}
           onThemeSuggestions={(value) => setField('themeSuggestions', value)}
           onMaterialLayer={store.setMaterial}

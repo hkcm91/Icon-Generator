@@ -49,6 +49,10 @@ reusable subject-free RGBA frame, clips that frame to the exact outer contour
 without painting a base fill, and composites each requested glyph into the
 clear centre. Filled tile, open frame and isolated-subject exports are distinct
 paths; choosing transparency no longer silently discards a decorative frame.
+The vision pass also records separate **subject treatment** and **frame
+treatment** profiles. New glyphs copy the reference subject's opacity, filled
+volume, brightness and contrast while the open frame keeps its own ribbon and
+bubble construction, so a search icon does not disappear into the border.
 
 **Make a whole family** gives you **7,400 built-in glyphs** — Material Symbols
 (3,899), brand marks (3,453) and the Y2K Dream set (48) — searchable, add any

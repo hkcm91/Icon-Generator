@@ -37,6 +37,8 @@ export interface Project {
   referenceSubject: string;
   /** Transferable visual properties detected in the master. */
   styleProfile: string;
+  subjectStyleProfile: string;
+  frameStyleProfile: string;
   /** Optional set direction explicitly chosen by the user. */
   theme: string;
   themeSuggestions: ThemeSuggestion[];
@@ -87,6 +89,8 @@ const DEFAULT_PROJECT: Project = {
   glyphColor: '#ffffff',
   referenceSubject: '',
   styleProfile: '',
+  subjectStyleProfile: '',
+  frameStyleProfile: '',
   theme: '',
   themeSuggestions: [],
   master: null,

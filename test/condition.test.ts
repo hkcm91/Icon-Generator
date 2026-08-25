@@ -130,6 +130,25 @@ describe('glyph isolation prompt', () => {
     expect(prompt).toContain('Do not draw it unless the requested subject explicitly asks for it');
     expect(prompt).toContain('never replace, disguise, or weaken the requested subject');
   });
+
+  it('copies the reference subject treatment instead of the open frame treatment', () => {
+    const prompt = glyphPrompt(
+      'magnifying glass',
+      '',
+      true,
+      true,
+      'ghost',
+      'Halloween',
+      'milky opalescent filled volume',
+      'clear hollow ribbons',
+      true,
+    );
+    expect(prompt).toContain('REFERENCE SUBJECT TREATMENT: milky opalescent filled volume');
+    expect(prompt).toContain("central reference subject's material");
+    expect(prompt).toContain("Do not give it the surrounding frame's ribbon");
+    expect(prompt).toContain('read immediately at 48px');
+    expect(prompt).toContain('do not turn the whole glyph into a thin transparent outline');
+  });
 });
 
 describe('complete icon prompt', () => {

@@ -44,6 +44,10 @@ export interface GenerationOptions {
   referenceSubject?: string;
   /** Editable appearance-only description extracted from the master. */
   styleProfile?: string;
+  subjectStyleProfile?: string;
+  frameStyleProfile?: string;
+  /** True when the reference contains visually distinct subject and frame roles. */
+  referenceHasSeparateFrame?: boolean;
   /** User-selected set direction. Never substitutes for an item's subject. */
   theme?: string;
   familyPrompt?: string;
@@ -55,7 +59,9 @@ export interface GenerationOptions {
 
 export function recipePrompt(prompt: string, options: GenerationOptions): string {
   return [prompt,
-    options.styleProfile?.trim() ? `TRANSFERABLE STYLE PROFILE: ${options.styleProfile.trim()}` : '',
+    options.styleProfile?.trim()
+      ? `SHARED FAMILY STYLE (palette, lighting and rendering only; this never overrides the separate subject/frame opacity, fill or construction rules): ${options.styleProfile.trim()}`
+      : '',
     options.familyPrompt?.trim(), options.variationKey
     ? `Internal composition variation ${options.variationKey}: choose a distinct arrangement of decorative microdetails for this icon. Do not display or spell this key.`
     : '', options.negativePrompt?.trim()
@@ -164,6 +170,9 @@ export function useGeneration() {
             Boolean(options.master),
             options.referenceSubject,
             options.theme,
+            options.subjectStyleProfile,
+            options.frameStyleProfile,
+            options.referenceHasSeparateFrame,
           ),
           options,
         ),
@@ -222,7 +231,12 @@ export function useGeneration() {
     if (!options.master) throw new Error('Upload a finished reference before extracting its frame.');
     const wantAlpha = modelSupportsAlpha(options.model);
     const prompt = recipePrompt(
-      openFramePrompt(options.material, options.referenceSubject ?? '', wantAlpha),
+      openFramePrompt(
+        options.material,
+        options.referenceSubject ?? '',
+        wantAlpha,
+        options.frameStyleProfile,
+      ),
       { ...options, theme: undefined },
     );
     const input = modelInput(

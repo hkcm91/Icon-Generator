@@ -24,6 +24,10 @@ export interface ReferenceAnalysis {
   subject: string;
   /** Transferable appearance only: material, palette, lighting, rendering and finish. */
   style: string;
+  /** Material/opacity/volume treatment of the depicted central object only. */
+  subjectStyle: string;
+  /** Material/opacity/geometry treatment of surrounding frame decoration only. */
+  frameStyle: string;
   /** Plausible set directions the user may opt into. */
   themes: ThemeSuggestion[];
   /** Visual construction suggested by the reference, separate from its theme. */
@@ -57,10 +61,12 @@ const SYMBOL_PROMPT = [
 const REFERENCE_PROMPT = [
   'Analyze this image as a style reference for a cohesive icon family.',
   'Return only valid JSON with this exact shape:',
-  '{"subject":"short literal noun phrase","style":"transferable visual style","construction":"filled-container|open-frame-with-subject|isolated-subject|unknown","themes":[{"name":"theme name","rationale":"short reason","subjects":["subject 1","subject 2"]}]}',
+  '{"subject":"short literal noun phrase","style":"shared visual language","subjectStyle":"central subject treatment","frameStyle":"surrounding frame treatment","construction":"filled-container|open-frame-with-subject|isolated-subject|unknown","themes":[{"name":"theme name","rationale":"short reason","subjects":["subject 1","subject 2"]}]}',
   'The subject is the literal depicted object, such as "ghost".',
   'The style must describe only transferable appearance: transparency, material, palette, iridescence, lighting, dimensionality, edge treatment, texture, camera and rendering technique.',
   'Do not repeat the depicted subject or its anatomy in the style field.',
+  'subjectStyle must describe how the central depicted object itself is rendered, independently of what that object is. Be explicit about whether it is solid or hollow, filled or outline-only, its opacity, brightness, material, volume, edge thickness, highlights and contrast.',
+  'frameStyle must separately describe the surrounding border, swirls, bubbles, ribbons or container decoration. Never collapse subjectStyle and frameStyle into the same treatment when they differ.',
   'Use open-frame-with-subject when a finished example has a recognizable outer container envelope made from rims, swirls, bubbles or decoration while substantial interior areas remain truly transparent.',
   'Suggest 2 to 4 distinct plausible icon-set themes. Include an obvious semantic theme when appropriate, but also broader aesthetic or era-based themes such as Y2K or Frutiger Aero when visually supported.',
   'For every theme, suggest 6 to 10 varied objects that belong in that set. Do not make every suggestion a variation of the reference subject.',
@@ -104,7 +110,7 @@ const clean = (value: unknown, limit: number): string =>
 /** Parse vision output defensively: caption models sometimes wrap otherwise valid JSON. */
 export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
   const match = text.match(/\{[\s\S]*\}/);
-  if (!match) return { subject: cleanSymbolAnswer(text), style: '', themes: [], construction: 'unknown' };
+  if (!match) return { subject: cleanSymbolAnswer(text), style: '', subjectStyle: '', frameStyle: '', themes: [], construction: 'unknown' };
 
   try {
     const raw = JSON.parse(match[0]) as Record<string, unknown>;
@@ -123,6 +129,8 @@ export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
     return {
       subject: clean(raw.subject, 100),
       style: clean(raw.style, 700),
+      subjectStyle: clean(raw.subjectStyle, 700),
+      frameStyle: clean(raw.frameStyle, 700),
       themes,
       construction:
         raw.construction === 'filled-container' ||
@@ -132,7 +140,7 @@ export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
           : 'unknown',
     };
   } catch {
-    return { subject: '', style: '', themes: [], construction: 'unknown' };
+    return { subject: '', style: '', subjectStyle: '', frameStyle: '', themes: [], construction: 'unknown' };
   }
 }
 

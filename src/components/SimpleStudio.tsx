@@ -44,6 +44,8 @@ interface Props {
   glyphColor: string;
   referenceSubject: string;
   styleProfile: string;
+  subjectStyleProfile: string;
+  frameStyleProfile: string;
   theme: string;
   themeSuggestions: ThemeSuggestion[];
   onSpec: (patch: Partial<ContainerSpec>) => void;
@@ -55,6 +57,8 @@ interface Props {
   onGlyphColor: (value: string) => void;
   onReferenceSubject: (value: string) => void;
   onStyleProfile: (value: string) => void;
+  onSubjectStyleProfile: (value: string) => void;
+  onFrameStyleProfile: (value: string) => void;
   onTheme: (value: string) => void;
   onThemeSuggestions: (value: ThemeSuggestion[]) => void;
   onMaterialLayer: (image: CanvasImageSource | null) => void;
@@ -217,6 +221,8 @@ export default function SimpleStudio(props: Props) {
       props.onMaster({ name: file.name, dataUrl: master.stored });
       props.onReferenceSubject('');
       props.onStyleProfile('');
+      props.onSubjectStyleProfile('');
+      props.onFrameStyleProfile('');
       props.onTheme('');
       props.onThemeSuggestions([]);
       props.onFrameReady(false);
@@ -244,6 +250,8 @@ export default function SimpleStudio(props: Props) {
       const analysis = await analyzeReference(dataUrl, props.visionModel);
       props.onReferenceSubject(analysis.subject);
       props.onStyleProfile(analysis.style);
+      props.onSubjectStyleProfile(analysis.subjectStyle);
+      props.onFrameStyleProfile(analysis.frameStyle);
       props.onThemeSuggestions(analysis.themes);
       if (analysis.construction === 'open-frame-with-subject') {
         props.onContainerMode('open-frame');
@@ -297,10 +305,18 @@ export default function SimpleStudio(props: Props) {
         // Isolated mode keeps the container out of the glyph request. Complete
         // mode deliberately sends it because repainting the whole icon is the
         // selected outcome.
-        master: layeredOutput && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
+        // Open-frame glyphs still need the original finished sample so they can
+        // copy the central subject's treatment. The cleaned frame lives in the
+        // material layer and is never substituted for that style evidence.
+        master: props.containerMode === 'open-frame'
+          ? (props.master?.dataUrl ?? null)
+          : layeredOutput && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
         references: props.references.map((reference) => reference.dataUrl),
         referenceSubject: props.referenceSubject,
         styleProfile: props.styleProfile,
+        subjectStyleProfile: props.subjectStyleProfile,
+        frameStyleProfile: props.frameStyleProfile,
+        referenceHasSeparateFrame: props.containerMode === 'open-frame',
         theme: props.theme,
         familyPrompt: props.familyPrompt,
         negativePrompt: props.negativePrompt,
@@ -342,6 +358,9 @@ export default function SimpleStudio(props: Props) {
       references: props.references.map((reference) => reference.dataUrl),
       referenceSubject: props.referenceSubject,
       styleProfile: props.styleProfile,
+      subjectStyleProfile: props.subjectStyleProfile,
+      frameStyleProfile: props.frameStyleProfile,
+      referenceHasSeparateFrame: true,
       familyPrompt: props.familyPrompt,
       negativePrompt: props.negativePrompt,
       quality: props.quality,
@@ -647,6 +666,26 @@ export default function SimpleStudio(props: Props) {
                 />
               </label>
               <label className="field">
+                <span className="field-label">Subject treatment</span>
+                <textarea
+                  value={props.subjectStyleProfile}
+                  placeholder="milky opalescent filled volume, bright pearly body, broad highlights, strong silhouette…"
+                  onChange={(event) => props.onSubjectStyleProfile(event.target.value)}
+                />
+                <small>The new glyph copies this treatment—not the reference subject’s identity.</small>
+              </label>
+              {props.containerMode === 'open-frame' && (
+                <label className="field">
+                  <span className="field-label">Frame treatment</span>
+                  <textarea
+                    value={props.frameStyleProfile}
+                    placeholder="clear iridescent ribbons and bubbles with transparent gaps…"
+                    onChange={(event) => props.onFrameStyleProfile(event.target.value)}
+                  />
+                  <small>Kept separate so glyphs do not become hollow pieces of the frame.</small>
+                </label>
+              )}
+              <label className="field">
                 <span className="field-label">Set theme — optional</span>
                 <input
                   value={props.theme}
@@ -802,6 +841,8 @@ export default function SimpleStudio(props: Props) {
                 props.onLockedContainer(false);
                 props.onReferenceSubject('');
                 props.onStyleProfile('');
+                props.onSubjectStyleProfile('');
+                props.onFrameStyleProfile('');
                 props.onTheme('');
                 props.onThemeSuggestions([]);
                 props.onFrameReady(false);
@@ -852,10 +893,17 @@ export default function SimpleStudio(props: Props) {
               glyphStyle: '',
               conditioning: 'auto',
               wantAlpha: props.containerMode !== 'filled' || props.glyphTransparency,
-              master: (props.containerMode !== 'filled' || props.glyphTransparency) && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
+              master: props.containerMode === 'open-frame'
+                ? (props.master?.dataUrl ?? null)
+                : (props.containerMode !== 'filled' || props.glyphTransparency) && props.lockedContainer
+                  ? null
+                  : (props.master?.dataUrl ?? null),
               references: props.references.map((reference) => reference.dataUrl),
               referenceSubject: props.referenceSubject,
               styleProfile: props.styleProfile,
+              subjectStyleProfile: props.subjectStyleProfile,
+              frameStyleProfile: props.frameStyleProfile,
+              referenceHasSeparateFrame: props.containerMode === 'open-frame',
               theme: props.theme,
               familyPrompt: props.familyPrompt,
               negativePrompt: props.negativePrompt,
