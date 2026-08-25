@@ -175,6 +175,28 @@ export function useImageStore() {
     void clearStore(GLYPHS);
   }, []);
 
+  const clearItemGlyphs = useCallback((ids: Iterable<string>) => {
+    const remove = new Set(ids);
+    if (!remove.size) return;
+    setGlyphs((previous) => {
+      const next = new Map(previous);
+      for (const id of remove) next.delete(id);
+      return next;
+    });
+    for (const [key, url] of urls.current) {
+      const id = key.startsWith('glyph:') ? key.slice('glyph:'.length).split('@v')[0] : '';
+      if (!remove.has(id)) continue;
+      URL.revokeObjectURL(url);
+      urls.current.delete(key);
+    }
+    void (async () => {
+      for (const key of await allKeys(GLYPHS)) {
+        const id = key.split('@v')[0];
+        if (remove.has(id)) await deleteBlob(GLYPHS, key);
+      }
+    })();
+  }, []);
+
   const clearAll = useCallback(() => {
     for (const url of urls.current.values()) URL.revokeObjectURL(url);
     urls.current.clear();
@@ -237,6 +259,7 @@ export function useImageStore() {
     setItemGlyph,
     restoreItemRevision,
     clearGlyphs,
+    clearItemGlyphs,
     clearAll,
     exportImages,
     importImages,

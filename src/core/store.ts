@@ -12,7 +12,7 @@
  */
 
 const DB_NAME = 'icon-generator';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 /** Per-library-card glyphs, keyed by item id. */
 export const GLYPHS = 'glyphs';
@@ -20,6 +20,8 @@ export const GLYPHS = 'glyphs';
 export const LAYERS = 'layers';
 /** Deduplicated model results, keyed by a hash of model + exact input. */
 export const GENERATION_CACHE = 'generation-cache';
+/** Named, self-contained icon-set snapshots for switching between projects. */
+export const PROJECTS = 'projects';
 
 let connection: Promise<IDBDatabase | null> | null = null;
 
@@ -40,6 +42,7 @@ function open(): Promise<IDBDatabase | null> {
       if (!db.objectStoreNames.contains(GLYPHS)) db.createObjectStore(GLYPHS);
       if (!db.objectStoreNames.contains(LAYERS)) db.createObjectStore(LAYERS);
       if (!db.objectStoreNames.contains(GENERATION_CACHE)) db.createObjectStore(GENERATION_CACHE);
+      if (!db.objectStoreNames.contains(PROJECTS)) db.createObjectStore(PROJECTS);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => resolve(null);
@@ -88,6 +91,12 @@ export const allKeys = (store: string) =>
 
 export const clearStore = (store: string) =>
   transact(store, 'readwrite', (objectStore) => objectStore.clear());
+
+export const putValue = <T>(store: string, key: string, value: T) =>
+  transact(store, 'readwrite', (objectStore) => objectStore.put(value, key));
+
+export const getValue = <T>(store: string, key: string) =>
+  transact<T | undefined>(store, 'readonly', (objectStore) => objectStore.get(key));
 
 /** Drop stored glyphs whose card no longer exists, so the store cannot grow forever. */
 export async function pruneGlyphs(keep: Set<string>) {
