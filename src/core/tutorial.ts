@@ -38,7 +38,7 @@ export const TUTORIAL: TutorialScene[] = [
       'Pick the symbols the rest of the family needs',
       'Download every platform size at once',
     ],
-    seconds: 7,
+    seconds: 6,
   },
   {
     id: 'container',
@@ -51,7 +51,7 @@ export const TUTORIAL: TutorialScene[] = [
       'Or Squircle, Rounded, Circle, Square',
       'The outline is compiled from a spec, so it cannot drift between runs',
     ],
-    seconds: 8,
+    seconds: 7,
   },
   {
     id: 'read',
@@ -64,7 +64,7 @@ export const TUTORIAL: TutorialScene[] = [
       'Base colour and surface wording read off the image',
       'Your master rides along with every generation, so the family matches it',
     ],
-    seconds: 9,
+    seconds: 8,
   },
   {
     id: 'describe',
@@ -77,7 +77,7 @@ export const TUTORIAL: TutorialScene[] = [
       'Symbol — what sits on it. Leave it empty for a plain tile.',
       'Everything the upload guessed stays editable',
     ],
-    seconds: 8,
+    seconds: 7,
   },
   {
     id: 'one',
@@ -86,7 +86,7 @@ export const TUTORIAL: TutorialScene[] = [
     caption:
       'A single icon is the cheap way to check the look. Like it, carry on; do not, change a word and press it again.',
     points: ['One generation, a few seconds', 'The container is already exact — only the material is in question'],
-    seconds: 6,
+    seconds: 5,
   },
   {
     id: 'family',
@@ -99,7 +99,7 @@ export const TUTORIAL: TutorialScene[] = [
       'At once: 1 is gentle on your rate limit, 6 is fastest, 3 is a good default',
       'Any card that came out wrong has its own Redo',
     ],
-    seconds: 9,
+    seconds: 8,
   },
   {
     id: 'download',
@@ -108,7 +108,7 @@ export const TUTORIAL: TutorialScene[] = [
     caption:
       'iOS, Android, macOS, Windows and web, plus a .ico and the shape spec, as a single zip.',
     points: ['Every size is rendered fresh from the path, not shrunk down from one big master'],
-    seconds: 7,
+    seconds: 6,
   },
   {
     id: 'done',
@@ -117,7 +117,7 @@ export const TUTORIAL: TutorialScene[] = [
     caption:
       'All controls holds the geometry sliders, the determinism check and the measurement tools. You never need them to get a set out.',
     points: ['Reopen this walkthrough any time — Tutorial, top right'],
-    seconds: 7,
+    seconds: 6,
   },
 ];
 

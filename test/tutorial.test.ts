@@ -11,9 +11,11 @@ describe('walkthrough script', () => {
     expect(new Set(TUTORIAL.map((scene) => scene.id)).size).toBe(TUTORIAL.length);
   });
 
-  it('stays quick', () => {
-    // The brief was "quick": a walkthrough nobody sits through teaches nothing.
-    expect(tutorialSeconds()).toBeLessThanOrEqual(90);
+  it('runs in under a minute', () => {
+    // The brief was "quick", and a recording of it has to clear the sub-60s
+    // bar that most places you would post one impose. Adding a scene means
+    // taking the time out of the others, not extending the run.
+    expect(tutorialSeconds()).toBeLessThan(60);
   });
 
   it('holds each scene long enough to read', () => {
