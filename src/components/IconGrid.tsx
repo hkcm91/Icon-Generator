@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { composeIcon, composeOpenFrame, preserveMasterContainerRim, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
   containerGenerationUsesAlpha,
@@ -7,6 +7,7 @@ import {
   parseLibrary,
   resolveIconOutputMode,
   shouldMaskGeneratedCatalogSubject,
+  shouldPreserveMasterContainerRim,
   frameVariantTarget,
   stableFrameIndex,
   type IconItem,
@@ -244,6 +245,13 @@ export default function IconGrid(props: Props) {
           ) {
             const exactMask = await exactGlyph(item.sourceUrl!, '#ffffff');
             layer = maskGeneratedGlyph(layer, exactMask, props.spec.size);
+          }
+          if (
+            props.material &&
+            shouldPreserveMasterContainerRim(requestedContainerMode, Boolean(props.options.master)) &&
+            needsPaidGeneration(item)
+          ) {
+            layer = preserveMasterContainerRim(props.spec, layer, props.material);
           }
           const nextRevision = item.revision + 1;
           const outputMode = requestedContainerMode === 'open-frame'

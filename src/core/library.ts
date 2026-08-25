@@ -28,6 +28,11 @@ export function shouldMaskGeneratedCatalogSubject(mode: ContainerMode): boolean 
   return mode !== 'filled';
 }
 
+/** Filled master-driven families preserve the approved perimeter in pixels. */
+export function shouldPreserveMasterContainerRim(mode: ContainerMode, hasMaster: boolean): boolean {
+  return mode === 'filled' && hasMaster;
+}
+
 /** 0% reuses one frame; 100% spreads the family across six approved frames. */
 export function frameVariantTarget(detailVariation: number): number {
   const value = Math.max(0, Math.min(100, Number(detailVariation) || 0));
