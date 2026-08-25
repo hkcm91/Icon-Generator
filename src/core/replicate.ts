@@ -331,7 +331,11 @@ export function completeIconPrompt(
     'Return a fully opaque PNG containing the complete container and symbol together.',
     'The artwork must fill the square canvas edge to edge and extend underneath the supplied silhouette.',
     'Zero extra outer padding or empty margin. Never place a smaller framed icon inside the output square.',
-    'The container has a clean borderless outer edge: no black keyline, dark outline, stroke, rim, frame, or halo.',
+    hasMaster
+      ? "Preserve the reference container's outer-edge construction. If it has a luminous translucent glass rim, bright pearlescent bevel, or layered clear border, reproduce that integral edge treatment with the same relative thickness, material, highlights, and depth."
+      : 'Give the container a cohesive material edge and softly lit bevel that belongs to the object.',
+    'The luminous bevel belongs inside the container silhouette; it is not a second inset card, detached frame, or added backing plate.',
+    'No black or dark keyline, hard outline, debug/template frame, opaque perimeter stroke, or halo outside the silhouette.',
     'Arrange decorative microdetails such as bubbles, sparkles, particles, glints, droplets, and highlights in new positions that suit this subject. Never trace or reuse their coordinates from a reference image or another icon.',
     'No transparency, isolated glyph, chroma screen, contact sheet, text, label, watermark, device, or mockup.',
   ].filter(Boolean).join(' ');
