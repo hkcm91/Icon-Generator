@@ -186,6 +186,14 @@ describe('complete icon prompt', () => {
     expect(prompt).toContain('Internal composition variation abc123');
     expect(prompt).toContain('Do not display or spell this key');
   });
+
+  it('keeps style fidelity independent from decorative variation', () => {
+    const prompt = recipePrompt('base', { styleFidelity: 95, detailVariation: 90 } as never);
+    expect(prompt).toContain('style match 95%, decorative variation 90%');
+    expect(prompt).toContain('Very high style fidelity');
+    expect(prompt).toContain('Very high decorative variation');
+    expect(prompt).toContain('variation must not weaken the locked style');
+  });
 });
 
 describe('open frame prompt', () => {

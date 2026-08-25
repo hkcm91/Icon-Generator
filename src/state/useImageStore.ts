@@ -13,12 +13,14 @@ import {
 
 const MATERIAL_KEY = 'material';
 const SINGLE_GLYPH_KEY = 'glyph';
+const FRAME_PREFIX = 'frame:';
 
 export interface ImageBundle {
   material: string | null;
   glyph: string | null;
   glyphs: Record<string, string>;
   revisions?: Record<string, string>;
+  frames?: Record<string, string>;
 }
 
 function blobDataUrl(blob: Blob): Promise<string> {
@@ -65,6 +67,7 @@ export function useImageStore() {
   const [glyphs, setGlyphs] = useState<Map<string, CanvasImageSource>>(new Map());
   const [material, setMaterialState] = useState<CanvasImageSource | null>(null);
   const [glyph, setGlyphState] = useState<CanvasImageSource | null>(null);
+  const [frames, setFrames] = useState<Map<string, CanvasImageSource>>(new Map());
   const urls = useRef(new Map<string, string>());
 
   const trackUrl = useCallback((key: string, image: HTMLImageElement) => {
@@ -92,6 +95,17 @@ export function useImageStore() {
 
       const materialBlob = await getBlob(LAYERS, MATERIAL_KEY);
       const singleBlob = await getBlob(LAYERS, SINGLE_GLYPH_KEY);
+      const restoredFrames = new Map<string, CanvasImageSource>();
+      for (const key of await allKeys(LAYERS)) {
+        if (!key.startsWith(FRAME_PREFIX)) continue;
+        const blob = await getBlob(LAYERS, key);
+        if (!blob) continue;
+        try {
+          const image = await blobToImage(blob);
+          trackUrl(`layer:${key}`, image);
+          restoredFrames.set(key.slice(FRAME_PREFIX.length), image);
+        } catch { /* one corrupt frame variant must not block the project */ }
+      }
       if (!live) return;
 
       setGlyphs(restored);
@@ -105,6 +119,7 @@ export function useImageStore() {
         trackUrl(`layer:${SINGLE_GLYPH_KEY}`, image);
         if (live) setGlyphState(image);
       }
+      setFrames(restoredFrames);
       if (live) setLoaded(true);
     })();
 
@@ -145,6 +160,25 @@ export function useImageStore() {
     },
     [persist],
   );
+
+  const setFrameVariant = useCallback((id: string, image: CanvasImageSource) => {
+    setFrames((previous) => new Map(previous).set(id, image));
+    void persist(LAYERS, `${FRAME_PREFIX}${id}`, image);
+  }, [persist]);
+
+  const clearFrameVariants = useCallback(() => {
+    setFrames(new Map());
+    for (const [key, url] of urls.current) {
+      if (!key.startsWith(`layer:${FRAME_PREFIX}`)) continue;
+      URL.revokeObjectURL(url);
+      urls.current.delete(key);
+    }
+    void (async () => {
+      for (const key of await allKeys(LAYERS)) {
+        if (key.startsWith(FRAME_PREFIX)) await deleteBlob(LAYERS, key);
+      }
+    })();
+  }, []);
 
   const setItemGlyph = useCallback(
     (id: string, image: CanvasImageSource, revision?: number) => {
@@ -203,6 +237,7 @@ export function useImageStore() {
     setGlyphs(new Map());
     setMaterialState(null);
     setGlyphState(null);
+    setFrames(new Map());
     void clearStore(GLYPHS);
     void clearStore(LAYERS);
   }, []);
@@ -210,6 +245,7 @@ export function useImageStore() {
   const exportImages = useCallback(async (): Promise<ImageBundle> => {
     const encoded: Record<string, string> = {};
     const revisions: Record<string, string> = {};
+    const encodedFrames: Record<string, string> = {};
     for (const [id, image] of glyphs) {
       const value = imageDataUrl(image);
       if (value) encoded[id] = value;
@@ -219,13 +255,18 @@ export function useImageStore() {
       const blob = await getBlob(GLYPHS, key);
       if (blob) revisions[key] = await blobDataUrl(blob);
     }
+    for (const [id, image] of frames) {
+      const value = imageDataUrl(image);
+      if (value) encodedFrames[id] = value;
+    }
     return {
       material: imageDataUrl(material),
       glyph: imageDataUrl(glyph),
       glyphs: encoded,
       revisions,
+      frames: encodedFrames,
     };
-  }, [glyphs, material, glyph]);
+  }, [glyphs, material, glyph, frames]);
 
   const importImages = useCallback(async (bundle: ImageBundle) => {
     await clearStore(GLYPHS);
@@ -242,9 +283,16 @@ export function useImageStore() {
     }
     const nextMaterial = bundle.material ? await dataUrlImage(bundle.material) : null;
     const nextGlyph = bundle.glyph ? await dataUrlImage(bundle.glyph) : null;
+    const nextFrames = new Map<string, CanvasImageSource>();
+    for (const [id, source] of Object.entries(bundle.frames ?? {})) {
+      const image = await dataUrlImage(source);
+      nextFrames.set(id, image);
+      await persist(LAYERS, `${FRAME_PREFIX}${id}`, image);
+    }
     setGlyphs(restored);
     setMaterialState(nextMaterial);
     setGlyphState(nextGlyph);
+    setFrames(nextFrames);
     await persist(LAYERS, MATERIAL_KEY, nextMaterial);
     await persist(LAYERS, SINGLE_GLYPH_KEY, nextGlyph);
   }, [persist]);
@@ -254,8 +302,11 @@ export function useImageStore() {
     glyphs,
     material,
     glyph,
+    frames,
     setMaterial,
     setGlyph,
+    setFrameVariant,
+    clearFrameVariants,
     setItemGlyph,
     restoreItemRevision,
     clearGlyphs,

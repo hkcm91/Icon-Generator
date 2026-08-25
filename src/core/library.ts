@@ -15,6 +15,22 @@ export type ItemStatus = 'draft' | 'queued' | 'generating' | 'ready' | 'failed';
 export type IconOutputMode = 'transparent' | 'framed' | 'composed' | 'complete';
 export type ContainerMode = 'isolated' | 'open-frame' | 'filled';
 
+/** 0% reuses one frame; 100% spreads the family across six approved frames. */
+export function frameVariantTarget(detailVariation: number): number {
+  const value = Math.max(0, Math.min(100, Number(detailVariation) || 0));
+  return 1 + Math.round(value / 20);
+}
+
+/** Stable assignment: the same card keeps its frame across refreshes and exports. */
+export function stableFrameIndex(itemId: string, count: number): number {
+  if (count <= 1) return 0;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < itemId.length; index++) {
+    hash = Math.imul(hash ^ itemId.charCodeAt(index), 0x01000193) >>> 0;
+  }
+  return hash % count;
+}
+
 export interface IconItem {
   id: string;
   name: string;

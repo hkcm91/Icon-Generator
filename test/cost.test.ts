@@ -1,9 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { estimateGlyphBatch, modelOutputCost, needsPaidGeneration } from '../src/core/cost';
-import { makeItem, repairedTransparentOutputMode, resolveIconOutputMode } from '../src/core/library';
+import {
+  frameVariantTarget,
+  makeItem,
+  repairedTransparentOutputMode,
+  resolveIconOutputMode,
+  stableFrameIndex,
+} from '../src/core/library';
 import { hydrateProject } from '../src/state/useProject';
 
 describe('generation cost controls', () => {
+  it('bounds decorative frame pools from one to six reusable variants', () => {
+    expect(frameVariantTarget(-20)).toBe(1);
+    expect(frameVariantTarget(0)).toBe(1);
+    expect(frameVariantTarget(70)).toBe(5);
+    expect(frameVariantTarget(100)).toBe(6);
+    expect(frameVariantTarget(500)).toBe(6);
+  });
+
+  it('assigns frame variants deterministically per icon', () => {
+    expect(stableFrameIndex('search', 5)).toBe(stableFrameIndex('search', 5));
+    expect(stableFrameIndex('search', 1)).toBe(0);
+    expect(stableFrameIndex('search', 5)).toBeGreaterThanOrEqual(0);
+    expect(stableFrameIndex('search', 5)).toBeLessThan(5);
+  });
+
   it('prices GPT Image 2 by quality', () => {
     expect(modelOutputCost('openai/gpt-image-2', 'low')).toBe(0.012);
     expect(modelOutputCost('openai/gpt-image-2', 'high')).toBe(0.128);
@@ -82,5 +103,18 @@ describe('generation cost controls', () => {
   it('clears legacy template rims but preserves a newly selected rim', () => {
     expect(hydrateProject({ compose: { rimWidth: 8 } as never }).compose.rimWidth).toBe(0);
     expect(hydrateProject({ borderlessVersion: 1, compose: { rimWidth: 8 } as never }).compose.rimWidth).toBe(8);
+  });
+
+  it('defaults and clamps independent style controls on saved projects', () => {
+    expect(hydrateProject({}).styleFidelity).toBe(90);
+    expect(hydrateProject({}).detailVariation).toBe(70);
+    expect(hydrateProject({ styleFidelity: 140, detailVariation: -5 })).toMatchObject({
+      styleFidelity: 100,
+      detailVariation: 0,
+    });
+    expect(hydrateProject({ styleFidelity: Number.NaN, detailVariation: Number.NaN })).toMatchObject({
+      styleFidelity: 90,
+      detailVariation: 70,
+    });
   });
 });

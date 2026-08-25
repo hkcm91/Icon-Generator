@@ -54,6 +54,15 @@ treatment** profiles. New glyphs copy the reference subject's opacity, filled
 volume, brightness and contrast while the open frame keeps its own ribbon and
 bubble construction, so a search icon does not disappear into the border.
 
+Two independent fine-tuning controls keep similarity from turning into
+duplication. **Style match** locks the material, palette, lighting, opacity and
+rendering treatment. **Decorative variation** changes bubble counts and sizes,
+swirl paths, highlights and placement without weakening that style lock. For
+open-frame sets, variation creates a small persisted pool of one to six frames
+and assigns one deterministically to each icon. This gives a large family real
+visual diversity while paying for only a handful of frame generations rather
+than generating a new border for every card.
+
 **Make a whole family** gives you **7,400 built-in glyphs** — Material Symbols
 (3,899), brand marks (3,453) and the Y2K Dream set (48) — searchable, add any
 number at once. Or import your own list: a CSV, a JSON manifest, or one name per

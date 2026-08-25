@@ -8,7 +8,7 @@ import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '.
 import { hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
-import { makeItem, repairedTransparentOutputMode, resolveIconOutputMode, type ContainerMode, type IconItem } from '../core/library';
+import { frameVariantTarget, makeItem, repairedTransparentOutputMode, resolveIconOutputMode, stableFrameIndex, type ContainerMode, type IconItem } from '../core/library';
 import {
   PLATFORM_TARGETS,
   blobBytes,
@@ -46,6 +46,8 @@ interface Props {
   styleProfile: string;
   subjectStyleProfile: string;
   frameStyleProfile: string;
+  styleFidelity: number;
+  detailVariation: number;
   theme: string;
   themeSuggestions: ThemeSuggestion[];
   onSpec: (patch: Partial<ContainerSpec>) => void;
@@ -59,6 +61,8 @@ interface Props {
   onStyleProfile: (value: string) => void;
   onSubjectStyleProfile: (value: string) => void;
   onFrameStyleProfile: (value: string) => void;
+  onStyleFidelity: (value: number) => void;
+  onDetailVariation: (value: number) => void;
   onTheme: (value: string) => void;
   onThemeSuggestions: (value: ThemeSuggestion[]) => void;
   onMaterialLayer: (image: CanvasImageSource | null) => void;
@@ -83,6 +87,9 @@ interface Props {
   onContainerMode: (value: ContainerMode) => void;
   frameReady: boolean;
   onFrameReady: (value: boolean) => void;
+  frameVariants: Map<string, CanvasImageSource>;
+  onFrameVariant: (id: string, image: CanvasImageSource) => void;
+  onClearFrameVariants: () => void;
   references: Array<{ name: string; dataUrl: string }>;
   onReferences: (value: Array<{ name: string; dataUrl: string }>) => void;
   exportApprovedOnly: boolean;
@@ -151,6 +158,7 @@ export default function SimpleStudio(props: Props) {
   const [tracing, setTracing] = useState('');
   const [notes, setNotes] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [variantBusy, setVariantBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const lockedInput = useRef<HTMLInputElement>(null);
   const referenceInput = useRef<HTMLInputElement>(null);
@@ -226,6 +234,7 @@ export default function SimpleStudio(props: Props) {
       props.onTheme('');
       props.onThemeSuggestions([]);
       props.onFrameReady(false);
+      props.onClearFrameVariants();
       // The upload is already the approved master. Reuse its pixels instead of
       // paying for a second model call to repaint a surface the user supplied.
       props.onMaterialLayer(master.layer);
@@ -317,6 +326,8 @@ export default function SimpleStudio(props: Props) {
         subjectStyleProfile: props.subjectStyleProfile,
         frameStyleProfile: props.frameStyleProfile,
         referenceHasSeparateFrame: props.containerMode === 'open-frame',
+        styleFidelity: props.styleFidelity,
+        detailVariation: props.detailVariation,
         theme: props.theme,
         familyPrompt: props.familyPrompt,
         negativePrompt: props.negativePrompt,
@@ -361,11 +372,72 @@ export default function SimpleStudio(props: Props) {
       subjectStyleProfile: props.subjectStyleProfile,
       frameStyleProfile: props.frameStyleProfile,
       referenceHasSeparateFrame: true,
+      styleFidelity: props.styleFidelity,
+      detailVariation: props.detailVariation,
       familyPrompt: props.familyPrompt,
       negativePrompt: props.negativePrompt,
       quality: props.quality,
     }, props.onMaterialLayer);
-    if (success) props.onFrameReady(true);
+    if (success) {
+      props.onFrameReady(true);
+      props.onClearFrameVariants();
+    }
+  };
+
+  const targetFrameCount = frameVariantTarget(props.detailVariation);
+  const availableFrameCount = props.materialLayer ? 1 + props.frameVariants.size : props.frameVariants.size;
+  const framePool = () => [
+    ...(props.materialLayer ? [props.materialLayer] : []),
+    ...[...props.frameVariants.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, image]) => image),
+  ].slice(0, targetFrameCount);
+  const frameFor = (itemId: string) => {
+    const pool = framePool();
+    return pool[stableFrameIndex(itemId, pool.length)] ?? props.materialLayer;
+  };
+
+  const generateFrameVariants = async () => {
+    if (!props.frameReady || !props.master || !props.materialLayer) {
+      setStatus({ kind: 'error', message: 'Extract and approve the base frame first.' });
+      return;
+    }
+    const needed = Math.max(0, targetFrameCount - 1);
+    const totalCost = cost === null ? null : cost * needed;
+    if (totalCost !== null && totalCost > props.maxBatchCost) {
+      setStatus({ kind: 'error', message: `Frame variants would cost about $${totalCost.toFixed(2)}, above the $${props.maxBatchCost.toFixed(2)} batch limit.` });
+      return;
+    }
+    props.onClearFrameVariants();
+    setVariantBusy(true);
+    try {
+      for (let index = 1; index <= needed; index++) {
+        const success = await generateOpenFrame({
+          spec: props.spec,
+          model: props.model,
+          material: props.material,
+          glyphSubject: '',
+          glyphStyle: '',
+          conditioning: 'off',
+          wantAlpha: true,
+          master: props.master.dataUrl,
+          references: props.references.map((reference) => reference.dataUrl),
+          referenceSubject: props.referenceSubject,
+          styleProfile: props.styleProfile,
+          subjectStyleProfile: props.subjectStyleProfile,
+          frameStyleProfile: props.frameStyleProfile,
+          referenceHasSeparateFrame: true,
+          styleFidelity: props.styleFidelity,
+          detailVariation: props.detailVariation,
+          familyPrompt: props.familyPrompt,
+          negativePrompt: props.negativePrompt,
+          variationKey: `frame-variant-${index}-of-${needed}-detail-${props.detailVariation}`,
+          quality: props.quality,
+        }, (image) => props.onFrameVariant(`v${String(index).padStart(2, '0')}`, image));
+        if (!success) return;
+      }
+      setStatus({ kind: 'ok', message: `${targetFrameCount} stable frame variations are ready for automatic distribution across the family.` });
+    } finally {
+      setVariantBusy(false);
+    }
   };
 
   const addThemeSubjects = (suggestion: ThemeSuggestion) => {
@@ -416,7 +488,7 @@ export default function SimpleStudio(props: Props) {
               : 'composed';
         const layers = outputMode === 'complete'
           ? { material: glyph ?? props.materialLayer, glyph: null }
-          : { material: props.materialLayer, glyph };
+          : { material: outputMode === 'framed' ? frameFor(item.id) : props.materialLayer, glyph };
         const itemCompose: ComposeOptions = {
           ...props.compose,
           glyphScale: props.compose.glyphScale * ('opticalScale' in item ? (item.opticalScale ?? 1) : 1),
@@ -632,6 +704,15 @@ export default function SimpleStudio(props: Props) {
                   </button>
                 )}
               </div>
+              {props.frameReady && targetFrameCount > 1 && (
+                <div className="frame-variants-control">
+                  <span>{Math.min(availableFrameCount, targetFrameCount)}/{targetFrameCount} frame variations ready</span>
+                  <button type="button" className="ghost" onClick={() => void generateFrameVariants()}
+                    disabled={busy || variantBusy || premiumBlocked}>
+                    {variantBusy ? 'Generating variations…' : `Generate ${targetFrameCount - 1} alternate frames`}
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <label className="field">
@@ -680,7 +761,10 @@ export default function SimpleStudio(props: Props) {
                   <textarea
                     value={props.frameStyleProfile}
                     placeholder="clear iridescent ribbons and bubbles with transparent gaps…"
-                    onChange={(event) => props.onFrameStyleProfile(event.target.value)}
+                    onChange={(event) => {
+                      props.onFrameStyleProfile(event.target.value);
+                      props.onClearFrameVariants();
+                    }}
                   />
                   <small>Kept separate so glyphs do not become hollow pieces of the frame.</small>
                 </label>
@@ -807,6 +891,24 @@ export default function SimpleStudio(props: Props) {
             </div>
             <div className="style-grid simple-controls">
               <label className="field">
+                <span className="field-label">Style match <b>{props.styleFidelity}%</b></span>
+                <input type="range" min={0} max={100} step={5} value={props.styleFidelity}
+                  onChange={(event) => {
+                    props.onStyleFidelity(Number(event.target.value));
+                    props.onClearFrameVariants();
+                  }} />
+                <small>Locks material, palette, lighting and subject/frame treatments.</small>
+              </label>
+              <label className="field">
+                <span className="field-label">Decorative variation <b>{props.detailVariation}%</b></span>
+                <input type="range" min={0} max={100} step={5} value={props.detailVariation}
+                  onChange={(event) => {
+                    props.onDetailVariation(Number(event.target.value));
+                    props.onClearFrameVariants();
+                  }} />
+                <small>Varies bubble counts, sizes, positions and swirl paths independently of style.</small>
+              </label>
+              <label className="field">
                 <span className="field-label">Glyph size <b>{Math.round(props.compose.glyphScale * 100)}%</b></span>
                 <input type="range" min={50} max={140} value={props.compose.glyphScale * 100}
                   onChange={(event) => props.onCompose({ glyphScale: Number(event.target.value) / 100 })} />
@@ -846,6 +948,7 @@ export default function SimpleStudio(props: Props) {
                 props.onTheme('');
                 props.onThemeSuggestions([]);
                 props.onFrameReady(false);
+                props.onClearFrameVariants();
               }}
               disabled={busy}
             >
@@ -875,6 +978,7 @@ export default function SimpleStudio(props: Props) {
             spec={props.spec}
             compose={props.compose}
             material={props.materialLayer}
+            frameVariants={props.frameVariants}
             glyphColor={props.glyphColor}
             items={props.items}
             concurrency={props.concurrency}
@@ -904,6 +1008,8 @@ export default function SimpleStudio(props: Props) {
               subjectStyleProfile: props.subjectStyleProfile,
               frameStyleProfile: props.frameStyleProfile,
               referenceHasSeparateFrame: props.containerMode === 'open-frame',
+              styleFidelity: props.styleFidelity,
+              detailVariation: props.detailVariation,
               theme: props.theme,
               familyPrompt: props.familyPrompt,
               negativePrompt: props.negativePrompt,

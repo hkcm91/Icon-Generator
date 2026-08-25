@@ -48,6 +48,8 @@ export interface GenerationOptions {
   frameStyleProfile?: string;
   /** True when the reference contains visually distinct subject and frame roles. */
   referenceHasSeparateFrame?: boolean;
+  styleFidelity?: number;
+  detailVariation?: number;
   /** User-selected set direction. Never substitutes for an item's subject. */
   theme?: string;
   familyPrompt?: string;
@@ -58,10 +60,27 @@ export interface GenerationOptions {
 }
 
 export function recipePrompt(prompt: string, options: GenerationOptions): string {
+  const fidelity = Math.max(0, Math.min(100, options.styleFidelity ?? 90));
+  const variation = Math.max(0, Math.min(100, options.detailVariation ?? 70));
+  const fidelityRule = fidelity >= 85
+    ? 'Very high style fidelity: lock the reference material, palette, lighting, camera, dimensionality, opacity hierarchy, edge thickness and rendering finish.'
+    : fidelity >= 60
+      ? 'Strong style fidelity: preserve the recognizable material family, palette, lighting and rendering technique while allowing modest interpretation.'
+      : fidelity >= 35
+        ? 'Moderate style fidelity: keep the broad aesthetic and palette, but allow noticeable material and lighting interpretation.'
+        : 'Loose inspiration only: retain a faint family resemblance while freely reinterpreting material, palette and rendering.';
+  const variationRule = variation >= 85
+    ? 'Very high decorative variation: use a substantially new count, scale mix, paths and placement of bubbles, swirls, glints and particles while preserving density and visual balance.'
+    : variation >= 60
+      ? 'High decorative variation: rearrange bubble counts, sizes, swirl paths, highlights and negative-space rhythm into a clearly different composition.'
+      : variation >= 30
+        ? 'Moderate decorative variation: change several microdetail positions and sizes while keeping the overall arrangement familiar.'
+        : 'Low decorative variation: keep the broad arrangement close, but never trace or reuse exact coordinates.';
   return [prompt,
     options.styleProfile?.trim()
       ? `SHARED FAMILY STYLE (palette, lighting and rendering only; this never overrides the separate subject/frame opacity, fill or construction rules): ${options.styleProfile.trim()}`
       : '',
+    `REFERENCE CONTROL — style match ${Math.round(fidelity)}%, decorative variation ${Math.round(variation)}%. ${fidelityRule} ${variationRule} Style fidelity and composition variation are independent: variation must not weaken the locked style.`,
     options.familyPrompt?.trim(), options.variationKey
     ? `Internal composition variation ${options.variationKey}: choose a distinct arrangement of decorative microdetails for this icon. Do not display or spell this key.`
     : '', options.negativePrompt?.trim()

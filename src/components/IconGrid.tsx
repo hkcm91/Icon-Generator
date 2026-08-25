@@ -5,6 +5,8 @@ import {
   modelGlyphReferenceSource,
   parseLibrary,
   resolveIconOutputMode,
+  frameVariantTarget,
+  stableFrameIndex,
   type IconItem,
   type ContainerMode,
 } from '../core/library';
@@ -22,6 +24,7 @@ interface Props {
   spec: ContainerSpec;
   compose: ComposeOptions;
   material: CanvasImageSource | null;
+  frameVariants: Map<string, CanvasImageSource>;
   glyphColor: string;
   items: IconItem[];
   concurrency: number;
@@ -96,6 +99,12 @@ export default function IconGrid(props: Props) {
     glyphOffsetX: item.opticalOffsetX ?? 0,
     glyphOffsetY: item.opticalOffsetY ?? 0,
   });
+  const framePool = [
+    ...(props.material ? [props.material] : []),
+    ...[...props.frameVariants.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, image]) => image),
+  ].slice(0, frameVariantTarget(props.options.detailVariation ?? 70));
+  const frameFor = (item: IconItem) =>
+    framePool[stableFrameIndex(item.id, framePool.length)] ?? props.material;
 
   const patch = (id: string, change: Partial<IconItem>) =>
     props.onItems(props.items.map((item) => (item.id === id ? { ...item, ...change } : item)));
@@ -416,7 +425,7 @@ export default function IconGrid(props: Props) {
                 layers={outputMode === 'transparent'
                   ? { material: null, glyph: props.glyphs.get(item.id) ?? null }
                   : outputMode === 'composed' || outputMode === 'framed'
-                    ? { material: props.material, glyph: props.glyphs.get(item.id) ?? null }
+                    ? { material: outputMode === 'framed' ? frameFor(item) : props.material, glyph: props.glyphs.get(item.id) ?? null }
                   : { material: props.glyphs.get(item.id) ?? null, glyph: null }}
               />
 

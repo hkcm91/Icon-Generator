@@ -39,6 +39,10 @@ export interface Project {
   styleProfile: string;
   subjectStyleProfile: string;
   frameStyleProfile: string;
+  /** Prompt-level match strength for stable material/palette/lighting. */
+  styleFidelity: number;
+  /** Controls microdetail rearrangement and the size of the frame variant pool. */
+  detailVariation: number;
   /** Optional set direction explicitly chosen by the user. */
   theme: string;
   themeSuggestions: ThemeSuggestion[];
@@ -91,6 +95,8 @@ const DEFAULT_PROJECT: Project = {
   styleProfile: '',
   subjectStyleProfile: '',
   frameStyleProfile: '',
+  styleFidelity: 90,
+  detailVariation: 70,
   theme: '',
   themeSuggestions: [],
   master: null,
@@ -105,6 +111,11 @@ const DEFAULT_PROJECT: Project = {
   concurrency: 3,
   maxBatchCost: 1,
 };
+
+function percentage(value: unknown, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : fallback;
+}
 
 export function hydrateProject(parsed: Partial<Project>): Project {
   const migrateExpensiveDefault = parsed.quality === undefined && parsed.model === 'google/nano-banana-pro';
@@ -130,6 +141,8 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     glyphTransparency: savedTransparency,
     containerMode: parsed.containerMode ?? (savedTransparency ? 'isolated' : 'filled'),
     frameReady: parsed.frameReady ?? false,
+    styleFidelity: percentage(parsed.styleFidelity, 90),
+    detailVariation: percentage(parsed.detailVariation, 70),
     spec: normalizeSpec(parsed.spec),
     // Older project/template JSON could silently carry a dark analytic rim.
     // Clear it once; rims intentionally selected after this migration persist.

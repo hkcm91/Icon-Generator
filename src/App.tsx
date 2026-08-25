@@ -330,6 +330,8 @@ export default function App() {
           styleProfile={project.styleProfile}
           subjectStyleProfile={project.subjectStyleProfile}
           frameStyleProfile={project.frameStyleProfile}
+          styleFidelity={project.styleFidelity}
+          detailVariation={project.detailVariation}
           theme={project.theme}
           themeSuggestions={project.themeSuggestions}
           onSpec={setSpec}
@@ -343,6 +345,8 @@ export default function App() {
           onStyleProfile={(value) => setField('styleProfile', value)}
           onSubjectStyleProfile={(value) => setField('subjectStyleProfile', value)}
           onFrameStyleProfile={(value) => setField('frameStyleProfile', value)}
+          onStyleFidelity={(value) => setField('styleFidelity', value)}
+          onDetailVariation={(value) => setField('detailVariation', value)}
           onTheme={(value) => setField('theme', value)}
           onThemeSuggestions={(value) => setField('themeSuggestions', value)}
           onMaterialLayer={store.setMaterial}
@@ -361,6 +365,9 @@ export default function App() {
           onContainerMode={(value) => setField('containerMode', value)}
           frameReady={project.frameReady}
           onFrameReady={(value) => setField('frameReady', value)}
+          frameVariants={store.frames}
+          onFrameVariant={store.setFrameVariant}
+          onClearFrameVariants={store.clearFrameVariants}
           references={project.references}
           onReferences={(value) => setField('references', value)}
           exportApprovedOnly={project.exportApprovedOnly}

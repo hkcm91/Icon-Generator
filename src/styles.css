@@ -673,6 +673,19 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 .frame-gate-ready { border-color: var(--ok); background: rgba(52, 211, 153, 0.08); }
 .frame-gate p { margin: 4px 0 10px; color: var(--muted); font-size: 12.5px; }
 
+.frame-variants-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(52, 211, 153, 0.22);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.frame-variants-control button { flex: 0 0 auto; }
+
 .reference-separation {
   display: grid;
   gap: 3px;
@@ -709,6 +722,11 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 
 @media (max-width: 700px) {
   .construction-picker { grid-template-columns: 1fr; }
+  .style-grid.simple-controls { grid-template-columns: 1fr; }
+  .frame-variants-control {
+    align-items: stretch;
+    flex-direction: column;
+  }
   .theme-card {
     align-items: stretch;
     flex-direction: column;
