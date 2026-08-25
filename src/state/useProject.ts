@@ -15,6 +15,8 @@ export interface Project {
   compose: ComposeOptions;
   model: string;
   quality: 'low' | 'medium' | 'high';
+  /** Versioned proof that the tier came from the explicit priced dropdown. */
+  qualitySelectionVersion: number;
   premiumAllowed: boolean;
   /** Vision model used to name the symbol in an uploaded master. */
   visionModel: string;
@@ -52,6 +54,7 @@ const DEFAULT_PROJECT: Project = {
   compose: DEFAULT_COMPOSE,
   model: 'openai/gpt-image-2',
   quality: 'low',
+  qualitySelectionVersion: 1,
   premiumAllowed: false,
   visionModel: DEFAULT_VISION_MODEL,
   // Empty by design. A pre-filled default is indistinguishable from a field
@@ -81,9 +84,12 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     ...DEFAULT_PROJECT,
     ...parsed,
     model: migrateExpensiveDefault ? 'openai/gpt-image-2' : (parsed.model ?? DEFAULT_PROJECT.model),
-    // GPT tiers are now explicit entries in the model dropdown. Preserve the
-    // chosen entry, but reject malformed/stale values back to Low.
-    quality: parsed.quality === 'medium' || parsed.quality === 'high' ? parsed.quality : 'low',
+    // Values saved before the priced tier dropdown existed were implicit and
+    // are the source of the surprise $0.128 selection. Migrate them to Low.
+    quality: parsed.qualitySelectionVersion === 1 && (parsed.quality === 'medium' || parsed.quality === 'high')
+      ? parsed.quality
+      : 'low',
+    qualitySelectionVersion: 1,
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
     calibrationRequired: parsed.calibrationRequired ?? true,
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),

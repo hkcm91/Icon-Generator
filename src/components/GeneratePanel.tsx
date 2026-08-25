@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground } from '../core/compose';
 import {
   buildConditioning,
@@ -15,7 +15,9 @@ import {
   modelConditioning,
   modelInput,
   modelSupportsAlpha,
+  resumeGeneration,
   testConnection,
+  type GenerateResult,
 } from '../core/replicate';
 import type { ContainerSpec } from '../core/spec';
 
@@ -40,6 +42,13 @@ interface Props {
 
 type Status = { kind: 'idle' } | { kind: 'busy'; what: string } | { kind: 'error'; message: string } | { kind: 'ok'; message: string };
 
+const PENDING_ADVANCED_KEY = 'icon-generator-pending-advanced-v1';
+type PendingAdvanced = {
+  id: string;
+  kind: 'material' | 'glyph' | 'complete';
+  alphaRequested: boolean;
+};
+
 const CONDITIONING_MODES: Array<{ value: ConditioningMode; label: string; blurb: string }> = [
   { value: 'off', label: 'Clip only', blurb: 'Model paints a free texture; code cuts the shape.' },
   {
@@ -59,6 +68,7 @@ export default function GeneratePanel(props: Props) {
   const [showPrompts, setShowPrompts] = useState(false);
   const [mode, setMode] = useState<ConditioningMode>('reference');
   const [platePreview, setPlatePreview] = useState<string>('');
+  const resumedPending = useRef(false);
   const alphaCapable = modelSupportsAlpha(props.model);
   const completeMode = props.model === 'openai/gpt-image-2' && !props.wantAlpha;
   const selectedModel = props.model === 'openai/gpt-image-2'
@@ -94,6 +104,61 @@ export default function GeneratePanel(props: Props) {
     ? completeIconPrompt(props.glyphSubject, props.materialDescription, Boolean(props.master))
     : glyphPrompt(props.glyphSubject, props.glyphStyle, useNativeAlpha);
 
+  const forgetPending = () => {
+    try { localStorage.removeItem(PENDING_ADVANCED_KEY); } catch { /* private storage */ }
+  };
+
+  const rememberPending = (kind: PendingAdvanced['kind'], alphaRequested: boolean) => (id: string) => {
+    try {
+      localStorage.setItem(PENDING_ADVANCED_KEY, JSON.stringify({ id, kind, alphaRequested }));
+    } catch { /* private storage */ }
+  };
+
+  const applyFinished = async (
+    pending: Pick<PendingAdvanced, 'kind' | 'alphaRequested'>,
+    result: GenerateResult,
+  ) => {
+    const image = await loadImage(result.images[0]);
+    if (pending.kind === 'material') {
+      props.onMaterial(image);
+      return 'Material result recovered and applied.';
+    }
+    if (pending.kind === 'complete') {
+      props.onMaterial(image);
+      props.onGlyph(null);
+      return 'Complete opaque icon recovered and applied.';
+    }
+    const native = pending.alphaRequested && hasNativeAlpha(image);
+    props.onGlyph(native ? cleanGeneratedAlpha(image, props.spec.size) : keyOutBackground(image, props.spec.size));
+    return native ? 'Transparent glyph result recovered and applied.' : 'Glyph result recovered and applied.';
+  };
+
+  useEffect(() => {
+    if (resumedPending.current) return;
+    resumedPending.current = true;
+    let pending: PendingAdvanced | null = null;
+    try {
+      const raw = localStorage.getItem(PENDING_ADVANCED_KEY);
+      pending = raw ? JSON.parse(raw) as PendingAdvanced : null;
+    } catch { pending = null; }
+    if (!pending || !/^[A-Za-z0-9]+$/.test(pending.id)) return;
+
+    let live = true;
+    setStatus({ kind: 'busy', what: 'Recovering the generation started before refresh' });
+    void resumeGeneration(pending.id)
+      .then((result) => applyFinished(pending!, result))
+      .then((message) => {
+        forgetPending();
+        if (live) setStatus({ kind: 'ok', message });
+      })
+      .catch((error) => {
+        if (live) setStatus({ kind: 'error', message: `Could not recover prediction ${pending!.id}: ${(error as Error).message}` });
+      });
+    return () => { live = false; };
+  // Recovery is intentionally one-shot for the mounted advanced panel.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const check = async () => {
     setStatus({ kind: 'busy', what: 'Testing connection' });
     try {
@@ -110,8 +175,10 @@ export default function GeneratePanel(props: Props) {
       const result = await generateImage(
         props.model,
         modelInput(props.model, material, props.spec.size, [], conditioning, false, props.quality),
+        rememberPending('material', false),
       );
       props.onMaterial(await loadImage(result.images[0]));
+      forgetPending();
       setStatus({
         kind: 'ok',
         message:
@@ -141,12 +208,14 @@ export default function GeneratePanel(props: Props) {
           useNativeAlpha,
           props.quality,
         ),
+        rememberPending(completeMode ? 'complete' : 'glyph', useNativeAlpha),
       );
       const image = await loadImage(result.images[0]);
 
       if (completeMode) {
         props.onMaterial(image);
         props.onGlyph(null);
+        forgetPending();
         setStatus({ kind: 'ok', message: 'Complete opaque icon generated with its container.' });
         return;
       }
@@ -159,6 +228,7 @@ export default function GeneratePanel(props: Props) {
           ? cleanGeneratedAlpha(image, props.spec.size)
           : keyOutBackground(image, props.spec.size),
       );
+      forgetPending();
 
       setStatus({
         kind: 'ok',
