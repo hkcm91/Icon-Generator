@@ -122,6 +122,14 @@ describe('glyph isolation prompt', () => {
   it('uses chroma green when transparency is turned off', () => {
     expect(glyphPrompt('moon', 'pearl', false, false)).toContain('#00FF00');
   });
+
+  it('makes the requested subject authoritative over reference content and theme', () => {
+    const prompt = glyphPrompt('home', 'iridescent glass', true, true, 'ghost', 'Halloween');
+    expect(prompt).toContain('SUBJECT AUTHORITY: Create one home');
+    expect(prompt).toContain('reference depicts ghost');
+    expect(prompt).toContain('Do not draw it unless the requested subject explicitly asks for it');
+    expect(prompt).toContain('never replace, disguise, or weaken the requested subject');
+  });
 });
 
 describe('complete icon prompt', () => {
@@ -145,6 +153,13 @@ describe('complete icon prompt', () => {
     expect(prompt).toContain('cohesive material edge and softly lit bevel');
     expect(prompt).toContain('not a second inset card');
     expect(prompt).toContain('No black or dark keyline');
+  });
+
+  it('replaces the reference subject in complete-icon mode', () => {
+    const prompt = completeIconPrompt('pumpkin', 'iridescent glass', true, 'ghost', 'Halloween');
+    expect(prompt).toContain('depicting pumpkin');
+    expect(prompt).toContain('It depicts ghost');
+    expect(prompt).toContain('replace it with pumpkin');
   });
 
   it('gives each family revision a non-visible composition variation', () => {

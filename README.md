@@ -33,9 +33,15 @@ the outline into the spec, reads the palette and finish, and fills the Surface
 field and base colour. Naming the symbol needs a vision model; everything else
 is measured from the pixels, so it works offline and is identical on every run.
 
-The master is not only analysed — it is passed as a reference to **every**
-generation, so the whole family inherits one look rather than drifting apart
-prompt by prompt.
+The master is not only analysed — its content, transferable style and possible
+set themes are stored separately. The depicted object never becomes the next
+icon subject automatically. If a ghost supplies the iridescent transparent
+look, a Home card still asks for Home and explicitly tells the model that the
+reference ghost is source content to exclude. The app suggests several themes
+(for example Halloween or a visually supported Y2K direction); the user can
+choose one, edit it, or add its suggested subjects to the family. The master is
+still passed as an appearance reference so the family inherits one look rather
+than drifting apart prompt by prompt.
 
 **Make a whole family** gives you **7,400 built-in glyphs** — Material Symbols
 (3,899), brand marks (3,453) and the Y2K Dream set (48) — searchable, add any

@@ -13,6 +13,21 @@
 
 import { describeImage } from './replicate';
 
+export interface ThemeSuggestion {
+  name: string;
+  rationale: string;
+  subjects: string[];
+}
+
+export interface ReferenceAnalysis {
+  /** Literal object shown in the reference. Never becomes the next icon subject automatically. */
+  subject: string;
+  /** Transferable appearance only: material, palette, lighting, rendering and finish. */
+  style: string;
+  /** Plausible set directions the user may opt into. */
+  themes: ThemeSuggestion[];
+}
+
 export const DEFAULT_VISION_MODEL = 'yorickvp/llava-13b';
 
 /** Field name each family expects for its image input. */
@@ -35,6 +50,18 @@ const SYMBOL_PROMPT = [
   'For example: "a paper plane", "a gear", "two overlapping speech bubbles".',
   'Do not mention the background, the container shape, colours, or style.',
   'If there is no symbol, reply exactly: none.',
+].join(' ');
+
+const REFERENCE_PROMPT = [
+  'Analyze this image as a style reference for a cohesive icon family.',
+  'Return only valid JSON with this exact shape:',
+  '{"subject":"short literal noun phrase","style":"transferable visual style","themes":[{"name":"theme name","rationale":"short reason","subjects":["subject 1","subject 2"]}]}',
+  'The subject is the literal depicted object, such as "ghost".',
+  'The style must describe only transferable appearance: transparency, material, palette, iridescence, lighting, dimensionality, edge treatment, texture, camera and rendering technique.',
+  'Do not repeat the depicted subject or its anatomy in the style field.',
+  'Suggest 2 to 4 distinct plausible icon-set themes. Include an obvious semantic theme when appropriate, but also broader aesthetic or era-based themes such as Y2K or Frutiger Aero when visually supported.',
+  'For every theme, suggest 6 to 10 varied objects that belong in that set. Do not make every suggestion a variation of the reference subject.',
+  'No markdown fences and no commentary outside the JSON.',
 ].join(' ');
 
 /**
@@ -66,4 +93,45 @@ export async function nameSymbol(
 ): Promise<string> {
   const text = await describeImage(model, visionInput(model, SYMBOL_PROMPT, imageDataUrl));
   return cleanSymbolAnswer(text);
+}
+
+const clean = (value: unknown, limit: number): string =>
+  typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, limit) : '';
+
+/** Parse vision output defensively: caption models sometimes wrap otherwise valid JSON. */
+export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return { subject: cleanSymbolAnswer(text), style: '', themes: [] };
+
+  try {
+    const raw = JSON.parse(match[0]) as Record<string, unknown>;
+    const themes = Array.isArray(raw.themes)
+      ? raw.themes.slice(0, 4).map((entry) => {
+          const item = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+          return {
+            name: clean(item.name, 60),
+            rationale: clean(item.rationale, 180),
+            subjects: Array.isArray(item.subjects)
+              ? item.subjects.map((subject) => clean(subject, 80)).filter(Boolean).slice(0, 10)
+              : [],
+          };
+        }).filter((theme) => theme.name)
+      : [];
+    return {
+      subject: clean(raw.subject, 100),
+      style: clean(raw.style, 700),
+      themes,
+    };
+  } catch {
+    return { subject: '', style: '', themes: [] };
+  }
+}
+
+/** One vision call separates what the reference depicts from what should transfer. */
+export async function analyzeReference(
+  imageDataUrl: string,
+  model: string = DEFAULT_VISION_MODEL,
+): Promise<ReferenceAnalysis> {
+  const text = await describeImage(model, visionInput(model, REFERENCE_PROMPT, imageDataUrl));
+  return parseReferenceAnalysis(text);
 }

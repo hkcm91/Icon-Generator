@@ -39,6 +39,12 @@ export interface GenerationOptions {
   /** Optional authoritative artwork for a styled catalog/custom glyph. */
   glyphReference?: string | null;
   references?: string[];
+  /** Literal content of the master, used to tell the model what must not leak. */
+  referenceSubject?: string;
+  /** Editable appearance-only description extracted from the master. */
+  styleProfile?: string;
+  /** User-selected set direction. Never substitutes for an item's subject. */
+  theme?: string;
   familyPrompt?: string;
   negativePrompt?: string;
   quality?: 'low' | 'medium' | 'high';
@@ -47,7 +53,9 @@ export interface GenerationOptions {
 }
 
 export function recipePrompt(prompt: string, options: GenerationOptions): string {
-  return [prompt, options.familyPrompt?.trim(), options.variationKey
+  return [prompt,
+    options.styleProfile?.trim() ? `TRANSFERABLE STYLE PROFILE: ${options.styleProfile.trim()}` : '',
+    options.familyPrompt?.trim(), options.variationKey
     ? `Internal composition variation ${options.variationKey}: choose a distinct arrangement of decorative microdetails for this icon. Do not display or spell this key.`
     : '', options.negativePrompt?.trim()
     ? `Avoid: ${options.negativePrompt.trim()}` : ''].filter(Boolean).join('\n');
@@ -153,6 +161,8 @@ export function useGeneration() {
             options.glyphStyle,
             wantAlpha,
             Boolean(options.master),
+            options.referenceSubject,
+            options.theme,
           ),
           options,
         ),
@@ -183,7 +193,13 @@ export function useGeneration() {
     const input = modelInput(
       options.model,
       recipePrompt(
-        completeIconPrompt(subject ?? options.glyphSubject, options.material, Boolean(options.master)),
+        completeIconPrompt(
+          subject ?? options.glyphSubject,
+          options.material,
+          Boolean(options.master),
+          options.referenceSubject,
+          options.theme,
+        ),
         options,
       ),
       options.spec.size,

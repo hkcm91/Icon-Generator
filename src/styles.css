@@ -622,3 +622,52 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 .guided-options { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .guided-options summary, .scale-saver summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
 .guided-options[open] summary, .scale-saver[open] summary { margin-bottom: 12px; color: var(--text); }
+.reference-intelligence {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
+}
+
+.reference-separation {
+  display: grid;
+  gap: 3px;
+}
+
+.reference-separation small,
+.theme-card small {
+  color: var(--muted);
+}
+
+.theme-suggestions {
+  display: grid;
+  gap: 8px;
+}
+
+.theme-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.theme-card > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.theme-card-on {
+  border-color: var(--accent);
+}
+
+@media (max-width: 700px) {
+  .theme-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

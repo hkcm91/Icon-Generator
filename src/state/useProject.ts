@@ -3,6 +3,7 @@ import { DEFAULT_COMPOSE, type ComposeOptions } from '../core/compose';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../core/spec';
 import { DEFAULT_VISION_MODEL } from '../core/vision';
 import type { IconItem } from '../core/library';
+import type { ThemeSuggestion } from '../core/vision';
 
 const STORAGE_KEY = 'icon-generator-project-v1';
 
@@ -32,6 +33,13 @@ export interface Project {
   glyphSubject: string;
   glyphStyle: string;
   glyphColor: string;
+  /** Literal content detected in the master. Kept separate from requested subjects. */
+  referenceSubject: string;
+  /** Transferable visual properties detected in the master. */
+  styleProfile: string;
+  /** Optional set direction explicitly chosen by the user. */
+  theme: string;
+  themeSuggestions: ThemeSuggestion[];
   /** The approved master: every generation references it. */
   master: { name: string; dataUrl: string } | null;
   /** Reuse the approved container pixels instead of repainting the material. */
@@ -73,6 +81,10 @@ const DEFAULT_PROJECT: Project = {
   glyphSubject: '',
   glyphStyle: '',
   glyphColor: '#ffffff',
+  referenceSubject: '',
+  styleProfile: '',
+  theme: '',
+  themeSuggestions: [],
   master: null,
   lockedContainer: false,
   glyphTransparency: true,

@@ -3,12 +3,12 @@ import Preview from './Preview';
 import { containerPath } from '../core/geometry';
 import { traceMaster } from '../core/trace';
 import { describeMaster } from '../core/describe';
-import { nameSymbol } from '../core/vision';
+import { analyzeReference, type ThemeSuggestion } from '../core/vision';
 import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '../core/spec';
 import { hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
-import { repairedTransparentOutputMode, resolveIconOutputMode, type IconItem } from '../core/library';
+import { makeItem, repairedTransparentOutputMode, resolveIconOutputMode, type IconItem } from '../core/library';
 import {
   PLATFORM_TARGETS,
   blobBytes,
@@ -41,6 +41,10 @@ interface Props {
   negativePrompt: string;
   glyph: string;
   glyphColor: string;
+  referenceSubject: string;
+  styleProfile: string;
+  theme: string;
+  themeSuggestions: ThemeSuggestion[];
   onSpec: (patch: Partial<ContainerSpec>) => void;
   onCompose: (patch: Partial<ComposeOptions>) => void;
   onMaterial: (value: string) => void;
@@ -48,6 +52,10 @@ interface Props {
   onNegativePrompt: (value: string) => void;
   onGlyph: (value: string) => void;
   onGlyphColor: (value: string) => void;
+  onReferenceSubject: (value: string) => void;
+  onStyleProfile: (value: string) => void;
+  onTheme: (value: string) => void;
+  onThemeSuggestions: (value: ThemeSuggestion[]) => void;
   onMaterialLayer: (image: CanvasImageSource | null) => void;
   onGlyphLayer: (image: CanvasImageSource | null) => void;
   master: { name: string; dataUrl: string } | null;
@@ -185,8 +193,9 @@ export default function SimpleStudio(props: Props) {
 
   /**
    * One upload does everything: shape, colour, material wording, and — where a
-   * vision model is reachable — the name of the symbol. Every field it fills
-   * stays editable; this is a starting point, not a decision.
+   * vision model is reachable — a strict separation between depicted subject,
+   * transferable style and possible set themes. None becomes the next output
+   * subject automatically.
    */
   const useMaster = async (files: FileList | null, exact = false) => {
     const file = files?.[0];
@@ -201,6 +210,10 @@ export default function SimpleStudio(props: Props) {
       // Registered before anything else can fail, so a later vision error still
       // leaves every generation referencing the approved master.
       props.onMaster({ name: file.name, dataUrl: master.stored });
+      props.onReferenceSubject('');
+      props.onStyleProfile('');
+      props.onTheme('');
+      props.onThemeSuggestions([]);
       // The upload is already the approved master. Reuse its pixels instead of
       // paying for a second model call to repaint a surface the user supplied.
       props.onMaterialLayer(master.layer);
@@ -217,29 +230,25 @@ export default function SimpleStudio(props: Props) {
         `Shape and colours taken from ${file.name}. Corner curve n ≈ ${traced.exponent.toFixed(1)}.`,
       );
 
-      if (!described.glyph.present) {
-        props.onGlyph('');
-        return;
-      }
-      // Local analysis can prove a symbol is there and what colour it is, but
-      // not what it depicts. Only that last step needs the network.
-      // Clear first: whatever is in the field describes the *previous* icon,
-      // and leaving it would have the field assert something about this master
-      // that was never established.
+      // The reference's depicted object must never become the requested output
+      // subject. That old coupling is what made a ghost master produce ghosts
+      // for Home, Back and every other family card.
       props.onGlyph('');
-      setTracing('Working out what the symbol is…');
-      const named = await nameSymbol(dataUrl, props.visionModel);
-      props.onGlyph(named ? `${named}, ${described.glyph.colorName}` : '');
+      setTracing('Separating its subject, style and possible themes…');
+      const analysis = await analyzeReference(dataUrl, props.visionModel);
+      props.onReferenceSubject(analysis.subject);
+      props.onStyleProfile(analysis.style);
+      props.onThemeSuggestions(analysis.themes);
       setTracing(
-        named
-          ? `Read everything from ${file.name}. Edit anything below.`
-          : `Read ${file.name}. Could not name the symbol — describe it yourself.`,
+        analysis.subject
+          ? `Reference subject detected as “${analysis.subject}”. It will not be reused unless an icon asks for it.`
+          : `Read ${file.name}. Its pixels still provide the visual reference.`,
       );
     } catch (error) {
       // A vision failure must not lose the shape and colour work already done.
       setTracing(
         dataUrl
-          ? `Shape and colours read. Naming the symbol failed: ${(error as Error).message}`
+          ? `Shape and colours read. Style and theme analysis failed: ${(error as Error).message}`
           : `Could not read that image: ${(error as Error).message}`,
       );
     }
@@ -274,6 +283,9 @@ export default function SimpleStudio(props: Props) {
         // selected outcome.
         master: props.glyphTransparency && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
         references: props.references.map((reference) => reference.dataUrl),
+        referenceSubject: props.referenceSubject,
+        styleProfile: props.styleProfile,
+        theme: props.theme,
         familyPrompt: props.familyPrompt,
         negativePrompt: props.negativePrompt,
         quality: props.quality,
@@ -291,6 +303,19 @@ export default function SimpleStudio(props: Props) {
       return;
     }
     void generateIcon(options, props.onMaterialLayer, props.onGlyphLayer);
+  };
+
+  const addThemeSubjects = (suggestion: ThemeSuggestion) => {
+    const existing = new Set(props.items.map((item) => item.name.toLowerCase()));
+    const fresh = suggestion.subjects
+      .filter((subject) => !existing.has(subject.toLowerCase()))
+      .map((subject) => makeItem(subject, { category: suggestion.name }));
+    props.onItems([...props.items, ...fresh]);
+    props.onTheme(suggestion.name);
+    setStatus({
+      kind: 'ok',
+      message: `Using ${suggestion.name}; added ${fresh.length} new theme concept${fresh.length === 1 ? '' : 's'} to the family.`,
+    });
   };
 
   const downloadAll = async () => {
@@ -521,6 +546,51 @@ export default function SimpleStudio(props: Props) {
               onChange={(event) => props.onGlyph(event.target.value)}
             />
           </label>
+          {props.master && (
+            <div className="reference-intelligence">
+              <div className="reference-separation">
+                <span className="field-label">Reference content</span>
+                <strong>{props.referenceSubject || 'Not identified'}</strong>
+                <small>Used as an exclusion, not as the next icon subject.</small>
+              </div>
+              <label className="field">
+                <span className="field-label">Transferable style</span>
+                <textarea
+                  value={props.styleProfile}
+                  placeholder="transparent iridescent gel, cool pastel reflections, soft studio lighting…"
+                  onChange={(event) => props.onStyleProfile(event.target.value)}
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">Set theme — optional</span>
+                <input
+                  value={props.theme}
+                  placeholder="Choose a suggestion or type your own"
+                  onChange={(event) => props.onTheme(event.target.value)}
+                />
+              </label>
+              {props.themeSuggestions.length > 0 && (
+                <div className="theme-suggestions" aria-label="Detected theme suggestions">
+                  {props.themeSuggestions.map((suggestion) => (
+                    <div className={props.theme === suggestion.name ? 'theme-card theme-card-on' : 'theme-card'} key={suggestion.name}>
+                      <div>
+                        <strong>{suggestion.name}</strong>
+                        <small>{suggestion.rationale}</small>
+                      </div>
+                      <div className="row row-tight">
+                        <button type="button" className="ghost" onClick={() => props.onTheme(suggestion.name)}>
+                          Use theme
+                        </button>
+                        <button type="button" className="ghost" onClick={() => addThemeSubjects(suggestion)}>
+                          Add {suggestion.subjects.length} ideas
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <label className="field field-inline">
             <span className="field-label">Colour</span>
             <input
@@ -644,6 +714,10 @@ export default function SimpleStudio(props: Props) {
                 props.onGlyphLayer(null);
                 props.onMaster(null);
                 props.onLockedContainer(false);
+                props.onReferenceSubject('');
+                props.onStyleProfile('');
+                props.onTheme('');
+                props.onThemeSuggestions([]);
               }}
               disabled={busy}
             >
@@ -693,6 +767,9 @@ export default function SimpleStudio(props: Props) {
               wantAlpha: props.glyphTransparency,
               master: props.glyphTransparency && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
               references: props.references.map((reference) => reference.dataUrl),
+              referenceSubject: props.referenceSubject,
+              styleProfile: props.styleProfile,
+              theme: props.theme,
               familyPrompt: props.familyPrompt,
               negativePrompt: props.negativePrompt,
               quality: props.quality,

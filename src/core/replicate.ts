@@ -292,10 +292,17 @@ export function glyphPrompt(
   style: string,
   nativeAlpha = false,
   hasMaster = false,
+  referenceSubject = '',
+  theme = '',
 ): string {
+  const requested = subject.trim() || 'symbol';
   return [
-    `A single centered ${subject.trim() || 'symbol'} icon glyph.`,
+    `SUBJECT AUTHORITY: Create one ${requested}. The requested subject in this sentence overrides every reference image and every theme cue.`,
+    `A single centered ${requested} icon glyph.`,
     style.trim() ? `Style: ${style.trim()}.` : '',
+    theme.trim()
+      ? `Set theme: ${theme.trim()}. Use the theme only for compatible styling and small supporting details; never replace, disguise, or weaken the requested subject.`
+      : '',
     // With a real alpha channel the background must not be described at all:
     // naming one invites the model to draw it despite the transparency flag.
     nativeAlpha
@@ -307,7 +314,7 @@ export function glyphPrompt(
     // Saying so explicitly is what stops the model copying its subject, which
     // is the usual failure when a reference image is present.
     hasMaster
-      ? 'Match the reference image for material, palette, lighting direction, stroke weight, and level of detail. Draw the new subject described above; do not copy or trace the reference subject or the positions of bubbles, sparkles, particles, highlights, or other decorative accents.'
+      ? `REFERENCE ROLE — APPEARANCE ONLY: Match material, transparency, palette, iridescence, lighting direction, stroke weight, camera, and level of detail. The reference depicts ${referenceSubject.trim() || 'a different object'}; that object is source content, not a reusable motif. Do not draw it unless the requested subject explicitly asks for it. Do not copy or trace the reference silhouette, anatomy, facial features, or the positions of bubbles, sparkles, particles, highlights, or other decorative accents.`
       : '',
     'No container, tile, badge, frame, card, rounded rectangle, circle backing, border,',
     'text, label, watermark, mockup, or scene.',
@@ -321,12 +328,18 @@ export function completeIconPrompt(
   subject: string,
   material: string,
   hasMaster = false,
+  referenceSubject = '',
+  theme = '',
 ): string {
+  const requested = subject.trim() || 'a simple symbol';
   return [
-    `Create one complete finished app icon depicting ${subject.trim() || 'a simple symbol'}.`,
+    `SUBJECT AUTHORITY: Create one complete finished app icon depicting ${requested}. The requested subject overrides every reference image and theme cue.`,
     material.trim() ? `Material and finish: ${material.trim()}.` : '',
+    theme.trim()
+      ? `Set theme: ${theme.trim()}. Use it as art direction and for restrained supporting details, but keep ${requested} unmistakably dominant.`
+      : '',
     hasMaster
-      ? 'Use the reference as authoritative for container silhouette, material vocabulary, palette, lighting, camera, and proportions, but not as a pixel-layout template. Recompose the surface and replace its symbol with the requested subject.'
+      ? `REFERENCE ROLE — APPEARANCE ONLY: Use the reference as authoritative for container silhouette, material vocabulary, palette, lighting, camera, and proportions, but not for content. It depicts ${referenceSubject.trim() || 'a different object'}; remove that source subject completely and replace it with ${requested}. Do not retain its silhouette, face, anatomy, pose, or recognizable fragments.`
       : 'Include a polished, fully visible icon container behind the symbol.',
     'Return a fully opaque PNG containing the complete container and symbol together.',
     'The artwork must fill the square canvas edge to edge and extend underneath the supplied silhouette.',

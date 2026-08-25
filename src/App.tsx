@@ -326,6 +326,10 @@ export default function App() {
           negativePrompt={project.negativePrompt}
           glyph={project.glyphSubject}
           glyphColor={project.glyphColor}
+          referenceSubject={project.referenceSubject}
+          styleProfile={project.styleProfile}
+          theme={project.theme}
+          themeSuggestions={project.themeSuggestions}
           onSpec={setSpec}
           onCompose={setCompose}
           onMaterial={(value) => setField('materialDescription', value)}
@@ -333,6 +337,10 @@ export default function App() {
           onNegativePrompt={(value) => setField('negativePrompt', value)}
           onGlyph={(value) => setField('glyphSubject', value)}
           onGlyphColor={(value) => setField('glyphColor', value)}
+          onReferenceSubject={(value) => setField('referenceSubject', value)}
+          onStyleProfile={(value) => setField('styleProfile', value)}
+          onTheme={(value) => setField('theme', value)}
+          onThemeSuggestions={(value) => setField('themeSuggestions', value)}
           onMaterialLayer={store.setMaterial}
           onGlyphLayer={store.setGlyph}
           materialLayer={material}
