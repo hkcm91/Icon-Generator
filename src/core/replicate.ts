@@ -294,6 +294,7 @@ export function glyphPrompt(
   hasMaster = false,
   referenceSubject = '',
   theme = '',
+  themeTreatment = '',
   subjectStyle = '',
   frameStyle = '',
   referenceHasSeparateFrame = false,
@@ -305,7 +306,10 @@ export function glyphPrompt(
     style.trim() ? `Style: ${style.trim()}.` : '',
     subjectStyle.trim() ? `REFERENCE SUBJECT TREATMENT: ${subjectStyle.trim()}.` : '',
     theme.trim()
-      ? `Set theme: ${theme.trim()}. Use the theme only for material and palette; do not add themed supporting objects or decoration, and never replace, disguise, or weaken the requested subject.`
+      ? `THEME TRANSFORMATION: The family theme is ${theme.trim()}. Keep the requested icon function instantly recognizable, but reinterpret its visual concept so it unmistakably belongs to that theme. This is semantic art direction, not merely a color filter. For example, a Halloween cookie can be a clean pumpkin-decorated seasonal sugar cookie, and a Halloween butterfly can use restrained gothic wing or skull-like markings. Use one bold theme cue integrated into the main silhouette; avoid extra clutter.`
+      : '',
+    themeTreatment.trim()
+      ? `APPROVED THEME TREATMENT: ${themeTreatment.trim()}. Follow this treatment while preserving the requested icon's readable identity.`
       : '',
     // With a real alpha channel the background must not be described at all:
     // naming one invites the model to draw it despite the transparency flag.
@@ -341,14 +345,16 @@ export function completeIconPrompt(
   hasMaster = false,
   referenceSubject = '',
   theme = '',
+  themeTreatment = '',
 ): string {
   const requested = subject.trim() || 'a simple symbol';
   return [
     `SUBJECT AUTHORITY: Create one complete finished app icon depicting ${requested}. The requested subject overrides every reference image and theme cue.`,
     material.trim() ? `Material and finish: ${material.trim()}.` : '',
     theme.trim()
-      ? `Set theme: ${theme.trim()}. Use it as art direction and for restrained supporting details, but keep ${requested} unmistakably dominant.`
+      ? `THEME TRANSFORMATION: The family theme is ${theme.trim()}. Reinterpret ${requested} with one bold, integrated theme-specific cue rather than merely recoloring it. Keep the main subject unmistakable and legible at tiny size.`
       : '',
+    themeTreatment.trim() ? `APPROVED THEME TREATMENT: ${themeTreatment.trim()}.` : '',
     hasMaster
       ? `REFERENCE ROLE — APPEARANCE ONLY: Use the reference as authoritative for container silhouette, material vocabulary, palette, lighting, camera, and proportions, but not for content. It depicts ${referenceSubject.trim() || 'a different object'}; remove that source subject completely and replace it with ${requested}. Do not retain its silhouette, face, anatomy, pose, or recognizable fragments.`
       : 'Include a polished, fully visible icon container behind the symbol.',

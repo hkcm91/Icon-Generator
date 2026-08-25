@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseReferenceAnalysis } from '../src/core/vision';
+import { parseReferenceAnalysis, parseThemeFamilyIdeas } from '../src/core/vision';
 
 describe('reference analysis', () => {
   it('separates source content, transferable style and theme concepts', () => {
     const result = parseReferenceAnalysis(`Here is the result:\n\`\`\`json
       {"subject":"ghost","style":"pastel iridescent 3D rendering","subjectStyle":"milky opalescent filled volume with broad highlights","frameStyle":"clear hollow ribbons and bubbles","materials":[
-        {"role":"glyph","name":"Opal gel","description":"milky filled translucent volume"},
-        {"role":"frame","name":"Bubble ribbon","description":"clear iridescent hollow gel"}
+        {"role":"glyph","name":"Opal gel","description":"milky filled translucent volume","opacityMin":70,"opacityMax":95},
+        {"role":"frame","name":"Bubble ribbon","description":"clear iridescent hollow gel","opacityMin":35,"opacityMax":80}
       ],"construction":"open-frame-with-subject","themes":[
         {"name":"Halloween","rationale":"The ghost is seasonal","subjects":["pumpkin","scarecrow","cauldron"]},
         {"name":"Y2K spectral","rationale":"Iridescent gel finish","subjects":["flip phone","CD","star"]}
@@ -16,6 +16,7 @@ describe('reference analysis', () => {
     expect(result.subjectStyle).toContain('filled volume');
     expect(result.frameStyle).toContain('hollow ribbons');
     expect(result.materials.map((material) => material.role)).toEqual(['glyph', 'frame']);
+    expect(result.materials[0]).toMatchObject({ opacityMin: 70, opacityMax: 95 });
     expect(result.themes[0].name).toBe('Halloween');
     expect(result.themes[0].subjects).toEqual(['pumpkin', 'scarecrow', 'cauldron']);
     expect(result.construction).toBe('open-frame-with-subject');
@@ -31,5 +32,10 @@ describe('reference analysis', () => {
       themes: [],
       construction: 'unknown',
     });
+  });
+
+  it('keeps export names separate from visual concepts and theme treatments', () => {
+    expect(parseThemeFamilyIdeas(`Ideas: [{"name":"Home","concept":"pumpkin","themeTreatment":"jack-o-lantern doorway cutout"}]`))
+      .toEqual([{ name: 'Home', concept: 'pumpkin', themeTreatment: 'jack-o-lantern doorway cutout' }]);
   });
 });

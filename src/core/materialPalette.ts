@@ -7,6 +7,9 @@ export interface MaterialRecipe {
   role: MaterialRole;
   name: string;
   description: string;
+  /** Detected interior alpha range, as percentages. Edges/cutouts are excluded. */
+  opacityMin?: number;
+  opacityMax?: number;
 }
 
 export interface MaterialPalette {
@@ -46,6 +49,10 @@ export function normalizeMaterialPalette(value: unknown): MaterialPalette | null
         ? recipe.name.trim().slice(0, 80)
         : `${role} material`,
       description,
+      opacityMin: Number.isFinite(Number(recipe.opacityMin))
+        ? Math.max(0, Math.min(100, Number(recipe.opacityMin))) : undefined,
+      opacityMax: Number.isFinite(Number(recipe.opacityMax))
+        ? Math.max(0, Math.min(100, Number(recipe.opacityMax))) : undefined,
     }];
   }) : [];
   return colors.length || recipes.length ? { colors, recipes } : null;
@@ -61,10 +68,15 @@ const label: Record<MaterialRole, string> = {
 export function materialPalettePrompt(palette?: MaterialPalette | null): string {
   if (!palette?.recipes.length) return '';
   const recipes = palette.recipes
-    .map((recipe) => `${label[recipe.role]} material — ${recipe.name}: ${recipe.description}`)
+    .map((recipe) => {
+      const opacity = recipe.opacityMin !== undefined || recipe.opacityMax !== undefined
+        ? ` Interior opacity: ${Math.min(recipe.opacityMin ?? recipe.opacityMax ?? 100, recipe.opacityMax ?? recipe.opacityMin ?? 100)}–${Math.max(recipe.opacityMin ?? recipe.opacityMax ?? 100, recipe.opacityMax ?? recipe.opacityMin ?? 100)}%; preserve true 0% alpha only for exterior space and intentional cutouts.`
+        : '';
+      return `${label[recipe.role]} material — ${recipe.name}: ${recipe.description}.${opacity}`;
+    })
     .join(' | ');
   const colors = palette.colors.map((color) => `${color.name} ${color.hex}`).join(', ');
-  return `APPROVED MATERIAL PALETTE: ${recipes}${colors ? `. Measured colors: ${colors}.` : ''} Apply each material only to its named role; do not swap the translucent frame treatment onto the glyph or the filled glyph treatment onto the frame.`;
+  return `APPROVED MATERIAL PALETTE — ROLE-LOCKED: ${recipes}${colors ? `. Measured colors: ${colors}.` : ''} Apply each material only to its named role. Do not average the glyph and frame materials into one finish; do not swap the dark frame treatment onto the glyph or the bright glyph treatment onto the frame. Alpha is part of the material and must not be flattened to fully opaque.`;
 }
 
 export function mergeMaterialPalette(

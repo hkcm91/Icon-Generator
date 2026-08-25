@@ -95,6 +95,12 @@ button.ghost { background: var(--panel-2); color: var(--text); border: 1px solid
 
 .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .row button { flex: 1 1 auto; }
+.add-icon-form { display: grid; grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1.3fr) auto; gap: 8px; align-items: end; margin: 10px 0; }
+.add-icon-form .field { margin: 0; }
+@media (max-width: 640px) { .add-icon-form { grid-template-columns: 1fr; } }
+.opacity-range { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 5px; }
+.opacity-range label { font-size: 0.72rem; color: var(--muted); }
+.opacity-range input { width: 64px; margin-left: 4px; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .chip {

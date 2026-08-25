@@ -3,7 +3,7 @@ import Preview from './Preview';
 import { containerPath } from '../core/geometry';
 import { traceMaster } from '../core/trace';
 import { describeMaster } from '../core/describe';
-import { analyzeReference, type ThemeSuggestion } from '../core/vision';
+import { analyzeReference, suggestThemeFamily, type ThemeSuggestion } from '../core/vision';
 import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '../core/spec';
 import { clearOpenFrameCenter, hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
@@ -180,6 +180,7 @@ export default function SimpleStudio(props: Props) {
   const [exporting, setExporting] = useState(false);
   const [variantBusy, setVariantBusy] = useState(false);
   const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [ideasBusy, setIdeasBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const lockedInput = useRef<HTMLInputElement>(null);
   const referenceInput = useRef<HTMLInputElement>(null);
@@ -550,7 +551,11 @@ export default function SimpleStudio(props: Props) {
     const existing = new Set(props.items.map((item) => item.name.toLowerCase()));
     const fresh = suggestion.subjects
       .filter((subject) => !existing.has(subject.toLowerCase()))
-      .map((subject) => makeItem(subject, { category: suggestion.name }));
+      .map((subject) => makeItem(subject, {
+        concept: subject,
+        category: suggestion.name,
+        themeTreatment: `${suggestion.name} interpretation of ${subject}; use one clear seasonal or cultural motif integrated into the subject`,
+      }));
     props.onItems([...props.items, ...fresh]);
     props.onTheme(suggestion.name);
     setStatus({
@@ -559,15 +564,52 @@ export default function SimpleStudio(props: Props) {
     });
   };
 
+  const generateThemeIdeas = async () => {
+    if (!props.master || !props.theme.trim() || ideasBusy) return;
+    setIdeasBusy(true);
+    setStatus({ kind: 'busy', what: `Planning a ${props.theme.trim()} family` });
+    try {
+      const ideas = await suggestThemeFamily(props.master.dataUrl, props.theme, props.visionModel);
+      if (!ideas.length) throw new Error('The model returned no usable icon ideas.');
+      const existing = new Set(props.items.map((item) => item.name.toLowerCase()));
+      const fresh = ideas.filter((idea) => !existing.has(idea.name.toLowerCase())).map((idea) => makeItem(idea.name, {
+        concept: idea.concept,
+        themeTreatment: idea.themeTreatment,
+        category: props.theme.trim(),
+      }));
+      props.onItems([...props.items, ...fresh]);
+      setStatus({ kind: 'ok', message: `Added ${fresh.length} themed card idea${fresh.length === 1 ? '' : 's'}. Review the name, subject and treatment before generating.` });
+    } catch (error) {
+      setStatus({ kind: 'error', message: `Could not suggest the family: ${(error as Error).message}` });
+    } finally {
+      setIdeasBusy(false);
+    }
+  };
+
   const updateMaterialRole = (role: MaterialRole, description: string, fallbackName: string) => {
     if (!props.materialPalette) return;
+    const previous = props.materialPalette.recipes.find((recipe) => recipe.role === role);
     const recipes = props.materialPalette.recipes.filter((recipe) => recipe.role !== role);
-    if (description.trim()) recipes.push({ role, name: fallbackName, description: description.trim() });
+    if (description.trim()) recipes.push({
+      role,
+      name: previous?.name || fallbackName,
+      description: description.trim(),
+      opacityMin: previous?.opacityMin,
+      opacityMax: previous?.opacityMax,
+    });
     props.onMaterialPalette(mergeMaterialPalette(
       props.materialPalette.colors,
       recipes,
       { base: '', glyph: '', frame: '' },
     ));
+  };
+
+  const updateMaterialOpacity = (role: MaterialRole, key: 'opacityMin' | 'opacityMax', value: number) => {
+    if (!props.materialPalette) return;
+    const recipes = props.materialPalette.recipes.map((recipe) => recipe.role === role
+      ? { ...recipe, [key]: Math.max(0, Math.min(100, value)) }
+      : recipe);
+    props.onMaterialPalette({ ...props.materialPalette, recipes });
   };
 
   const downloadAll = async () => {
@@ -669,6 +711,8 @@ export default function SimpleStudio(props: Props) {
           icons: targets.map(({ item }) => ({
             id: item.id,
             name: item.name,
+            concept: 'concept' in item ? item.concept : undefined,
+            themeTreatment: 'themeTreatment' in item ? item.themeTreatment : undefined,
             revision: 'activeRevision' in item ? (item.activeRevision ?? item.revision) : item.revision,
             latestRevision: item.revision,
             category: 'category' in item ? item.category : undefined,
@@ -872,7 +916,16 @@ export default function SimpleStudio(props: Props) {
                     {props.materialPalette.recipes.map((recipe) => (
                       <div className="material-recipe" key={recipe.role}>
                         <strong>{recipe.role === 'base' ? 'Base' : recipe.role === 'glyph' ? 'Glyph' : recipe.role === 'frame' ? 'Frame' : 'Accent'}</strong>
-                        <span><b>{recipe.name}</b><small>{recipe.description}</small></span>
+                        <span><b>{recipe.name}</b><small>{recipe.description}</small>
+                          {(recipe.opacityMin !== undefined || recipe.opacityMax !== undefined) && (
+                            <span className="opacity-range">
+                              <label>Opacity min <input type="number" min={0} max={100} value={recipe.opacityMin ?? recipe.opacityMax ?? 100}
+                                onChange={(event) => updateMaterialOpacity(recipe.role, 'opacityMin', Number(event.target.value))} /></label>
+                              <label>max <input type="number" min={0} max={100} value={recipe.opacityMax ?? recipe.opacityMin ?? 100}
+                                onChange={(event) => updateMaterialOpacity(recipe.role, 'opacityMax', Number(event.target.value))} /></label>
+                            </span>
+                          )}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -929,6 +982,10 @@ export default function SimpleStudio(props: Props) {
                   onChange={(event) => props.onTheme(event.target.value)}
                 />
               </label>
+              <button type="button" className="ghost" disabled={!props.theme.trim() || !props.master || ideasBusy}
+                onClick={() => void generateThemeIdeas()}>
+                {ideasBusy ? 'Planning family…' : 'Suggest themed icon cards'}
+              </button>
               {props.themeSuggestions.length > 0 && (
                 <div className="theme-suggestions" aria-label="Detected theme suggestions">
                   {props.themeSuggestions.map((suggestion) => (
@@ -1029,7 +1086,7 @@ export default function SimpleStudio(props: Props) {
             </label>
             <div className="row reference-row">
               <button type="button" className="ghost" onClick={() => referenceInput.current?.click()}>
-                Add appearance references
+                Add glyph style masters
               </button>
               <input ref={referenceInput} type="file" accept="image/*" multiple hidden
                 onChange={(event) => void addReferences(event.target.files)} />
@@ -1041,6 +1098,7 @@ export default function SimpleStudio(props: Props) {
                 </button>
               ))}
             </div>
+            <p className="hint">Add 2–5 different finished glyphs from the same family. Shared material and lighting are treated as rules; differing subjects and detail placement are treated as allowed variation.</p>
             <div className="style-grid simple-controls">
               <label className="field">
                 <span className="field-label">Style match <b>{props.styleFidelity}%</b></span>

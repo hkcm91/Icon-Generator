@@ -85,6 +85,9 @@ export default function IconGrid(props: Props) {
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState('');
   const [browsing, setBrowsing] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newConcept, setNewConcept] = useState('');
   const stopped = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const artworkInput = useRef<HTMLInputElement>(null);
@@ -209,6 +212,7 @@ export default function IconGrid(props: Props) {
                 {
                   ...props.options,
                   glyphSubject: subject,
+                  themeTreatment: item.themeTreatment,
                   // A stable key per revision keeps network retries/cache hits
                   // safe while making every icon and Redo use a new layout.
                   variationKey: hashString(`${item.id}:v${item.revision + 1}`),
@@ -273,6 +277,9 @@ export default function IconGrid(props: Props) {
         <button type="button" className="primary" onClick={() => setBrowsing((c) => !c)}>
           Browse glyphs
         </button>
+        <button type="button" className="ghost" onClick={() => setAdding((value) => !value)}>
+          Add icon
+        </button>
         <button type="button" className="ghost" onClick={() => input.current?.click()}>
           Import list
         </button>
@@ -331,6 +338,29 @@ export default function IconGrid(props: Props) {
         />
       </div>
 
+      {adding && (
+        <form className="add-icon-form" onSubmit={(event) => {
+          event.preventDefault();
+          const name = newName.trim();
+          if (!name) return;
+          props.onItems([...props.items, makeItem(name, { concept: newConcept.trim() })]);
+          setMessage(`Added ${name}. Its card name and visual subject can be different.`);
+          setNewName('');
+          setNewConcept('');
+          setAdding(false);
+        }}>
+          <label className="field">
+            <span className="field-label">Icon name <small>used for export</small></span>
+            <input value={newName} autoFocus placeholder="Home" onChange={(event) => setNewName(event.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">Visual subject</span>
+            <input value={newConcept} placeholder="pumpkin" onChange={(event) => setNewConcept(event.target.value)} />
+          </label>
+          <button type="submit" className="primary" disabled={!newName.trim()}>Add card</button>
+        </form>
+      )}
+
       {browsing && (
         <LibraryPicker
           existing={props.items}
@@ -342,10 +372,7 @@ export default function IconGrid(props: Props) {
         />
       )}
 
-      <p className="hint">
-        Built-in glyphs choose the subject; their SVG pixels never enter the finished card. Your
-        references and style prompt drive the AI result. Brand logos and uploads stay exact by default.
-      </p>
+      <p className="hint">The card name controls export. Visual subject controls what is drawn. The set theme then adapts that subject.</p>
 
       <div className="row">
         <button
@@ -444,10 +471,17 @@ export default function IconGrid(props: Props) {
                 <summary>Edit details</summary>
                 <input
                   className="card-concept"
-                  aria-label={`${item.name} description`}
+                  aria-label={`${item.name} visual subject`}
                   value={item.concept}
-                  placeholder="Describe this glyph"
+                  placeholder="Visual subject — e.g. pumpkin"
                   onChange={(event) => patch(item.id, { concept: event.target.value })}
+                />
+                <input
+                  className="card-concept"
+                  aria-label={`${item.name} theme treatment`}
+                  value={item.themeTreatment ?? ''}
+                  placeholder="Theme treatment — optional; auto if blank"
+                  onChange={(event) => patch(item.id, { themeTreatment: event.target.value })}
                 />
                 {item.sourceUrl && isAiGuidedCatalogSource(item.sourceUrl) && (
                   <span className="badge source-mode">Subject reference only</span>

@@ -20,6 +20,15 @@ export interface ThemeSuggestion {
   subjects: string[];
 }
 
+export interface ThemeIconIdea {
+  /** Stable card/export label such as Home, Search, or Calendar. */
+  name: string;
+  /** The literal object to draw, which may differ from the export label. */
+  concept: string;
+  /** One concise, visibly themed interpretation of that object. */
+  themeTreatment: string;
+}
+
 export interface ReferenceAnalysis {
   /** Literal object shown in the reference. Never becomes the next icon subject automatically. */
   subject: string;
@@ -64,13 +73,13 @@ const SYMBOL_PROMPT = [
 const REFERENCE_PROMPT = [
   'Analyze this image as a style reference for a cohesive icon family.',
   'Return only valid JSON with this exact shape:',
-  '{"subject":"short literal noun phrase","style":"shared visual language","subjectStyle":"central subject treatment","frameStyle":"surrounding frame treatment","materials":[{"role":"base|glyph|frame|accent","name":"short material name","description":"texture and optical recipe"}],"construction":"filled-container|open-frame-with-subject|isolated-subject|unknown","themes":[{"name":"theme name","rationale":"short reason","subjects":["subject 1","subject 2"]}]}',
+  '{"subject":"short literal noun phrase","style":"shared visual language","subjectStyle":"central subject treatment","frameStyle":"surrounding frame treatment","materials":[{"role":"base|glyph|frame|accent","name":"short material name","description":"texture and optical recipe","opacityMin":0,"opacityMax":100}],"construction":"filled-container|open-frame-with-subject|isolated-subject|unknown","themes":[{"name":"theme name","rationale":"short reason","subjects":["subject 1","subject 2"]}]}',
   'The subject is the literal depicted object, such as "ghost".',
   'The style must describe only transferable appearance: transparency, material, palette, iridescence, lighting, dimensionality, edge treatment, texture, camera and rendering technique.',
   'Do not repeat the depicted subject or its anatomy in the style field.',
   'subjectStyle must describe how the central depicted object itself is rendered, independently of what that object is. Be explicit about whether it is solid or hollow, filled or outline-only, its opacity, brightness, material, volume, edge thickness, highlights and contrast.',
   'frameStyle must separately describe the surrounding border, swirls, bubbles, ribbons or container decoration. Never collapse subjectStyle and frameStyle into the same treatment when they differ.',
-  'Dissect the image into no more than four reusable materials. Use base for a filled container surface, glyph for the central subject, frame for border/ribbon decoration, and accent only for a genuinely separate highlight or particle material. Describe texture, translucency, opacity, gloss, thickness, refraction, iridescence, highlight shape and color behavior. Omit roles that are not visibly present.',
+  'Dissect the image into no more than four reusable materials. Use base for a filled container surface, glyph for the central subject, frame for border/ribbon decoration, and accent only for a genuinely separate highlight or particle material. Describe texture, translucency, gloss, thickness, refraction, iridescence, highlight shape and color behavior. Estimate opacityMin and opacityMax from 0 to 100 for the material interior, excluding anti-aliased edges, fully transparent exterior, and intentional holes. Use 100/100 for an opaque material. Omit roles that are not visibly present.',
   'Use open-frame-with-subject when a finished example has a recognizable outer container envelope made from rims, swirls, bubbles or decoration while substantial interior areas remain truly transparent.',
   'Suggest 2 to 4 distinct plausible icon-set themes. Include an obvious semantic theme when appropriate, but also broader aesthetic or era-based themes such as Y2K or Frutiger Aero when visually supported.',
   'For every theme, suggest 6 to 10 varied objects that belong in that set. Do not make every suggestion a variation of the reference subject.',
@@ -137,7 +146,15 @@ export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
           const role = clean(item.role, 20) as MaterialRole;
           const description = clean(item.description, 700);
           if (!allowedRoles.has(role) || !description) return [];
-          return [{ role, name: clean(item.name, 80) || `${role} material`, description }];
+          const opacityMin = Number(item.opacityMin);
+          const opacityMax = Number(item.opacityMax);
+          return [{
+            role,
+            name: clean(item.name, 80) || `${role} material`,
+            description,
+            opacityMin: Number.isFinite(opacityMin) ? Math.max(0, Math.min(100, opacityMin)) : undefined,
+            opacityMax: Number.isFinite(opacityMax) ? Math.max(0, Math.min(100, opacityMax)) : undefined,
+          }];
         })
       : [];
     return {
@@ -166,4 +183,40 @@ export async function analyzeReference(
 ): Promise<ReferenceAnalysis> {
   const text = await describeImage(model, visionInput(model, REFERENCE_PROMPT, imageDataUrl));
   return parseReferenceAnalysis(text);
+}
+
+export function parseThemeFamilyIdeas(text: string): ThemeIconIdea[] {
+  const match = text.match(/\[[\s\S]*\]/);
+  if (!match) return [];
+  try {
+    const raw = JSON.parse(match[0]) as unknown;
+    if (!Array.isArray(raw)) return [];
+    return raw.slice(0, 24).flatMap((entry) => {
+      const item = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+      const name = clean(item.name, 60);
+      const concept = clean(item.concept, 100);
+      const themeTreatment = clean(item.themeTreatment, 240);
+      return name && concept && themeTreatment ? [{ name, concept, themeTreatment }] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Plan semantics before image generation so a theme cannot collapse into a palette adjective. */
+export async function suggestThemeFamily(
+  imageDataUrl: string,
+  theme: string,
+  model: string = DEFAULT_VISION_MODEL,
+): Promise<ThemeIconIdea[]> {
+  const prompt = [
+    `Plan a coherent tiny app-icon family for the theme "${theme.trim()}" using the supplied image only as material/style evidence.`,
+    'Return only a JSON array of 12 objects with exact keys name, concept, themeTreatment.',
+    'name is the short app/export function such as Home, Search, Messages, Calendar, Camera or Settings.',
+    'concept is the literal main object to draw and may differ from name, such as pumpkin for Home.',
+    'themeTreatment is one concise visual transformation that makes the concept unmistakably fit the theme.',
+    'Do not reuse the reference subject unless it is one varied choice among the family. Use one bold integrated motif per icon, no scenes, no clusters, and no tiny clutter. Keep every icon legible at 24px.',
+  ].join(' ');
+  const text = await describeImage(model, visionInput(model, prompt, imageDataUrl, 1200));
+  return parseThemeFamilyIdeas(text);
 }

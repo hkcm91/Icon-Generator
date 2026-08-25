@@ -36,6 +36,8 @@ export interface IconItem {
   name: string;
   /** What to draw. Fed to the glyph prompt; the name alone is often enough. */
   concept: string;
+  /** Optional semantic adaptation of the concept for the selected set theme. */
+  themeTreatment?: string;
   category?: string;
   keywords?: string[];
   notes?: string;
@@ -230,6 +232,7 @@ function csvCells(line: string): string[] {
 /** Ordered by preference: human-readable labels before machine slugs. */
 const NAME_KEYS = ['name', 'title', 'label', 'icon', 'symbol'];
 const CONCEPT_KEYS = ['concept', 'prompt', 'description', 'desc'];
+const THEME_TREATMENT_KEYS = ['themetreatment', 'theme_treatment', 'treatment', 'themedconcept'];
 const CATEGORY_KEYS = ['category', 'group'];
 const KEYWORD_KEYS = ['keywords', 'tags'];
 
@@ -243,6 +246,7 @@ function parseCsv(text: string): IconItem[] {
 
   const nameAt = hasHeader ? indexOf(NAME_KEYS) : 0;
   const conceptAt = hasHeader ? indexOf(CONCEPT_KEYS) : 1;
+  const themeTreatmentAt = hasHeader ? indexOf(THEME_TREATMENT_KEYS) : -1;
   const categoryAt = hasHeader ? indexOf(CATEGORY_KEYS) : -1;
   const keywordAt = hasHeader ? indexOf(KEYWORD_KEYS) : -1;
 
@@ -254,6 +258,7 @@ function parseCsv(text: string): IconItem[] {
       if (!name) return null;
       return makeItem(name, {
         concept: (conceptAt >= 0 ? row[conceptAt] : '') ?? '',
+        themeTreatment: themeTreatmentAt >= 0 ? row[themeTreatmentAt] || undefined : undefined,
         category: categoryAt >= 0 ? row[categoryAt] || undefined : undefined,
         keywords:
           keywordAt >= 0 && row[keywordAt]
@@ -288,6 +293,7 @@ function fromRecord(record: Record<string, unknown>): IconItem | null {
 
   return makeItem(name, {
     concept: pick(CONCEPT_KEYS),
+    themeTreatment: pick(THEME_TREATMENT_KEYS) || undefined,
     category: pick(CATEGORY_KEYS) || undefined,
     keywords: Array.isArray(rawKeywords)
       ? rawKeywords.filter((k): k is string => typeof k === 'string')

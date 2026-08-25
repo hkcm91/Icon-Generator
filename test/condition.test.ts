@@ -128,7 +128,8 @@ describe('glyph isolation prompt', () => {
     expect(prompt).toContain('SUBJECT AUTHORITY: Create one home');
     expect(prompt).toContain('reference depicts ghost');
     expect(prompt).toContain('Do not draw it unless the requested subject explicitly asks for it');
-    expect(prompt).toContain('never replace, disguise, or weaken the requested subject');
+    expect(prompt).toContain('reinterpret its visual concept');
+    expect(prompt).toContain('Halloween cookie');
   });
 
   it('copies the reference subject treatment instead of the open frame treatment', () => {
@@ -139,6 +140,7 @@ describe('glyph isolation prompt', () => {
       true,
       'ghost',
       'Halloween',
+      '',
       'milky opalescent filled volume',
       'clear hollow ribbons',
       true,

@@ -56,6 +56,8 @@ export interface GenerationOptions {
   materialPalette?: MaterialPalette | null;
   /** User-selected set direction. Never substitutes for an item's subject. */
   theme?: string;
+  /** Per-card semantic interpretation; separate from its export/name slot. */
+  themeTreatment?: string;
   familyPrompt?: string;
   negativePrompt?: string;
   quality?: 'low' | 'medium' | 'high';
@@ -85,6 +87,9 @@ export function recipePrompt(prompt: string, options: GenerationOptions): string
       ? `SHARED FAMILY STYLE (palette, lighting and rendering only; this never overrides the separate subject/frame opacity, fill or construction rules): ${options.styleProfile.trim()}`
       : '',
     materialPalettePrompt(options.materialPalette),
+    (options.references?.length ?? 0) > 1
+      ? 'MULTI-MASTER RULE: Infer the family invariants shared by the supplied glyph masters—material roles, lighting, camera, edge finish and opacity behavior. Treat their different subjects, silhouettes, accent counts and detail placement as examples of allowed variation. Never average distinct glyph and frame materials together and never copy any one master subject.'
+      : '',
     `REFERENCE CONTROL — style match ${Math.round(fidelity)}%, decorative variation ${Math.round(variation)}%. ${fidelityRule} ${variationRule} Style fidelity and composition variation are independent: variation must not weaken the locked style.`,
     options.familyPrompt?.trim(), options.variationKey
     ? `Internal composition variation ${options.variationKey}: choose a distinct arrangement of decorative microdetails for this icon. Do not display or spell this key.`
@@ -194,6 +199,7 @@ export function useGeneration() {
             Boolean(options.master),
             options.referenceSubject,
             options.theme,
+            options.themeTreatment,
             options.subjectStyleProfile,
             options.frameStyleProfile,
             options.referenceHasSeparateFrame,
@@ -233,6 +239,7 @@ export function useGeneration() {
           Boolean(options.master),
           options.referenceSubject,
           options.theme,
+          options.themeTreatment,
         ),
         options,
       ),
