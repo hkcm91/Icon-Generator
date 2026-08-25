@@ -523,6 +523,37 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 .picker-glyph { width: 22px; height: 22px; object-fit: contain; filter: invert(1); }
 .qa-summary { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 .project-message { max-width: 1180px; margin: 8px auto; }
+.project-menu { position: relative; }
+.project-menu > summary {
+  cursor: pointer;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 11px;
+  color: var(--text);
+  background: var(--panel-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.project-menu > summary::-webkit-details-marker { display: none; }
+.project-menu > summary::after { content: ' ▾'; color: var(--muted); }
+.project-menu[open] > summary::after { content: ' ▴'; }
+.project-menu-body {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(430px, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+}
+.project-menu-body .field { margin: 0 0 9px; }
+.project-menu-body .row { flex-wrap: wrap; }
+.project-menu-body button { flex: 1 1 auto; }
+.project-backups { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .premium-lock { margin: 8px 0 14px; color: var(--bad); }
 .picker-concept {
   color: var(--muted);

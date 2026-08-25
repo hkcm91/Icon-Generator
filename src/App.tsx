@@ -14,6 +14,17 @@ import { useImageStore } from './state/useImageStore';
 import { hydrateProject, useProject, type Project } from './state/useProject';
 import { download } from './core/export';
 import type { ImageBundle } from './state/useImageStore';
+import {
+  deleteProjectSlot,
+  listSavedProjects,
+  loadProjectSlot,
+  saveProjectSlot,
+  type SavedProjectBundle,
+  type SavedProjectSummary,
+} from './core/projectLibrary';
+
+const ACTIVE_SET_KEY = 'icon-generator-active-set-v1';
+const newSetId = () => globalThis.crypto?.randomUUID?.() ?? `set-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export default function App() {
   const { project, setProject, setSpec, setCompose, setField, reset } = useProject();
@@ -21,8 +32,88 @@ export default function App() {
   const [showGuides, setShowGuides] = useState(true);
   const projectInput = useRef<HTMLInputElement>(null);
   const [projectMessage, setProjectMessage] = useState('');
+  const [savedProjects, setSavedProjects] = useState<SavedProjectSummary[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(
+    () => localStorage.getItem(ACTIVE_SET_KEY),
+  );
+  const [projectBusy, setProjectBusy] = useState(false);
 
-  const saveProject = async () => {
+  useEffect(() => {
+    void listSavedProjects().then(setSavedProjects);
+  }, []);
+
+  const projectBundle = async (): Promise<SavedProjectBundle> => ({
+    schemaVersion: 1,
+    project,
+    images: await store.exportImages(),
+  });
+
+  const saveLocalProject = async (forceNew = false) => {
+    setProjectBusy(true);
+    try {
+      const id = forceNew || !activeProjectId ? newSetId() : activeProjectId;
+      setSavedProjects(await saveProjectSlot(id, await projectBundle()));
+      setActiveProjectId(id);
+      localStorage.setItem(ACTIVE_SET_KEY, id);
+      setProjectMessage(`Saved “${project.name || 'Untitled icon set'}” in this browser.`);
+      return id;
+    } finally {
+      setProjectBusy(false);
+    }
+  };
+
+  const openLocalProject = async (id: string) => {
+    if (!id || id === activeProjectId || projectBusy) return;
+    setProjectBusy(true);
+    try {
+      const hasWork = Boolean(project.items.length || project.master || store.material || store.glyph);
+      if (hasWork) {
+        const currentId = activeProjectId ?? newSetId();
+        setSavedProjects(await saveProjectSlot(currentId, await projectBundle()));
+      }
+      const saved = await loadProjectSlot(id);
+      if (!saved) throw new Error('That saved icon set could not be found.');
+      await store.importImages(saved.images);
+      setProject(hydrateProject(saved.project));
+      setActiveProjectId(id);
+      localStorage.setItem(ACTIVE_SET_KEY, id);
+      setProjectMessage(`Opened “${saved.project.name}”.`);
+    } catch (error) {
+      setProjectMessage(`Could not open icon set: ${(error as Error).message}`);
+    } finally {
+      setProjectBusy(false);
+    }
+  };
+
+  const newLocalProject = async () => {
+    if (projectBusy) return;
+    setProjectBusy(true);
+    try {
+      const hasWork = Boolean(project.items.length || project.master || store.material || store.glyph);
+      if (hasWork) {
+        const id = activeProjectId ?? newSetId();
+        setSavedProjects(await saveProjectSlot(id, await projectBundle()));
+      }
+      store.clearAll();
+      reset();
+      setActiveProjectId(null);
+      localStorage.removeItem(ACTIVE_SET_KEY);
+      setProjectMessage('Started a new icon set. The previous set was saved locally.');
+    } finally {
+      setProjectBusy(false);
+    }
+  };
+
+  const deleteLocalProject = async () => {
+    if (!activeProjectId || projectBusy) return;
+    if (!window.confirm('Delete this saved icon set? The open working copy will remain until you switch or reset.')) return;
+    setSavedProjects(await deleteProjectSlot(activeProjectId));
+    setActiveProjectId(null);
+    localStorage.removeItem(ACTIVE_SET_KEY);
+    setProjectMessage('Removed this set from saved icon sets. The current working copy is still open.');
+  };
+
+  const downloadProject = async () => {
     const bundle = {
       schemaVersion: 1,
       project,
@@ -48,6 +139,8 @@ export default function App() {
       if (!parsed.project || !parsed.images) throw new Error('This is not an icon-family project bundle.');
       await store.importImages(parsed.images);
       setProject(hydrateProject(parsed.project));
+      setActiveProjectId(null);
+      localStorage.removeItem(ACTIVE_SET_KEY);
       setProjectMessage(`Opened ${file.name}.`);
     } catch (error) {
       setProjectMessage(`Could not open project: ${(error as Error).message}`);
@@ -96,10 +189,47 @@ export default function App() {
           <ApiKeyBar />
           {!advanced && (
             <>
-              <button type="button" className="ghost" onClick={() => void saveProject()}>Save project</button>
-              <button type="button" className="ghost" onClick={() => projectInput.current?.click()}>
-                Open project
-              </button>
+              <details className="project-menu">
+                <summary>Icon sets ({savedProjects.length})</summary>
+                <div className="project-menu-body">
+                  <label className="field">
+                    <span className="field-label">Saved sets</span>
+                    <select
+                      aria-label="Saved icon sets"
+                      value={activeProjectId ?? ''}
+                      disabled={projectBusy}
+                      onChange={(event) => void openLocalProject(event.target.value)}
+                    >
+                      <option value="">Current unsaved set</option>
+                      {savedProjects.map((saved) => (
+                        <option key={saved.id} value={saved.id}>
+                          {saved.name} · {saved.iconCount} icons
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="row row-tight">
+                    <button type="button" className="ghost" disabled={projectBusy}
+                      onClick={() => void saveLocalProject()}>
+                      {projectBusy ? 'Saving…' : 'Save set'}
+                    </button>
+                    <button type="button" className="ghost" disabled={projectBusy}
+                      onClick={() => void newLocalProject()}>
+                      New set
+                    </button>
+                    <button type="button" className="ghost" disabled={!activeProjectId || projectBusy}
+                      onClick={() => void deleteLocalProject()}>
+                      Delete saved set
+                    </button>
+                  </div>
+                  <div className="row row-tight project-backups">
+                    <button type="button" className="ghost" onClick={() => void downloadProject()}>Download backup</button>
+                    <button type="button" className="ghost" onClick={() => projectInput.current?.click()}>
+                      Import backup
+                    </button>
+                  </div>
+                </div>
+              </details>
               <input
                 ref={projectInput}
                 type="file"
@@ -166,6 +296,7 @@ export default function App() {
           onItemGlyph={store.setItemGlyph}
           onRestoreRevision={store.restoreItemRevision}
           onClearGlyphs={store.clearGlyphs}
+          onClearSelectedGlyphs={store.clearItemGlyphs}
           lockedContainer={project.lockedContainer}
           onLockedContainer={(value) => setField('lockedContainer', value)}
           glyphTransparency={project.glyphTransparency}

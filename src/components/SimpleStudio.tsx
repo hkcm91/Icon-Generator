@@ -61,6 +61,7 @@ interface Props {
   onItemGlyph: (id: string, image: CanvasImageSource, revision?: number) => void;
   onRestoreRevision: (id: string, revision: number) => Promise<boolean>;
   onClearGlyphs: () => void;
+  onClearSelectedGlyphs: (ids: Iterable<string>) => void;
   lockedContainer: boolean;
   onLockedContainer: (value: boolean) => void;
   glyphTransparency: boolean;
@@ -682,6 +683,7 @@ export default function SimpleStudio(props: Props) {
             onItemGlyph={props.onItemGlyph}
             onRestoreRevision={props.onRestoreRevision}
             onClearGlyphs={props.onClearGlyphs}
+            onClearSelectedGlyphs={props.onClearSelectedGlyphs}
             options={{
               spec: props.spec,
               model: props.model,

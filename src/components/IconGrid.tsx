@@ -28,6 +28,7 @@ interface Props {
   onRestoreRevision: (id: string, revision: number) => Promise<boolean>;
   generationBlocked?: string;
   onClearGlyphs: () => void;
+  onClearSelectedGlyphs: (ids: Iterable<string>) => void;
   maxBatchCost: number;
 }
 
@@ -252,19 +253,33 @@ export default function IconGrid(props: Props) {
         <button type="button" className="ghost" onClick={() => setAll(false)} disabled={!selectedCount}>
           Select none
         </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={running || !selectedCount}
+          onClick={() => {
+            const selectedIds = new Set(selectedItems.map((item) => item.id));
+            props.onItems(props.items.filter((item) => !selectedIds.has(item.id)));
+            props.onClearSelectedGlyphs(selectedIds);
+            setMessage(`Cleared ${selectedIds.size} selected card${selectedIds.size === 1 ? '' : 's'}.`);
+          }}
+        >
+          Clear selected
+        </button>
         {props.items.length > 0 && (
           <button
             type="button"
             className="ghost"
             disabled={running}
             onClick={() => {
+              if (!window.confirm('Clear the entire icon library and all of its saved renders?')) return;
               props.onItems([]);
               // Drop the stored renders too, or the database keeps every glyph
               // from every library the user has ever imported.
               props.onClearGlyphs();
             }}
           >
-            Clear
+            Clear library
           </button>
         )}
         <input
