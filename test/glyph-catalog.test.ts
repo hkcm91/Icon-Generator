@@ -24,14 +24,15 @@ describe('organized glyph catalog', () => {
     expect(MATERIAL_ESSENTIALS.filter((slug) => !available.has(slug))).toEqual([]);
   });
 
-  it('opens Material on useful essentials instead of the raw alphabetical inventory', () => {
-    const result = organizeGlyphEntries(rows, 'material', 'essentials', '');
+  it('opens the mobile library on useful essentials instead of the raw inventory', () => {
+    const result = organizeGlyphEntries(rows, 'mobile', 'all', '');
     expect(result.map((entry) => entry.slug)).toEqual(['home', 'calendar_month', 'cloud', 'shopping_cart']);
     expect(result.some((entry) => entry.slug === '10mp')).toBe(false);
   });
 
-  it('searches the entire active library even when a curated section is selected', () => {
-    expect(organizeGlyphEntries(rows, 'material', 'essentials', '10mp')).toHaveLength(1);
+  it('keeps mobile search inside the 175-icon collection', () => {
+    expect(organizeGlyphEntries(rows, 'mobile', 'all', '10mp')).toHaveLength(0);
+    expect(organizeGlyphEntries(rows, 'material', 'all', '10mp')).toHaveLength(1);
   });
 
   it('turns source slugs into card-ready names', () => {

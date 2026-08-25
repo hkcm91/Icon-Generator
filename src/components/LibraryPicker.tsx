@@ -13,6 +13,7 @@ interface Catalog {
   id: GlyphCatalogId;
   label: string;
   file: string;
+  count?: number;
   note?: string;
   source?: (entry: CatalogEntry) => string | undefined;
 }
@@ -24,8 +25,15 @@ interface Catalog {
  */
 const CATALOGS: Catalog[] = [
   {
+    id: 'mobile',
+    label: 'Mobile essentials',
+    file: '/libraries/material-symbols.json',
+    count: 175,
+    source: (entry) => entry.slug ? `/libraries/glyphs/material/${entry.slug}-fill.svg` : undefined,
+  },
+  {
     id: 'material',
-    label: 'Everyday symbols',
+    label: 'All symbols',
     file: '/libraries/material-symbols.json',
     source: (entry) => entry.slug ? `/libraries/glyphs/material/${entry.slug}-fill.svg` : undefined,
   },
@@ -54,7 +62,7 @@ interface Props {
 
 export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
   const [catalogId, setCatalogId] = useState(CATALOGS[0].id);
-  const [sectionId, setSectionId] = useState(GLYPH_SECTIONS.material[0].id);
+  const [sectionId, setSectionId] = useState(GLYPH_SECTIONS.mobile[0].id);
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [query, setQuery] = useState('');
@@ -83,7 +91,7 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
       .then((rows: CatalogEntry[]) => {
         if (!live) return;
         setEntries(rows);
-        setCounts((current) => ({ ...current, [catalog.id]: rows.length }));
+        setCounts((current) => ({ ...current, [catalog.id]: catalog.count ?? rows.length }));
       })
       .catch((cause) => live && setError((cause as Error).message))
       .finally(() => live && setLoading(false));

@@ -1,4 +1,4 @@
-export type GlyphCatalogId = 'material' | 'y2k' | 'brands';
+export type GlyphCatalogId = 'mobile' | 'material' | 'y2k' | 'brands';
 
 export interface GlyphCatalogEntry {
   name: string;
@@ -84,8 +84,20 @@ const BRAND_POPULAR = [
 const all = (_entry: GlyphCatalogEntry) => true;
 
 export const GLYPH_SECTIONS: Record<GlyphCatalogId, GlyphSection[]> = {
+  mobile: [
+    { id: 'all', label: 'All 175', description: 'The complete mobile essentials collection.', matches: named(MATERIAL_ESSENTIALS) },
+    { id: 'navigation', label: 'Navigation (30)', description: 'Navigation, layout, menus, views, and common mobile gestures.', matches: named(MATERIAL_ESSENTIALS.slice(0, 30)) },
+    { id: 'actions', label: 'Actions & status (35)', description: 'Editing, selection, settings, feedback, security, and app states.', matches: named(MATERIAL_ESSENTIALS.slice(30, 65)) },
+    { id: 'communication', label: 'Communication (20)', description: 'Mail, messaging, calls, contacts, notifications, and sharing.', matches: named(MATERIAL_ESSENTIALS.slice(65, 85)) },
+    { id: 'files', label: 'Files & work (20)', description: 'Files, notes, calendars, tasks, cloud storage, and productivity.', matches: named(MATERIAL_ESSENTIALS.slice(85, 105)) },
+    { id: 'media', label: 'Media (20)', description: 'Photography, video, audio, playback, and creative tools.', matches: named(MATERIAL_ESSENTIALS.slice(105, 125)) },
+    { id: 'people', label: 'People (12)', description: 'Profiles, groups, reactions, community, and social activity.', matches: named(MATERIAL_ESSENTIALS.slice(125, 137)) },
+    { id: 'commerce', label: 'Shopping (12)', description: 'Shopping, stores, payments, banking, offers, and inventory.', matches: named(MATERIAL_ESSENTIALS.slice(137, 149)) },
+    { id: 'travel', label: 'Travel (12)', description: 'Maps, locations, navigation, transportation, lodging, and food.', matches: named(MATERIAL_ESSENTIALS.slice(149, 161)) },
+    { id: 'devices', label: 'Devices & wellness (14)', description: 'Mobile devices, connectivity, environment, fitness, and health.', matches: named(MATERIAL_ESSENTIALS.slice(161, 175)) },
+  ],
   material: [
-    { id: 'essentials', label: 'Mobile essentials (175)', description: 'A complete 175-icon starter set for modern mobile apps.', matches: named(MATERIAL_ESSENTIALS) },
+    { id: 'all', label: 'All symbols', description: 'The complete Material Symbols inventory.', matches: all },
     { id: 'files', label: 'Files & work', description: 'Documents, folders, calendars, editing, saving, and productivity.', matches: has(/(folder|file|document|description|article|note|edit|save|archive|calendar|schedule|task|work|print|attach|upload|download)/) },
     { id: 'communication', label: 'Communication', description: 'Mail, chat, calls, contacts, notifications, and sharing.', matches: has(/(mail|email|chat|message|call|phone|contact|person|group|forum|notification|share|send|inbox)/) },
     { id: 'media', label: 'Photos & media', description: 'Photography, video, audio, playback, and creative tools.', matches: has(/(photo|image|camera|video|movie|music|audio|mic|play|pause|volume|album|palette|brush)/) },
@@ -95,7 +107,6 @@ export const GLYPH_SECTIONS: Record<GlyphCatalogId, GlyphSection[]> = {
     { id: 'wellness', label: 'People & wellness', description: 'People, accessibility, health, fitness, food, and self-care.', matches: has(/(person|people|face|accessib|health|medical|hospital|fitness|exercise|sport|food|restaurant|spa|heart|mood|child|family)/) },
     { id: 'devices', label: 'Devices & home', description: 'Phones, computers, connectivity, smart homes, and utilities.', matches: has(/(phone|smartphone|tablet|computer|laptop|desktop|tv|watch|wifi|bluetooth|battery|router|device|home|light|thermostat|power)/) },
     { id: 'actions', label: 'Actions & status', description: 'Navigation, selection, alerts, progress, and interface controls.', matches: has(/(arrow|chevron|menu|more|add|remove|close|check|done|refresh|sync|search|filter|sort|warning|error|info|help|lock|visibility)/) },
-    { id: 'all', label: 'All symbols', description: 'The complete Material Symbols inventory.', matches: all },
   ],
   y2k: [
     { id: 'all', label: 'All concepts', description: 'Purpose-built concepts that generate well as a cohesive styled family.', matches: all },
@@ -116,7 +127,7 @@ export const GLYPH_SECTIONS: Record<GlyphCatalogId, GlyphSection[]> = {
 };
 
 export function humanizeGlyphName(name: string, catalogId: GlyphCatalogId): string {
-  if (catalogId !== 'material') return name;
+  if (catalogId !== 'material' && catalogId !== 'mobile') return name;
   return name
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -135,14 +146,18 @@ export function organizeGlyphEntries(
   const needle = query.trim().toLowerCase();
   const section = GLYPH_SECTIONS[catalogId].find((candidate) => candidate.id === sectionId)
     ?? GLYPH_SECTIONS[catalogId][0];
-  const matches = entries.filter((entry) => {
+  const mobileNames = new Set<string>(MATERIAL_ESSENTIALS);
+  const scopedEntries = catalogId === 'mobile'
+    ? entries.filter((entry) => mobileNames.has(glyphEntryKey(entry).toLowerCase()))
+    : entries;
+  const matches = scopedEntries.filter((entry) => {
     if (!needle) return section.matches(entry);
     return `${humanizeGlyphName(entry.name, catalogId)} ${entry.name} ${entry.category ?? ''} ${(entry.keywords ?? []).join(' ')}`
       .toLowerCase()
       .includes(needle);
   });
 
-  const preferred = catalogId === 'material' && section.id === 'essentials'
+  const preferred = catalogId === 'mobile'
     ? MATERIAL_ESSENTIALS
     : catalogId === 'brands' && section.id === 'popular'
       ? BRAND_POPULAR
