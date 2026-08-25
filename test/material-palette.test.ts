@@ -35,6 +35,18 @@ describe('material palettes', () => {
     expect(prompt).toContain('do not swap');
   });
 
+  it('never carries a filled base recipe into an open or isolated construction', () => {
+    const recipes = [
+      { role: 'base' as const, name: 'Wrong fill', description: 'opaque full tile' },
+      { role: 'glyph' as const, name: 'Pearl', description: 'filled symbol' },
+      { role: 'frame' as const, name: 'Ribbon', description: 'hollow border' },
+    ];
+    const open = mergeMaterialPalette([], recipes, { base: 'fallback fill', glyph: '', frame: '' }, 'open-frame-with-subject');
+    expect(open.recipes.map((recipe) => recipe.role)).toEqual(['glyph', 'frame']);
+    const isolated = mergeMaterialPalette([], recipes, { base: 'fallback fill', glyph: '', frame: 'fallback frame' }, 'isolated-subject');
+    expect(isolated.recipes.map((recipe) => recipe.role)).toEqual(['glyph']);
+  });
+
   it('sanitizes imported project palettes', () => {
     expect(normalizeMaterialPalette({
       colors: [{ hex: '#ABCDEF', name: ' sky ', weight: 8 }, { hex: 'bad' }],

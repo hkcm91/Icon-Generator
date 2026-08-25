@@ -1,6 +1,7 @@
 import type { Swatch } from './describe';
 
 export type MaterialRole = 'base' | 'glyph' | 'frame' | 'accent';
+export type MaterialConstruction = 'filled-container' | 'open-frame-with-subject' | 'isolated-subject' | 'unknown';
 
 export interface MaterialRecipe {
   role: MaterialRole;
@@ -70,19 +71,25 @@ export function mergeMaterialPalette(
   colors: Array<Pick<Swatch, 'hex' | 'name' | 'weight'>>,
   recipes: MaterialRecipe[],
   fallback: { base: string; glyph: string; frame: string },
+  construction: MaterialConstruction = 'unknown',
 ): MaterialPalette {
+  const allowed = construction === 'open-frame-with-subject'
+    ? new Set<MaterialRole>(['glyph', 'frame', 'accent'])
+    : construction === 'isolated-subject'
+      ? new Set<MaterialRole>(['glyph', 'accent'])
+      : new Set<MaterialRole>(['base', 'glyph', 'frame', 'accent']);
   const byRole = new Map<MaterialRole, MaterialRecipe>();
   for (const recipe of recipes) {
-    if (!recipe.description.trim() || byRole.has(recipe.role)) continue;
+    if (!allowed.has(recipe.role) || !recipe.description.trim() || byRole.has(recipe.role)) continue;
     byRole.set(recipe.role, recipe);
   }
-  if (!byRole.has('base') && fallback.base.trim()) {
+  if (allowed.has('base') && !byRole.has('base') && fallback.base.trim()) {
     byRole.set('base', { role: 'base', name: 'Container surface', description: fallback.base.trim() });
   }
-  if (!byRole.has('glyph') && fallback.glyph.trim()) {
+  if (allowed.has('glyph') && !byRole.has('glyph') && fallback.glyph.trim()) {
     byRole.set('glyph', { role: 'glyph', name: 'Symbol material', description: fallback.glyph.trim() });
   }
-  if (!byRole.has('frame') && fallback.frame.trim()) {
+  if (allowed.has('frame') && !byRole.has('frame') && fallback.frame.trim()) {
     byRole.set('frame', { role: 'frame', name: 'Decorative frame', description: fallback.frame.trim() });
   }
   const order: MaterialRole[] = ['base', 'glyph', 'frame', 'accent'];

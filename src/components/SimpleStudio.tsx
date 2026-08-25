@@ -136,6 +136,22 @@ async function readMaster(
   };
 }
 
+async function readStoredPixels(source: string): Promise<ImageData> {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const next = new Image();
+    next.onload = () => resolve(next);
+    next.onerror = () => reject(new Error('The saved master could not be decoded.'));
+    next.src = source;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('This browser did not provide a 2D canvas context.');
+  context.drawImage(image, 0, 0);
+  return context.getImageData(0, 0, canvas.width, canvas.height);
+}
+
 function downscale(source: HTMLCanvasElement, size: number): string {
   const scale = Math.min(1, size / Math.max(source.width, source.height));
   const canvas = document.createElement('canvas');
@@ -162,9 +178,35 @@ export default function SimpleStudio(props: Props) {
   const [notes, setNotes] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
   const [variantBusy, setVariantBusy] = useState(false);
+  const [analysisBusy, setAnalysisBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const lockedInput = useRef<HTMLInputElement>(null);
   const referenceInput = useRef<HTMLInputElement>(null);
+
+  const applyReferenceAnalysis = (
+    described: ReturnType<typeof describeMaster>,
+    analysis: Awaited<ReturnType<typeof analyzeReference>>,
+  ) => {
+    props.onReferenceSubject(analysis.subject);
+    props.onStyleProfile(analysis.style);
+    props.onSubjectStyleProfile(analysis.subjectStyle);
+    props.onFrameStyleProfile(analysis.frameStyle);
+    props.onMaterialPalette(mergeMaterialPalette(described.palette, analysis.materials, {
+      base: analysis.construction === 'filled-container' || analysis.construction === 'unknown'
+        ? described.material
+        : '',
+      glyph: analysis.subjectStyle,
+      frame: analysis.construction === 'open-frame-with-subject'
+        ? analysis.frameStyle || described.material
+        : analysis.frameStyle,
+    }, analysis.construction));
+    props.onThemeSuggestions(analysis.themes);
+    if (analysis.construction === 'open-frame-with-subject') {
+      props.onContainerMode('open-frame');
+      props.onGlyphTransparency(true);
+      props.onFrameReady(false);
+    }
+  };
   const alphaRepairChecked = useRef(new Set<string>());
   const active = matchPreset(props.spec);
   const selectedModel = props.model === 'openai/gpt-image-2'
@@ -269,21 +311,7 @@ export default function SimpleStudio(props: Props) {
       props.onGlyph('');
       setTracing('Separating its subject, style and possible themes…');
       const analysis = await analyzeReference(dataUrl, props.visionModel);
-      props.onReferenceSubject(analysis.subject);
-      props.onStyleProfile(analysis.style);
-      props.onSubjectStyleProfile(analysis.subjectStyle);
-      props.onFrameStyleProfile(analysis.frameStyle);
-      props.onMaterialPalette(mergeMaterialPalette(described.palette, analysis.materials, {
-        base: described.material,
-        glyph: analysis.subjectStyle,
-        frame: analysis.frameStyle,
-      }));
-      props.onThemeSuggestions(analysis.themes);
-      if (analysis.construction === 'open-frame-with-subject') {
-        props.onContainerMode('open-frame');
-        props.onGlyphTransparency(true);
-        props.onFrameReady(false);
-      }
+      applyReferenceAnalysis(described, analysis);
       setTracing(
         analysis.subject
           ? `Reference subject detected as “${analysis.subject}”. It will not be reused unless an icon asks for it.`
@@ -296,6 +324,26 @@ export default function SimpleStudio(props: Props) {
           ? `Shape and colours read. Style and theme analysis failed: ${(error as Error).message}`
           : `Could not read that image: ${(error as Error).message}`,
       );
+    }
+  };
+
+  const analyzeSavedMaster = async () => {
+    if (!props.master || analysisBusy) return;
+    setAnalysisBusy(true);
+    setTracing('Dissecting the saved master into materials…');
+    try {
+      const pixels = await readStoredPixels(props.master.dataUrl);
+      const described = describeMaster(pixels, props.spec.glyphInset);
+      const analysis = await analyzeReference(props.master.dataUrl, props.visionModel);
+      props.onMaterial(described.material);
+      props.onCompose({ baseColor: described.baseColor });
+      setNotes(described.notes);
+      applyReferenceAnalysis(described, analysis);
+      setTracing('Material palette ready. Base, glyph, frame and accents will keep their own treatments.');
+    } catch (error) {
+      setTracing(`Could not analyze the saved master: ${(error as Error).message}`);
+    } finally {
+      setAnalysisBusy(false);
     }
   };
 
@@ -682,6 +730,11 @@ export default function SimpleStudio(props: Props) {
                 ? 'container pixels are locked; only glyphs will change.'
                 : 'every generation references it.'}
             </p>
+          )}
+          {props.master && !props.materialPalette && (
+            <button type="button" className="ghost" onClick={() => void analyzeSavedMaster()} disabled={busy || analysisBusy}>
+              {analysisBusy ? 'Analyzing materials…' : 'Analyze materials'}
+            </button>
           )}
           {tracing && <p className="hint">{tracing}</p>}
           {notes.length > 0 && (

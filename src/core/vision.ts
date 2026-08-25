@@ -1,9 +1,9 @@
 /**
  * Naming the subject of an uploaded master.
  *
- * This is the only part of master analysis that needs a model: palette,
- * gradient, finish and glyph presence are all measurable from the pixels, but
- * "a paper plane" is not recoverable from a histogram.
+ * Semantic master analysis needs a model: palette and basic finish are still
+ * measured locally, while subject identity and role-specific optical texture
+ * descriptions are not recoverable from a histogram.
  *
  * The model slug is configurable rather than hardcoded. Vision models on
  * Replicate come and go, their input field names differ, and a wrong default
