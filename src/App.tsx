@@ -14,6 +14,7 @@ import { useImageStore } from './state/useImageStore';
 import { hydrateProject, useProject, type Project } from './state/useProject';
 import { download } from './core/export';
 import type { ImageBundle } from './state/useImageStore';
+import { repairLegacyBuiltinGlyphModes } from './core/library';
 import {
   deleteProjectSlot,
   listSavedProjects,
@@ -149,6 +150,18 @@ export default function App() {
 
   const { material, glyph } = store;
   const layers: ComposeLayers = useMemo(() => ({ material, glyph }), [material, glyph]);
+
+  /** Repair the catalog regression once per saved project. */
+  useEffect(() => {
+    if (!store.loaded || project.builtinGlyphStyleVersion >= 1) return;
+    const repair = repairLegacyBuiltinGlyphModes(project.items);
+    if (repair.clearedIds.length) store.clearItemGlyphs(repair.clearedIds);
+    setProject((current) => ({
+      ...current,
+      items: repair.items,
+      builtinGlyphStyleVersion: 1,
+    }));
+  }, [store.loaded, store.clearItemGlyphs, project.builtinGlyphStyleVersion, project.items, setProject]);
 
   /**
    * Reconcile cards against what actually survived in storage.

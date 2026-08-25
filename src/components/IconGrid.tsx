@@ -311,8 +311,8 @@ export default function IconGrid(props: Props) {
       )}
 
       <p className="hint">
-        7,300+ real SVG glyphs are built in. Add SVG/PNG artwork directly, or import a CSV, JSON
-        manifest, or one name per line.
+        Built-in glyphs guide AI shape while your references drive the finished style. Brand logos
+        and uploaded SVG/PNG artwork stay exact unless you switch them to AI generation.
       </p>
 
       <div className="row">
@@ -418,13 +418,21 @@ export default function IconGrid(props: Props) {
                     type="button"
                     className="ghost tiny source-mode"
                     disabled={running}
-                    onClick={() => patch(item.id, {
-                      sourceMode: item.sourceMode === 'styled' ? 'exact' : 'styled',
-                      status: 'draft',
-                      selected: true,
-                    })}
+                    onClick={() => {
+                      props.onClearSelectedGlyphs([item.id]);
+                      patch(item.id, {
+                        sourceMode: item.sourceMode === 'styled' ? 'exact' : 'styled',
+                        status: 'draft',
+                        selected: true,
+                        revision: 0,
+                        activeRevision: undefined,
+                        outputMode: undefined,
+                        approved: false,
+                        error: undefined,
+                      });
+                    }}
                   >
-                    {item.sourceMode === 'styled' ? 'AI styled' : 'Exact artwork'}
+                    {item.sourceMode === 'styled' ? 'AI generation' : 'Use exact artwork'}
                   </button>
                 )}
                 <label className="ghost tiny artwork-override">
@@ -433,11 +441,15 @@ export default function IconGrid(props: Props) {
                     onChange={async (event) => {
                       const file = event.target.files?.[0];
                       if (!file) return;
+                      props.onClearSelectedGlyphs([item.id]);
                       patch(item.id, {
                         sourceUrl: await fileDataUrl(file),
                         sourceMode: 'exact',
                         status: 'draft',
                         selected: true,
+                        revision: 0,
+                        activeRevision: undefined,
+                        outputMode: undefined,
                         approved: false,
                       });
                     }} />

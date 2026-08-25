@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { upsertProjectSummary, type SavedProjectSummary } from '../src/core/projectLibrary';
+import { hydrateProject } from '../src/state/useProject';
 
 const summary = (id: string, updatedAt: string, name = id): SavedProjectSummary => ({
   id,
@@ -20,5 +21,15 @@ describe('saved icon sets', () => {
     const updated = upsertProjectSummary(existing, summary('a', '2026-03-01T00:00:00.000Z', 'New'));
     expect(updated).toHaveLength(1);
     expect(updated[0].name).toBe('New');
+  });
+});
+
+describe('project catalog migration', () => {
+  it('marks legacy projects for one-time stored-glyph repair', () => {
+    expect(hydrateProject({ items: [] }).builtinGlyphStyleVersion).toBe(0);
+  });
+
+  it('does not repeat the repair after catalog mode v1 was saved', () => {
+    expect(hydrateProject({ items: [], builtinGlyphStyleVersion: 1 }).builtinGlyphStyleVersion).toBe(1);
   });
 });

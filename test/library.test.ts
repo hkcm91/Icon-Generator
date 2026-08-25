@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { dedupe, makeItem, parseLibrary, resetIdCounter } from '../src/core/library';
+import {
+  dedupe,
+  defaultGlyphSourceMode,
+  makeItem,
+  parseLibrary,
+  repairLegacyBuiltinGlyphModes,
+  resetIdCounter,
+} from '../src/core/library';
 import { runPool } from '../src/core/queue';
 
 beforeEach(() => resetIdCounter());
@@ -112,6 +119,47 @@ describe('dedupe', () => {
     const kept = dedupe([makeItem('A', { concept: 'first' }), makeItem('A', { concept: 'second' })]);
     expect(kept).toHaveLength(1);
     expect(kept[0].concept).toBe('first');
+  });
+});
+
+describe('built-in glyph generation mode', () => {
+  it('uses Material glyphs as AI guidance but preserves exact brands and uploads', () => {
+    expect(defaultGlyphSourceMode('/libraries/glyphs/material/home-fill.svg')).toBe('styled');
+    expect(defaultGlyphSourceMode('/libraries/glyphs/brands/github.svg')).toBe('exact');
+    expect(defaultGlyphSourceMode('data:image/png;base64,abc')).toBe('exact');
+    expect(defaultGlyphSourceMode()).toBe('styled');
+  });
+
+  it('clears legacy pasted Material results back to selected AI drafts', () => {
+    const material = makeItem('Home', {
+      sourceUrl: '/libraries/glyphs/material/home-fill.svg',
+      sourceMode: 'exact',
+      status: 'ready',
+      selected: false,
+      revision: 3,
+      activeRevision: 3,
+      outputMode: 'transparent',
+      approved: true,
+    });
+    const brand = makeItem('GitHub', {
+      sourceUrl: '/libraries/glyphs/brands/github.svg',
+      sourceMode: 'exact',
+      status: 'ready',
+      selected: false,
+      revision: 1,
+    });
+    const repair = repairLegacyBuiltinGlyphModes([material, brand]);
+
+    expect(repair.clearedIds).toEqual([material.id]);
+    expect(repair.items[0]).toMatchObject({
+      sourceMode: 'styled',
+      status: 'draft',
+      selected: true,
+      revision: 0,
+      approved: false,
+    });
+    expect(repair.items[0].outputMode).toBeUndefined();
+    expect(repair.items[1]).toBe(brand);
   });
 });
 
