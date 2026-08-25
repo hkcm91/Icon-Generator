@@ -166,6 +166,58 @@ export function renderTransparentLayer(
   return canvas;
 }
 
+/**
+ * Compose a container whose artwork carries its own alpha.
+ *
+ * Unlike `composeIcon`, this deliberately paints no base colour. The analytic
+ * path is an outer envelope only: it prevents frame pixels escaping the family
+ * silhouette while preserving every transparent hole inside the uploaded or
+ * generated frame artwork.
+ */
+export function composeOpenFrame(
+  spec: ContainerSpec,
+  layers: ComposeLayers,
+  options: ComposeOptions = DEFAULT_COMPOSE,
+): HTMLCanvasElement {
+  const canvas = createCanvas(spec.size);
+  const ctx = context2d(canvas);
+  const box = innerBox(spec);
+  const outline = new Path2D(containerPath(spec));
+
+  ctx.save();
+  ctx.clip(outline, 'evenodd');
+
+  if (layers.material) drawCover(ctx, layers.material, 0, 0, spec.size, spec.size);
+
+  if (layers.glyph) {
+    ctx.save();
+    ctx.clip(new Path2D(glyphSafePath(spec)), 'evenodd');
+    const safeEdge = box.edge * (1 - spec.glyphInset / 100) * options.glyphScale;
+    drawContain(
+      ctx,
+      layers.glyph,
+      box.cx - safeEdge / 2 + box.edge * options.glyphOffsetX / 100,
+      box.cy - safeEdge / 2 + box.edge * options.glyphOffsetY / 100,
+      safeEdge,
+      safeEdge,
+    );
+    ctx.restore();
+  }
+
+  ctx.restore();
+  return canvas;
+}
+
+/** Copy an RGBA model result without flattening intentional translucent gel. */
+export function preserveAlphaLayer(
+  image: CanvasImageSource,
+  size: number,
+): HTMLCanvasElement {
+  const canvas = createCanvas(size);
+  drawContain(context2d(canvas), image, 0, 0, size, size);
+  return canvas;
+}
+
 export function composeIcon(
   spec: ContainerSpec,
   layers: ComposeLayers,

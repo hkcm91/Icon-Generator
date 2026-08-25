@@ -12,7 +12,8 @@
  */
 
 export type ItemStatus = 'draft' | 'queued' | 'generating' | 'ready' | 'failed';
-export type IconOutputMode = 'transparent' | 'composed' | 'complete';
+export type IconOutputMode = 'transparent' | 'framed' | 'composed' | 'complete';
+export type ContainerMode = 'isolated' | 'open-frame' | 'filled';
 
 export interface IconItem {
   id: string;
@@ -133,9 +134,15 @@ export function resetBuiltinGlyphModelResults(items: IconItem[]): BuiltinGlyphRe
 }
 
 /** Finished cards keep their stored mode; the global toggle only supplies a draft default. */
-export function resolveIconOutputMode(item: IconItem, wantAlpha: boolean): IconOutputMode {
+export function resolveIconOutputMode(
+  item: IconItem,
+  wantAlpha: boolean,
+  containerMode: ContainerMode = wantAlpha ? 'isolated' : 'filled',
+): IconOutputMode {
   if (item.outputMode) return item.outputMode;
-  if (wantAlpha) return 'transparent';
+  if (containerMode === 'open-frame') return 'framed';
+  if (containerMode === 'isolated') return 'transparent';
+  if (wantAlpha) return 'composed';
   return usesAiGeneration(item) ? 'complete' : 'composed';
 }
 
@@ -148,6 +155,7 @@ export function repairedTransparentOutputMode(
   item: IconItem,
   hasRealAlpha: boolean,
 ): IconOutputMode | undefined {
+  if (item.outputMode === 'framed') return 'framed';
   const generated = usesAiGeneration(item);
   return generated && hasRealAlpha
     ? 'transparent'

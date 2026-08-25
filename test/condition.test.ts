@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildConditioning, edgeSvg, maskSvg, shapeReferenceSvg } from '../src/core/condition';
 import { containerPath } from '../src/core/geometry';
-import { completeIconPrompt, glyphPrompt, modelConditioning, modelInput } from '../src/core/replicate';
+import { completeIconPrompt, glyphPrompt, modelConditioning, modelInput, openFramePrompt } from '../src/core/replicate';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../src/core/spec';
 import { recipePrompt } from '../src/state/useGeneration';
 
@@ -166,5 +166,16 @@ describe('complete icon prompt', () => {
     const prompt = recipePrompt('base', { variationKey: 'abc123' } as never);
     expect(prompt).toContain('Internal composition variation abc123');
     expect(prompt).toContain('Do not display or spell this key');
+  });
+});
+
+describe('open frame prompt', () => {
+  it('removes the sample subject while preserving real alpha holes', () => {
+    const prompt = openFramePrompt('iridescent transparent gel', 'ghost', true);
+    expect(prompt).toContain('Remove that subject completely');
+    expect(prompt).toContain('reference subject is ghost');
+    expect(prompt).toContain('OPEN FRAME, not a filled tile');
+    expect(prompt).toContain('zero alpha');
+    expect(prompt).toContain('No replacement subject');
   });
 });

@@ -43,6 +43,13 @@ choose one, edit it, or add its suggested subjects to the family. The master is
 still passed as an appearance reference so the family inherits one look rather
 than drifting apart prompt by prompt.
 
+References with a decorative squircle envelope but transparent negative space
+use **Open frame** construction. The app separates the sample subject from a
+reusable subject-free RGBA frame, clips that frame to the exact outer contour
+without painting a base fill, and composites each requested glyph into the
+clear centre. Filled tile, open frame and isolated-subject exports are distinct
+paths; choosing transparency no longer silently discards a decorative frame.
+
 **Make a whole family** gives you **7,400 built-in glyphs** — Material Symbols
 (3,899), brand marks (3,453) and the Y2K Dream set (48) — searchable, add any
 number at once. Or import your own list: a CSV, a JSON manifest, or one name per

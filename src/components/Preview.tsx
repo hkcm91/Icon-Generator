@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { composeIcon, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import type { ContainerMode } from '../core/library';
 import { containerPath, glyphSafePath } from '../core/geometry';
 import type { ContainerSpec } from '../core/spec';
 
@@ -8,16 +9,21 @@ interface Props {
   compose: ComposeOptions;
   layers: ComposeLayers;
   showGuides: boolean;
+  mode?: ContainerMode;
 }
 
-export default function Preview({ spec, compose, layers, showGuides }: Props) {
+export default function Preview({ spec, compose, layers, showGuides, mode = 'filled' }: Props) {
   const holder = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const node = holder.current;
     if (!node) return;
 
-    const canvas = composeIcon(spec, layers, compose);
+    const canvas = mode === 'open-frame'
+      ? composeOpenFrame(spec, layers, compose)
+      : mode === 'isolated'
+        ? renderTransparentLayer(spec, layers.glyph, compose)
+        : composeIcon(spec, layers, compose);
     canvas.className = 'preview-canvas';
 
     if (showGuides) {
@@ -35,7 +41,7 @@ export default function Preview({ spec, compose, layers, showGuides }: Props) {
     }
 
     node.replaceChildren(canvas);
-  }, [spec, compose, layers, showGuides]);
+  }, [spec, compose, layers, showGuides, mode]);
 
   return <div className="preview" ref={holder} />;
 }

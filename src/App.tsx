@@ -353,6 +353,10 @@ export default function App() {
           onLockedContainer={(value) => setField('lockedContainer', value)}
           glyphTransparency={project.glyphTransparency}
           onGlyphTransparency={(value) => setField('glyphTransparency', value)}
+          containerMode={project.containerMode}
+          onContainerMode={(value) => setField('containerMode', value)}
+          frameReady={project.frameReady}
+          onFrameReady={(value) => setField('frameReady', value)}
           references={project.references}
           onReferences={(value) => setField('references', value)}
           exportApprovedOnly={project.exportApprovedOnly}

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground } from '../core/compose';
+import { cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
 import { buildConditioning, type ConditioningMode } from '../core/condition';
 import {
   conditionedMaterialPrompt,
@@ -8,6 +8,7 @@ import {
   glyphPrompt,
   loadImage,
   materialPrompt,
+  openFramePrompt,
   modelConditioning,
   modelInput,
   modelSupportsAlpha,
@@ -217,6 +218,34 @@ export function useGeneration() {
     return image;
   }, []);
 
+  const runOpenFrame = useCallback(async (options: GenerationOptions) => {
+    if (!options.master) throw new Error('Upload a finished reference before extracting its frame.');
+    const wantAlpha = modelSupportsAlpha(options.model);
+    const prompt = recipePrompt(
+      openFramePrompt(options.material, options.referenceSubject ?? '', wantAlpha),
+      { ...options, theme: undefined },
+    );
+    const input = modelInput(
+      options.model,
+      prompt,
+      options.spec.size,
+      [options.master, ...(options.references ?? [])],
+      undefined,
+      wantAlpha,
+      options.quality,
+    );
+    const key = await cacheKey('open-frame', options.model, input);
+    const cached = await cachedLayer(key);
+    if (cached) return cached;
+    const result = await generateImage(options.model, input);
+    const image = await loadImage(result.images[0]);
+    const frame = result.alphaAccepted && hasNativeAlpha(image)
+      ? preserveAlphaLayer(image, options.spec.size)
+      : keyOutBackground(image, options.spec.size);
+    await rememberLayer(key, frame);
+    return frame;
+  }, []);
+
   const generateMaterial = useCallback(
     async (options: GenerationOptions, onMaterial: (image: CanvasImageSource) => void) => {
       setStatus({ kind: 'busy', what: 'Painting the surface' });
@@ -262,6 +291,21 @@ export function useGeneration() {
     [runCompleteIcon],
   );
 
+  const generateOpenFrame = useCallback(
+    async (options: GenerationOptions, onFrame: (image: CanvasImageSource) => void) => {
+      setStatus({ kind: 'busy', what: 'Removing the reference subject and extracting the open frame' });
+      try {
+        onFrame(await runOpenFrame(options));
+        setStatus({ kind: 'ok', message: 'Subject-free transparent frame extracted. Inspect it before generating the family.' });
+        return true;
+      } catch (error) {
+        setStatus({ kind: 'error', message: (error as Error).message });
+        return false;
+      }
+    },
+    [runOpenFrame],
+  );
+
   /** One press, both layers — what the guided view uses. */
   const generateIcon = useCallback(
     async (
@@ -300,5 +344,5 @@ export function useGeneration() {
     [runCompleteIcon, runGlyph],
   );
 
-  return { status, setStatus, generateMaterial, generateGlyph, generateCompleteIcon, generateIcon, generateForItem };
+  return { status, setStatus, generateMaterial, generateGlyph, generateCompleteIcon, generateOpenFrame, generateIcon, generateForItem };
 }

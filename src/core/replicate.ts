@@ -354,6 +354,26 @@ export function completeIconPrompt(
   ].filter(Boolean).join(' ');
 }
 
+/** Create one reusable alpha-bearing frame from a finished reference sample. */
+export function openFramePrompt(
+  material: string,
+  referenceSubject: string,
+  nativeAlpha = true,
+): string {
+  return [
+    'Create a reusable subject-free decorative app-icon frame from the supplied reference.',
+    `The reference subject is ${referenceSubject.trim() || 'the central object'}. Remove that subject completely: no silhouette, face, eyes, anatomy, pose, or recognizable fragments may remain.`,
+    material.trim() ? `Preserve this material and finish: ${material.trim()}.` : '',
+    'Preserve the reference outer container envelope, material vocabulary, iridescent palette, transparent gel, bubbles, swirls, highlights, lighting, camera and dimensionality.',
+    'This is an OPEN FRAME, not a filled tile. Keep the central glyph safe area empty and truly transparent. Keep intentional transparent gaps between every swirl, bubble and rim element.',
+    'Decorative elements may enter the interior slightly, but they must form a coherent perimeter and leave a large clear central area for many different symbols.',
+    nativeAlpha
+      ? 'Return a transparent PNG. Everything outside the decorative frame pixels and every intentional interior hole must have zero alpha.'
+      : 'Render on a completely flat uniform #00FF00 chroma-green background with no gradient or color spill.',
+    'No replacement subject, glyph, logo, text, label, opaque backing plate, solid color fill, checkerboard pattern, mockup, scene, device, or drop shadow.',
+  ].filter(Boolean).join(' ');
+}
+
 /**
  * Per-model input shaping. Each model names its parameters differently, and
  * getting a square aspect ratio matters here — a non-square frame would be

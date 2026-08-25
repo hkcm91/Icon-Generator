@@ -26,6 +26,8 @@ export interface ReferenceAnalysis {
   style: string;
   /** Plausible set directions the user may opt into. */
   themes: ThemeSuggestion[];
+  /** Visual construction suggested by the reference, separate from its theme. */
+  construction: 'filled-container' | 'open-frame-with-subject' | 'isolated-subject' | 'unknown';
 }
 
 export const DEFAULT_VISION_MODEL = 'yorickvp/llava-13b';
@@ -55,10 +57,11 @@ const SYMBOL_PROMPT = [
 const REFERENCE_PROMPT = [
   'Analyze this image as a style reference for a cohesive icon family.',
   'Return only valid JSON with this exact shape:',
-  '{"subject":"short literal noun phrase","style":"transferable visual style","themes":[{"name":"theme name","rationale":"short reason","subjects":["subject 1","subject 2"]}]}',
+  '{"subject":"short literal noun phrase","style":"transferable visual style","construction":"filled-container|open-frame-with-subject|isolated-subject|unknown","themes":[{"name":"theme name","rationale":"short reason","subjects":["subject 1","subject 2"]}]}',
   'The subject is the literal depicted object, such as "ghost".',
   'The style must describe only transferable appearance: transparency, material, palette, iridescence, lighting, dimensionality, edge treatment, texture, camera and rendering technique.',
   'Do not repeat the depicted subject or its anatomy in the style field.',
+  'Use open-frame-with-subject when a finished example has a recognizable outer container envelope made from rims, swirls, bubbles or decoration while substantial interior areas remain truly transparent.',
   'Suggest 2 to 4 distinct plausible icon-set themes. Include an obvious semantic theme when appropriate, but also broader aesthetic or era-based themes such as Y2K or Frutiger Aero when visually supported.',
   'For every theme, suggest 6 to 10 varied objects that belong in that set. Do not make every suggestion a variation of the reference subject.',
   'No markdown fences and no commentary outside the JSON.',
@@ -101,7 +104,7 @@ const clean = (value: unknown, limit: number): string =>
 /** Parse vision output defensively: caption models sometimes wrap otherwise valid JSON. */
 export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
   const match = text.match(/\{[\s\S]*\}/);
-  if (!match) return { subject: cleanSymbolAnswer(text), style: '', themes: [] };
+  if (!match) return { subject: cleanSymbolAnswer(text), style: '', themes: [], construction: 'unknown' };
 
   try {
     const raw = JSON.parse(match[0]) as Record<string, unknown>;
@@ -121,9 +124,15 @@ export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
       subject: clean(raw.subject, 100),
       style: clean(raw.style, 700),
       themes,
+      construction:
+        raw.construction === 'filled-container' ||
+        raw.construction === 'open-frame-with-subject' ||
+        raw.construction === 'isolated-subject'
+          ? raw.construction
+          : 'unknown',
     };
   } catch {
-    return { subject: '', style: '', themes: [] };
+    return { subject: '', style: '', themes: [], construction: 'unknown' };
   }
 }
 

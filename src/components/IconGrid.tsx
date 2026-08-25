@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
-import { composeIcon, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
   modelGlyphReferenceSource,
   parseLibrary,
   resolveIconOutputMode,
   type IconItem,
+  type ContainerMode,
 } from '../core/library';
 import LibraryPicker from './LibraryPicker';
 import { runPool, type PoolProgress } from '../core/queue';
@@ -36,6 +37,7 @@ interface Props {
   onClearGlyphs: () => void;
   onClearSelectedGlyphs: (ids: Iterable<string>) => void;
   maxBatchCost: number;
+  containerMode: ContainerMode;
 }
 
 /** Thumbnail for one card: the real container, with this card's glyph in it. */
@@ -44,7 +46,7 @@ function Thumb({
   compose,
   layers,
   empty = false,
-  transparent = false,
+  mode = 'composed',
 }: {
   spec: ContainerSpec;
   compose: ComposeOptions;
@@ -52,16 +54,18 @@ function Thumb({
   /** Complete-icon drafts stay genuinely empty until their paid result exists. */
   empty?: boolean;
   /** Draw the stored asset directly; never synthesize a container behind it. */
-  transparent?: boolean;
+  mode?: 'transparent' | 'framed' | 'composed' | 'complete';
 }) {
   const src = useMemo(() => {
     const canvas = empty ? document.createElement('canvas')
-      : transparent
+      : mode === 'transparent'
         ? renderTransparentLayer({ ...spec, size: 128 }, layers.glyph, compose)
-        : composeIcon({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 });
+        : mode === 'framed'
+          ? composeOpenFrame({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 })
+          : composeIcon({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 });
     if (empty) canvas.width = canvas.height = 128;
     return canvas.toDataURL('image/png');
-  }, [spec, compose, layers, empty, transparent]);
+  }, [spec, compose, layers, empty, mode]);
   return <img className="card-thumb" src={src} alt="" />;
 }
 
@@ -207,9 +211,13 @@ export default function IconGrid(props: Props) {
                 subject,
               );
           const nextRevision = item.revision + 1;
-          const outputMode = props.options.wantAlpha
-            ? 'transparent'
-            : needsPaidGeneration(item) ? 'complete' : 'composed';
+          const outputMode = props.containerMode === 'open-frame'
+            ? 'framed'
+            : props.containerMode === 'isolated'
+              ? 'transparent'
+              : props.options.wantAlpha
+                ? 'composed'
+                : needsPaidGeneration(item) ? 'complete' : 'composed';
           props.onItemGlyph(item.id, layer, nextRevision);
           // Deselect on success, so the next "Generate selected" targets only
           // what still needs doing.
@@ -381,7 +389,7 @@ export default function IconGrid(props: Props) {
       ) : (
         <div className="card-grid">
           {props.items.map((item) => {
-            const outputMode = resolveIconOutputMode(item, props.options.wantAlpha);
+            const outputMode = resolveIconOutputMode(item, props.options.wantAlpha, props.containerMode);
             return (
             <article
               key={item.id}
@@ -404,10 +412,10 @@ export default function IconGrid(props: Props) {
                 empty={!props.glyphs.has(item.id) || (
                   isAiGuidedCatalogSource(item.sourceUrl) && item.sourceMode !== 'styled'
                 )}
-                transparent={outputMode === 'transparent'}
+                mode={outputMode}
                 layers={outputMode === 'transparent'
                   ? { material: null, glyph: props.glyphs.get(item.id) ?? null }
-                  : outputMode === 'composed'
+                  : outputMode === 'composed' || outputMode === 'framed'
                     ? { material: props.material, glyph: props.glyphs.get(item.id) ?? null }
                   : { material: props.glyphs.get(item.id) ?? null, glyph: null }}
               />

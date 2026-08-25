@@ -8,7 +8,7 @@ import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '.
 import { hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
-import { makeItem, repairedTransparentOutputMode, resolveIconOutputMode, type IconItem } from '../core/library';
+import { makeItem, repairedTransparentOutputMode, resolveIconOutputMode, type ContainerMode, type IconItem } from '../core/library';
 import {
   PLATFORM_TARGETS,
   blobBytes,
@@ -18,6 +18,7 @@ import {
   download,
   ICO_SIZES,
   renderAtSize,
+  renderOpenFrameAtSize,
   renderTransparentAtSize,
   svgMask,
 } from '../core/export';
@@ -74,6 +75,10 @@ interface Props {
   onLockedContainer: (value: boolean) => void;
   glyphTransparency: boolean;
   onGlyphTransparency: (value: boolean) => void;
+  containerMode: ContainerMode;
+  onContainerMode: (value: ContainerMode) => void;
+  frameReady: boolean;
+  onFrameReady: (value: boolean) => void;
   references: Array<{ name: string; dataUrl: string }>;
   onReferences: (value: Array<{ name: string; dataUrl: string }>) => void;
   exportApprovedOnly: boolean;
@@ -138,7 +143,7 @@ function downscale(source: HTMLCanvasElement, size: number): string {
  * supposed to be settled.
  */
 export default function SimpleStudio(props: Props) {
-  const { status, generateIcon, generateGlyph, generateCompleteIcon, generateForItem, setStatus } = useGeneration();
+  const { status, generateIcon, generateGlyph, generateCompleteIcon, generateOpenFrame, generateForItem, setStatus } = useGeneration();
   const [tracing, setTracing] = useState('');
   const [notes, setNotes] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
@@ -176,7 +181,7 @@ export default function SimpleStudio(props: Props) {
   useEffect(() => {
     let changed = false;
     const repaired = props.items.map((item) => {
-      if (item.outputMode === 'transparent') return item;
+      if (item.outputMode === 'transparent' || item.outputMode === 'framed') return item;
       if (item.sourceUrl && item.sourceMode !== 'styled') return item;
       const image = props.glyphs.get(item.id);
       if (!image) return item;
@@ -214,6 +219,7 @@ export default function SimpleStudio(props: Props) {
       props.onStyleProfile('');
       props.onTheme('');
       props.onThemeSuggestions([]);
+      props.onFrameReady(false);
       // The upload is already the approved master. Reuse its pixels instead of
       // paying for a second model call to repaint a surface the user supplied.
       props.onMaterialLayer(master.layer);
@@ -239,6 +245,11 @@ export default function SimpleStudio(props: Props) {
       props.onReferenceSubject(analysis.subject);
       props.onStyleProfile(analysis.style);
       props.onThemeSuggestions(analysis.themes);
+      if (analysis.construction === 'open-frame-with-subject') {
+        props.onContainerMode('open-frame');
+        props.onGlyphTransparency(true);
+        props.onFrameReady(false);
+      }
       setTracing(
         analysis.subject
           ? `Reference subject detected as “${analysis.subject}”. It will not be reused unless an icon asks for it.`
@@ -268,6 +279,11 @@ export default function SimpleStudio(props: Props) {
       setStatus({ kind: 'error', message: premiumMessage });
       return;
     }
+    if (props.containerMode === 'open-frame' && !props.frameReady) {
+      setStatus({ kind: 'error', message: 'Extract or approve a subject-free transparent frame before generating icons.' });
+      return;
+    }
+    const layeredOutput = props.containerMode !== 'filled' || props.glyphTransparency;
     const options: GenerationOptions = {
         spec: props.spec,
         model: props.model,
@@ -277,11 +293,11 @@ export default function SimpleStudio(props: Props) {
         glyphSubject: props.glyph,
         glyphStyle: '',
         conditioning: 'auto',
-        wantAlpha: props.glyphTransparency,
+        wantAlpha: layeredOutput,
         // Isolated mode keeps the container out of the glyph request. Complete
         // mode deliberately sends it because repainting the whole icon is the
         // selected outcome.
-        master: props.glyphTransparency && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
+        master: layeredOutput && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
         references: props.references.map((reference) => reference.dataUrl),
         referenceSubject: props.referenceSubject,
         styleProfile: props.styleProfile,
@@ -290,7 +306,7 @@ export default function SimpleStudio(props: Props) {
         negativePrompt: props.negativePrompt,
         quality: props.quality,
       };
-    if (!props.glyphTransparency) {
+    if (!layeredOutput) {
       void generateCompleteIcon(options, props.onMaterialLayer, props.onGlyphLayer);
       return;
     }
@@ -303,6 +319,34 @@ export default function SimpleStudio(props: Props) {
       return;
     }
     void generateIcon(options, props.onMaterialLayer, props.onGlyphLayer);
+  };
+
+  const extractFrame = async () => {
+    if (premiumMessage) {
+      setStatus({ kind: 'error', message: premiumMessage });
+      return;
+    }
+    if (!props.master) {
+      setStatus({ kind: 'error', message: 'Upload a finished reference before extracting an open frame.' });
+      return;
+    }
+    const success = await generateOpenFrame({
+      spec: props.spec,
+      model: props.model,
+      material: props.material,
+      glyphSubject: '',
+      glyphStyle: '',
+      conditioning: 'off',
+      wantAlpha: true,
+      master: props.master.dataUrl,
+      references: props.references.map((reference) => reference.dataUrl),
+      referenceSubject: props.referenceSubject,
+      styleProfile: props.styleProfile,
+      familyPrompt: props.familyPrompt,
+      negativePrompt: props.negativePrompt,
+      quality: props.quality,
+    }, props.onMaterialLayer);
+    if (success) props.onFrameReady(true);
   };
 
   const addThemeSubjects = (suggestion: ThemeSuggestion) => {
@@ -345,8 +389,12 @@ export default function SimpleStudio(props: Props) {
         const stem = safe(item.name);
         const familyItem = ready.length ? item as IconItem : null;
         const outputMode = familyItem
-          ? resolveIconOutputMode(familyItem, props.glyphTransparency)
-          : props.glyphTransparency ? 'transparent' : 'composed';
+          ? resolveIconOutputMode(familyItem, props.glyphTransparency, props.containerMode)
+          : props.containerMode === 'open-frame'
+            ? 'framed'
+            : props.containerMode === 'isolated'
+              ? 'transparent'
+              : 'composed';
         const layers = outputMode === 'complete'
           ? { material: glyph ?? props.materialLayer, glyph: null }
           : { material: props.materialLayer, glyph };
@@ -358,7 +406,9 @@ export default function SimpleStudio(props: Props) {
         };
         const render = (size: number) => outputMode === 'transparent'
           ? renderTransparentAtSize(props.spec, size, glyph, itemCompose)
-          : renderAtSize(props.spec, size, layers, itemCompose);
+          : outputMode === 'framed'
+            ? renderOpenFrameAtSize(props.spec, size, layers, itemCompose)
+            : renderAtSize(props.spec, size, layers, itemCompose);
         for (const target of PLATFORM_TARGETS) {
           const canvas = render(target.size);
           files.push({
@@ -445,7 +495,7 @@ export default function SimpleStudio(props: Props) {
 
   return (
     <div className="studio">
-      <Preview spec={props.spec} compose={props.compose} layers={props.layers} showGuides={false} />
+      <Preview spec={props.spec} compose={props.compose} layers={{ material: props.materialLayer, glyph: props.layers.glyph }} showGuides={false} mode={props.containerMode} />
       <div className="studio-flow">
         <label className="field family-name-field">
           <span className="field-label">Family name</span>
@@ -530,6 +580,41 @@ export default function SimpleStudio(props: Props) {
             <span className="compact-step-value">{props.glyph.trim() || props.material.trim() || 'Set appearance'}</span>
           </summary>
           <div className="compact-step-body compact-fields">
+          <fieldset className="construction-picker">
+            <legend>Icon construction</legend>
+            {([
+              ['filled', 'Filled tile', 'Material fills the container.'],
+              ['open-frame', 'Open frame', 'Decoration defines the boundary while holes stay transparent.'],
+              ['isolated', 'No container', 'Only the subject is exported.'],
+            ] as const).map(([mode, label, description]) => (
+              <label className={props.containerMode === mode ? 'construction-choice construction-choice-on' : 'construction-choice'} key={mode}>
+                <input type="radio" name="construction" checked={props.containerMode === mode} onChange={() => {
+                  props.onContainerMode(mode);
+                  if (mode !== 'filled') props.onGlyphTransparency(true);
+                  if (mode === 'open-frame') props.onFrameReady(false);
+                }} />
+                <span><b>{label}</b><small>{description}</small></span>
+              </label>
+            ))}
+          </fieldset>
+          {props.containerMode === 'open-frame' && (
+            <div className={props.frameReady ? 'frame-gate frame-gate-ready' : 'frame-gate'}>
+              <strong>{props.frameReady ? 'Subject-free frame ready' : 'The uploaded example still contains its subject'}</strong>
+              <p>{props.frameReady
+                ? 'The frame will be reused without filling its transparent interior.'
+                : `Remove ${props.referenceSubject || 'the reference subject'} before generating the family, or approve the uploaded pixels only if they already contain no subject.`}</p>
+              <div className="row">
+                <button type="button" onClick={() => void extractFrame()} disabled={busy || !props.master}>
+                  {props.frameReady ? 'Re-extract clean frame' : 'Extract clean frame'}
+                </button>
+                {!props.frameReady && props.master && (
+                  <button type="button" className="ghost" onClick={() => props.onFrameReady(true)}>
+                    Frame already has no subject
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <label className="field">
             <span className="field-label">Surface</span>
             <input
@@ -618,7 +703,7 @@ export default function SimpleStudio(props: Props) {
           </label>
           <label className="toggle glyph-alpha-toggle">
             <input type="checkbox" checked={props.glyphTransparency}
-              disabled={props.model !== 'openai/gpt-image-2'}
+              disabled={props.containerMode !== 'filled' || props.model !== 'openai/gpt-image-2'}
               onChange={(event) => {
                 const legacyMode = props.glyphTransparency ? 'transparent' : undefined;
                 props.onItems(props.items.map((item) => {
@@ -703,7 +788,8 @@ export default function SimpleStudio(props: Props) {
             <span className="step-num">3</span> Make it
           </h3>
           <div className="row">
-            <button type="button" className="primary" onClick={run} disabled={busy || premiumBlocked}>
+            <button type="button" className="primary" onClick={run}
+              disabled={busy || premiumBlocked || (props.containerMode === 'open-frame' && !props.frameReady)}>
               {busy ? 'Working…' : `${props.materialLayer && props.glyphTransparency ? 'Generate symbol' : 'Generate icon'}${cost !== null ? ` · ~${(cost * (!props.glyphTransparency || !props.glyph.trim() || props.materialLayer ? 1 : 2)).toFixed(3)}` : ''}`}
             </button>
             <button
@@ -718,6 +804,7 @@ export default function SimpleStudio(props: Props) {
                 props.onStyleProfile('');
                 props.onTheme('');
                 props.onThemeSuggestions([]);
+                props.onFrameReady(false);
               }}
               disabled={busy}
             >
@@ -764,8 +851,8 @@ export default function SimpleStudio(props: Props) {
               material: props.material,
               glyphStyle: '',
               conditioning: 'auto',
-              wantAlpha: props.glyphTransparency,
-              master: props.glyphTransparency && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
+              wantAlpha: props.containerMode !== 'filled' || props.glyphTransparency,
+              master: (props.containerMode !== 'filled' || props.glyphTransparency) && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
               references: props.references.map((reference) => reference.dataUrl),
               referenceSubject: props.referenceSubject,
               styleProfile: props.styleProfile,
@@ -774,8 +861,11 @@ export default function SimpleStudio(props: Props) {
               negativePrompt: props.negativePrompt,
               quality: props.quality,
             }}
-            generationBlocked={premiumMessage}
             maxBatchCost={props.maxBatchCost}
+            containerMode={props.containerMode}
+            generationBlocked={props.containerMode === 'open-frame' && !props.frameReady
+              ? 'Extract or approve a subject-free transparent frame before generating the family.'
+              : premiumMessage}
           />
         </li>
 

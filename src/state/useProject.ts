@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_COMPOSE, type ComposeOptions } from '../core/compose';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../core/spec';
 import { DEFAULT_VISION_MODEL } from '../core/vision';
-import type { IconItem } from '../core/library';
+import type { ContainerMode, IconItem } from '../core/library';
 import type { ThemeSuggestion } from '../core/vision';
 
 const STORAGE_KEY = 'icon-generator-project-v1';
@@ -46,6 +46,10 @@ export interface Project {
   lockedContainer: boolean;
   /** Ask capable models for an isolated native-alpha glyph; off uses chroma keying. */
   glyphTransparency: boolean;
+  /** Whether exports are an isolated glyph, alpha-bearing frame, or filled tile. */
+  containerMode: ContainerMode;
+  /** Open-frame samples containing a subject are blocked until cleaned or approved. */
+  frameReady: boolean;
   /** Additional appearance references shared by the family. */
   references: Array<{ name: string; dataUrl: string }>;
   /** Production export gate. */
@@ -88,6 +92,8 @@ const DEFAULT_PROJECT: Project = {
   master: null,
   lockedContainer: false,
   glyphTransparency: true,
+  containerMode: 'isolated',
+  frameReady: false,
   references: [],
   exportApprovedOnly: false,
   exportSelectedOnly: false,
@@ -118,6 +124,8 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
     glyphTransparency: savedTransparency,
+    containerMode: parsed.containerMode ?? (savedTransparency ? 'isolated' : 'filled'),
+    frameReady: parsed.frameReady ?? false,
     spec: normalizeSpec(parsed.spec),
     // Older project/template JSON could silently carry a dark analytic rim.
     // Clear it once; rims intentionally selected after this migration persist.

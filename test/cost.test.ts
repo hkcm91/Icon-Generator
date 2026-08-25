@@ -62,6 +62,13 @@ describe('generation cost controls', () => {
     expect(resolveIconOutputMode(complete, true)).toBe('complete');
   });
 
+  it('routes new open-frame cards through framed alpha composition', () => {
+    const draft = makeItem('Home');
+    expect(resolveIconOutputMode(draft, true, 'open-frame')).toBe('framed');
+    expect(resolveIconOutputMode(draft, true, 'isolated')).toBe('transparent');
+    expect(resolveIconOutputMode(draft, true, 'filled')).toBe('composed');
+  });
+
   it('removes added containers from existing AI results with real alpha', () => {
     const generated = makeItem('Generated', { status: 'draft', revision: 1, outputMode: 'complete' });
     const exact = makeItem('Exact', {

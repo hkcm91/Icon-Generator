@@ -7,7 +7,7 @@
  * one, antialiased for 32px — not a smeared resample of a big corner.
  */
 
-import { composeIcon, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from './compose';
+import { composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from './compose';
 import { containerPath, toSvgDocument } from './geometry';
 import type { ContainerSpec } from './spec';
 
@@ -82,6 +82,16 @@ export function renderTransparentAtSize(
   options: ComposeOptions,
 ): HTMLCanvasElement {
   return renderTransparentLayer({ ...spec, size }, image, options);
+}
+
+/** Render a transparent decorative container plus glyph at a target size. */
+export function renderOpenFrameAtSize(
+  spec: ContainerSpec,
+  size: number,
+  layers: ComposeLayers,
+  options: ComposeOptions,
+): HTMLCanvasElement {
+  return composeOpenFrame({ ...spec, size }, layers, options);
 }
 
 // ---------------------------------------------------------------------------
