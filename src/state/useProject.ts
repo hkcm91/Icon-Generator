@@ -9,6 +9,12 @@ const STORAGE_KEY = 'icon-generator-project-v1';
 export interface Project {
   /** false shows the guided four-step view; true shows every control. */
   advanced: boolean;
+  /**
+   * Whether the walkthrough is on. True on a first visit — the app's whole
+   * argument is a workflow, and a workflow is worth showing once — and
+   * whatever the visitor last chose after that.
+   */
+  tutorial: boolean;
   spec: ContainerSpec;
   compose: ComposeOptions;
   model: string;
@@ -27,6 +33,7 @@ export interface Project {
 
 const DEFAULT_PROJECT: Project = {
   advanced: false,
+  tutorial: true,
   spec: DEFAULT_SPEC,
   compose: DEFAULT_COMPOSE,
   model: 'google/nano-banana-pro',

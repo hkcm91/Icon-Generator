@@ -9,6 +9,7 @@ import Preview from './components/Preview';
 import SimpleStudio from './components/SimpleStudio';
 import SpecPanel from './components/SpecPanel';
 import TracePanel from './components/TracePanel';
+import Tutorial from './components/Tutorial';
 import type { ComposeLayers } from './core/compose';
 import { useImageStore } from './state/useImageStore';
 import { useProject } from './state/useProject';
@@ -60,6 +61,14 @@ export default function App() {
           <ApiKeyBar />
           <button
             type="button"
+            className={project.tutorial ? 'ghost ghost-on' : 'ghost'}
+            aria-pressed={project.tutorial}
+            onClick={() => setField('tutorial', !project.tutorial)}
+          >
+            Tutorial
+          </button>
+          <button
+            type="button"
             className="ghost"
             onClick={() => setField('advanced', !advanced)}
           >
@@ -79,6 +88,8 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {project.tutorial && <Tutorial onClose={() => setField('tutorial', false)} />}
 
       {!advanced && (
         <SimpleStudio

@@ -23,6 +23,23 @@ radius slider had no effect in squircle mode:
 Where this sits relative to the existing tools, and the gap it takes:
 **[docs/MARKET-RESEARCH.md](docs/MARKET-RESEARCH.md)**.
 
+## The walkthrough
+
+The app opens on a **walkthrough**: about a minute, no sound, covering only the
+short path — the master icon you already have goes in, a whole family comes
+out. Skip it and it stays skipped; **Tutorial** in the header brings it back.
+
+It plays itself, but it is not a cutscene. Every scene is reachable from the
+chapter rail, `←`/`→` step, space pauses, `Esc` closes, and someone who has
+asked for reduced motion gets the same words with the pictures held still.
+
+Deliberately absent: geometry sliders, conditioning modes, the determinism
+check, the measurement tools. They are all real and all documented below, and
+none of them are on the path from one icon to a downloaded set. The script
+lives in [`src/core/tutorial.ts`](src/core/tutorial.ts) as plain data, so what
+it claims is reviewable in a diff — and `test/tutorial.test.ts` fails if the
+shape presets it names stop matching the ones the app offers.
+
 ## Two views
 
 The app opens in a **guided view**: pick a shape, describe the look, generate,
@@ -169,11 +186,12 @@ so a 16px corner is antialiased for 16px instead of resampled from 1024px.
 ## Layout
 
 ```
-src/core/       spec, geometry, compose, replicate, export, hash  (no React)
-src/components/ SpecPanel, Preview, GeneratePanel, DeterminismPanel, ExportPanel, DriftLab
+src/core/       spec, geometry, compose, replicate, export, hash, tutorial  (no React)
+src/components/ SimpleStudio, Tutorial, SpecPanel, Preview, GeneratePanel,
+                DeterminismPanel, ExportPanel, DriftLab
 src/state/      useProject (autosaves to localStorage)
 server/         Replicate proxy — holds the token, re-serves images same-origin
-test/           geometry + determinism
+test/           geometry, determinism, walkthrough script
 docs/           the diagnosis, the market research
 ```
 
