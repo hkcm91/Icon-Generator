@@ -130,7 +130,7 @@ describe('built-in glyph generation mode', () => {
     expect(defaultGlyphSourceMode()).toBe('styled');
   });
 
-  it('clears legacy pasted Material results back to selected AI drafts', () => {
+  it('clears legacy pasted Material results without changing batch selection', () => {
     const material = makeItem('Home', {
       sourceUrl: '/libraries/glyphs/material/home-fill.svg',
       sourceMode: 'exact',
@@ -154,7 +154,7 @@ describe('built-in glyph generation mode', () => {
     expect(repair.items[0]).toMatchObject({
       sourceMode: 'styled',
       status: 'draft',
-      selected: true,
+      selected: false,
       revision: 0,
       approved: false,
     });

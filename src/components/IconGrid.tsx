@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { composeIcon, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
-import { parseLibrary, resolveIconOutputMode, type IconItem } from '../core/library';
+import { isAiGuidedCatalogSource, parseLibrary, resolveIconOutputMode, type IconItem } from '../core/library';
 import LibraryPicker from './LibraryPicker';
 import { runPool, type PoolProgress } from '../core/queue';
 import type { ContainerSpec } from '../core/spec';
@@ -181,8 +181,10 @@ export default function IconGrid(props: Props) {
             .map(imageSourceDataUrl);
           const subject = [item.concept || item.name, item.role && `${item.role} icon`, item.complexity && `${item.complexity} detail`]
             .filter(Boolean).join(', ');
-          const layer = item.sourceUrl && item.sourceMode !== 'styled'
-            ? await exactGlyph(item.sourceUrl, props.glyphColor)
+          // Catalog glyphs are reference inputs only. Even stale exact-mode
+          // metadata must never paste one into the finished icon frame.
+          const layer = !needsPaidGeneration(item)
+            ? await exactGlyph(item.sourceUrl!, props.glyphColor)
             : await props.generate(
                 {
                   ...props.options,
@@ -320,7 +322,7 @@ export default function IconGrid(props: Props) {
           type="button"
           className="primary"
           disabled={!selectedCount || running || budgetBlocked || Boolean(props.generationBlocked && props.items.some(
-            (item) => item.selected && (!item.sourceUrl || item.sourceMode === 'styled'),
+            (item) => item.selected && needsPaidGeneration(item),
           ))}
           onClick={() => runBatch(props.items.filter((item) => item.selected))}
         >
@@ -388,7 +390,11 @@ export default function IconGrid(props: Props) {
               <Thumb
                 spec={props.spec}
                 compose={composeFor(item)}
-                empty={!props.glyphs.has(item.id)}
+                // Hide a stale locally pasted catalog glyph on the very first
+                // render too; the migration effect clears its stored pixels.
+                empty={!props.glyphs.has(item.id) || (
+                  isAiGuidedCatalogSource(item.sourceUrl) && item.sourceMode !== 'styled'
+                )}
                 transparent={outputMode === 'transparent'}
                 layers={outputMode === 'transparent'
                   ? { material: null, glyph: props.glyphs.get(item.id) ?? null }
@@ -413,7 +419,10 @@ export default function IconGrid(props: Props) {
                   placeholder="Describe this glyph"
                   onChange={(event) => patch(item.id, { concept: event.target.value })}
                 />
-                {item.sourceUrl && (
+                {item.sourceUrl && isAiGuidedCatalogSource(item.sourceUrl) && (
+                  <span className="badge source-mode">AI reference only</span>
+                )}
+                {item.sourceUrl && !isAiGuidedCatalogSource(item.sourceUrl) && (
                   <button
                     type="button"
                     className="ghost tiny source-mode"
@@ -515,7 +524,7 @@ export default function IconGrid(props: Props) {
                 <button
                   type="button"
                   className="ghost tiny"
-                  disabled={running || Boolean(props.generationBlocked && (!item.sourceUrl || item.sourceMode === 'styled'))}
+                  disabled={running || Boolean(props.generationBlocked && needsPaidGeneration(item))}
                   onClick={() => runBatch([item])}
                 >
                   {item.status === 'ready' ? 'Redo' : 'Make'}
