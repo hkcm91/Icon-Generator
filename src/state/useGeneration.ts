@@ -13,6 +13,7 @@ import {
   modelInput,
   modelSupportsAlpha,
 } from '../core/replicate';
+import { materialPalettePrompt, type MaterialPalette } from '../core/materialPalette';
 import type { ContainerSpec } from '../core/spec';
 import { GENERATION_CACHE, blobToImage, canvasToBlobAsync, getBlob, putBlob } from '../core/store';
 
@@ -50,6 +51,7 @@ export interface GenerationOptions {
   referenceHasSeparateFrame?: boolean;
   styleFidelity?: number;
   detailVariation?: number;
+  materialPalette?: MaterialPalette | null;
   /** User-selected set direction. Never substitutes for an item's subject. */
   theme?: string;
   familyPrompt?: string;
@@ -80,6 +82,7 @@ export function recipePrompt(prompt: string, options: GenerationOptions): string
     options.styleProfile?.trim()
       ? `SHARED FAMILY STYLE (palette, lighting and rendering only; this never overrides the separate subject/frame opacity, fill or construction rules): ${options.styleProfile.trim()}`
       : '',
+    materialPalettePrompt(options.materialPalette),
     `REFERENCE CONTROL — style match ${Math.round(fidelity)}%, decorative variation ${Math.round(variation)}%. ${fidelityRule} ${variationRule} Style fidelity and composition variation are independent: variation must not weaken the locked style.`,
     options.familyPrompt?.trim(), options.variationKey
     ? `Internal composition variation ${options.variationKey}: choose a distinct arrangement of decorative microdetails for this icon. Do not display or spell this key.`

@@ -63,6 +63,15 @@ and assigns one deterministically to each icon. This gives a large family real
 visual diversity while paying for only a handful of frame generations rather
 than generating a new border for every card.
 
+Master analysis also creates a compact **Material palette** before family
+generation. Colors are sampled deterministically from the uploaded pixels,
+while the vision pass separates reusable base, glyph, frame and accent texture
+recipes. Those approved roles are included in every generation prompt, so a
+milky filled glyph does not accidentally inherit a hollow glass frame texture.
+The palette is active automatically and collapsed to one swatch row in the
+guided view; its detected recipes can be inspected without adding another
+required setup screen.
+
 **Make a whole family** gives you **7,400 built-in glyphs** — Material Symbols
 (3,899), brand marks (3,453) and the Y2K Dream set (48) — searchable, add any
 number at once. Or import your own list: a CSV, a JSON manifest, or one name per

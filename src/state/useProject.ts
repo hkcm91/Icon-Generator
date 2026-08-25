@@ -4,6 +4,7 @@ import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../core/spec';
 import { DEFAULT_VISION_MODEL } from '../core/vision';
 import type { ContainerMode, IconItem } from '../core/library';
 import type { ThemeSuggestion } from '../core/vision';
+import { normalizeMaterialPalette, type MaterialPalette } from '../core/materialPalette';
 
 const STORAGE_KEY = 'icon-generator-project-v1';
 
@@ -39,6 +40,8 @@ export interface Project {
   styleProfile: string;
   subjectStyleProfile: string;
   frameStyleProfile: string;
+  /** Measured colors plus role-specific texture recipes from the master. */
+  materialPalette: MaterialPalette | null;
   /** Prompt-level match strength for stable material/palette/lighting. */
   styleFidelity: number;
   /** Controls microdetail rearrangement and the size of the frame variant pool. */
@@ -95,6 +98,7 @@ const DEFAULT_PROJECT: Project = {
   styleProfile: '',
   subjectStyleProfile: '',
   frameStyleProfile: '',
+  materialPalette: null,
   styleFidelity: 90,
   detailVariation: 70,
   theme: '',
@@ -141,6 +145,7 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     glyphTransparency: savedTransparency,
     containerMode: parsed.containerMode ?? (savedTransparency ? 'isolated' : 'filled'),
     frameReady: parsed.frameReady ?? false,
+    materialPalette: normalizeMaterialPalette(parsed.materialPalette),
     styleFidelity: percentage(parsed.styleFidelity, 90),
     detailVariation: percentage(parsed.detailVariation, 70),
     spec: normalizeSpec(parsed.spec),

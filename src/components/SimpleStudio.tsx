@@ -23,6 +23,7 @@ import {
   svgMask,
 } from '../core/export';
 import { modelOutputCost, needsPaidGeneration } from '../core/cost';
+import { mergeMaterialPalette, type MaterialPalette, type MaterialRole } from '../core/materialPalette';
 
 interface Props {
   familyName: string;
@@ -46,6 +47,7 @@ interface Props {
   styleProfile: string;
   subjectStyleProfile: string;
   frameStyleProfile: string;
+  materialPalette: MaterialPalette | null;
   styleFidelity: number;
   detailVariation: number;
   theme: string;
@@ -61,6 +63,7 @@ interface Props {
   onStyleProfile: (value: string) => void;
   onSubjectStyleProfile: (value: string) => void;
   onFrameStyleProfile: (value: string) => void;
+  onMaterialPalette: (value: MaterialPalette | null) => void;
   onStyleFidelity: (value: number) => void;
   onDetailVariation: (value: number) => void;
   onTheme: (value: string) => void;
@@ -231,6 +234,7 @@ export default function SimpleStudio(props: Props) {
       props.onStyleProfile('');
       props.onSubjectStyleProfile('');
       props.onFrameStyleProfile('');
+      props.onMaterialPalette(null);
       props.onTheme('');
       props.onThemeSuggestions([]);
       props.onFrameReady(false);
@@ -247,6 +251,14 @@ export default function SimpleStudio(props: Props) {
       props.onMaterial(described.material);
       props.onCompose({ baseColor: described.baseColor });
       setNotes(described.notes);
+      const localPalette = mergeMaterialPalette(described.palette, [], {
+        base: described.material,
+        glyph: described.glyph.present
+          ? `${described.glyph.colorName} (${described.glyph.color}), sampled from the central subject`
+          : '',
+        frame: '',
+      });
+      props.onMaterialPalette(localPalette);
       setTracing(
         `Shape and colours taken from ${file.name}. Corner curve n ≈ ${traced.exponent.toFixed(1)}.`,
       );
@@ -261,6 +273,11 @@ export default function SimpleStudio(props: Props) {
       props.onStyleProfile(analysis.style);
       props.onSubjectStyleProfile(analysis.subjectStyle);
       props.onFrameStyleProfile(analysis.frameStyle);
+      props.onMaterialPalette(mergeMaterialPalette(described.palette, analysis.materials, {
+        base: described.material,
+        glyph: analysis.subjectStyle,
+        frame: analysis.frameStyle,
+      }));
       props.onThemeSuggestions(analysis.themes);
       if (analysis.construction === 'open-frame-with-subject') {
         props.onContainerMode('open-frame');
@@ -328,6 +345,7 @@ export default function SimpleStudio(props: Props) {
         referenceHasSeparateFrame: props.containerMode === 'open-frame',
         styleFidelity: props.styleFidelity,
         detailVariation: props.detailVariation,
+        materialPalette: props.materialPalette,
         theme: props.theme,
         familyPrompt: props.familyPrompt,
         negativePrompt: props.negativePrompt,
@@ -374,6 +392,7 @@ export default function SimpleStudio(props: Props) {
       referenceHasSeparateFrame: true,
       styleFidelity: props.styleFidelity,
       detailVariation: props.detailVariation,
+      materialPalette: props.materialPalette,
       familyPrompt: props.familyPrompt,
       negativePrompt: props.negativePrompt,
       quality: props.quality,
@@ -427,6 +446,7 @@ export default function SimpleStudio(props: Props) {
           referenceHasSeparateFrame: true,
           styleFidelity: props.styleFidelity,
           detailVariation: props.detailVariation,
+          materialPalette: props.materialPalette,
           familyPrompt: props.familyPrompt,
           negativePrompt: props.negativePrompt,
           variationKey: `frame-variant-${index}-of-${needed}-detail-${props.detailVariation}`,
@@ -451,6 +471,17 @@ export default function SimpleStudio(props: Props) {
       kind: 'ok',
       message: `Using ${suggestion.name}; added ${fresh.length} new theme concept${fresh.length === 1 ? '' : 's'} to the family.`,
     });
+  };
+
+  const updateMaterialRole = (role: MaterialRole, description: string, fallbackName: string) => {
+    if (!props.materialPalette) return;
+    const recipes = props.materialPalette.recipes.filter((recipe) => recipe.role !== role);
+    if (description.trim()) recipes.push({ role, name: fallbackName, description: description.trim() });
+    props.onMaterialPalette(mergeMaterialPalette(
+      props.materialPalette.colors,
+      recipes,
+      { base: '', glyph: '', frame: '' },
+    ));
   };
 
   const downloadAll = async () => {
@@ -720,7 +751,10 @@ export default function SimpleStudio(props: Props) {
             <input
               value={props.material}
               placeholder="brushed deep indigo metal"
-              onChange={(event) => props.onMaterial(event.target.value)}
+              onChange={(event) => {
+                props.onMaterial(event.target.value);
+                updateMaterialRole('base', event.target.value, 'Container surface');
+              }}
             />
           </label>
           <label className="field">
@@ -733,42 +767,69 @@ export default function SimpleStudio(props: Props) {
           </label>
           {props.master && (
             <div className="reference-intelligence">
+              {props.materialPalette && (
+                <details className="material-palette">
+                  <summary>
+                    <span><b>Material palette</b><small>{props.materialPalette.recipes.length} materials automatically separated and active</small></span>
+                    <span className="material-swatches" aria-label="Measured colors">
+                      {props.materialPalette.colors.map((color) => (
+                        <i key={color.hex} style={{ backgroundColor: color.hex }} title={`${color.name} ${color.hex}`} />
+                      ))}
+                    </span>
+                  </summary>
+                  <div className="material-recipes">
+                    {props.materialPalette.recipes.map((recipe) => (
+                      <div className="material-recipe" key={recipe.role}>
+                        <strong>{recipe.role === 'base' ? 'Base' : recipe.role === 'glyph' ? 'Glyph' : recipe.role === 'frame' ? 'Frame' : 'Accent'}</strong>
+                        <span><b>{recipe.name}</b><small>{recipe.description}</small></span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
               <div className="reference-separation">
                 <span className="field-label">Reference content</span>
                 <strong>{props.referenceSubject || 'Not identified'}</strong>
                 <small>Used as an exclusion, not as the next icon subject.</small>
               </div>
-              <label className="field">
-                <span className="field-label">Transferable style</span>
-                <textarea
-                  value={props.styleProfile}
-                  placeholder="transparent iridescent gel, cool pastel reflections, soft studio lighting…"
-                  onChange={(event) => props.onStyleProfile(event.target.value)}
-                />
-              </label>
-              <label className="field">
-                <span className="field-label">Subject treatment</span>
-                <textarea
-                  value={props.subjectStyleProfile}
-                  placeholder="milky opalescent filled volume, bright pearly body, broad highlights, strong silhouette…"
-                  onChange={(event) => props.onSubjectStyleProfile(event.target.value)}
-                />
-                <small>The new glyph copies this treatment—not the reference subject’s identity.</small>
-              </label>
-              {props.containerMode === 'open-frame' && (
+              <details className="reference-material-details">
+                <summary>Fine-tune detected materials</summary>
                 <label className="field">
-                  <span className="field-label">Frame treatment</span>
+                  <span className="field-label">Transferable style</span>
                   <textarea
-                    value={props.frameStyleProfile}
-                    placeholder="clear iridescent ribbons and bubbles with transparent gaps…"
+                    value={props.styleProfile}
+                    placeholder="transparent iridescent gel, cool pastel reflections, soft studio lighting…"
+                    onChange={(event) => props.onStyleProfile(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">Glyph material</span>
+                  <textarea
+                    value={props.subjectStyleProfile}
+                    placeholder="milky opalescent filled volume, bright pearly body, broad highlights…"
                     onChange={(event) => {
-                      props.onFrameStyleProfile(event.target.value);
-                      props.onClearFrameVariants();
+                      props.onSubjectStyleProfile(event.target.value);
+                      updateMaterialRole('glyph', event.target.value, 'Symbol material');
                     }}
                   />
-                  <small>Kept separate so glyphs do not become hollow pieces of the frame.</small>
+                  <small>Copies the subject’s treatment—not its identity.</small>
                 </label>
-              )}
+                {props.containerMode === 'open-frame' && (
+                  <label className="field">
+                    <span className="field-label">Frame material</span>
+                    <textarea
+                      value={props.frameStyleProfile}
+                      placeholder="clear iridescent ribbons and bubbles with transparent gaps…"
+                      onChange={(event) => {
+                        props.onFrameStyleProfile(event.target.value);
+                        updateMaterialRole('frame', event.target.value, 'Decorative frame');
+                        props.onClearFrameVariants();
+                      }}
+                    />
+                    <small>Kept separate so glyphs do not become hollow pieces of the frame.</small>
+                  </label>
+                )}
+              </details>
               <label className="field">
                 <span className="field-label">Set theme — optional</span>
                 <input
@@ -945,6 +1006,7 @@ export default function SimpleStudio(props: Props) {
                 props.onStyleProfile('');
                 props.onSubjectStyleProfile('');
                 props.onFrameStyleProfile('');
+                props.onMaterialPalette(null);
                 props.onTheme('');
                 props.onThemeSuggestions([]);
                 props.onFrameReady(false);
@@ -1010,6 +1072,7 @@ export default function SimpleStudio(props: Props) {
               referenceHasSeparateFrame: props.containerMode === 'open-frame',
               styleFidelity: props.styleFidelity,
               detailVariation: props.detailVariation,
+              materialPalette: props.materialPalette,
               theme: props.theme,
               familyPrompt: props.familyPrompt,
               negativePrompt: props.negativePrompt,

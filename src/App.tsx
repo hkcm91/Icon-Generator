@@ -330,6 +330,7 @@ export default function App() {
           styleProfile={project.styleProfile}
           subjectStyleProfile={project.subjectStyleProfile}
           frameStyleProfile={project.frameStyleProfile}
+          materialPalette={project.materialPalette}
           styleFidelity={project.styleFidelity}
           detailVariation={project.detailVariation}
           theme={project.theme}
@@ -345,6 +346,7 @@ export default function App() {
           onStyleProfile={(value) => setField('styleProfile', value)}
           onSubjectStyleProfile={(value) => setField('subjectStyleProfile', value)}
           onFrameStyleProfile={(value) => setField('frameStyleProfile', value)}
+          onMaterialPalette={(value) => setField('materialPalette', value)}
           onStyleFidelity={(value) => setField('styleFidelity', value)}
           onDetailVariation={(value) => setField('detailVariation', value)}
           onTheme={(value) => setField('theme', value)}

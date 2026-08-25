@@ -691,6 +691,59 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   gap: 3px;
 }
 
+.material-palette {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.material-palette > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  color: var(--text);
+}
+
+.material-palette > summary > span:first-child,
+.material-recipe > span {
+  display: grid;
+  gap: 2px;
+}
+
+.material-palette small,
+.material-recipe small { color: var(--muted); }
+
+.material-swatches { display: flex; gap: 5px; flex: 0 0 auto; }
+.material-swatches i {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+
+.material-recipes { display: grid; gap: 8px; margin-top: 12px; }
+.material-recipe {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.material-recipe > strong { color: var(--accent); }
+
+.reference-material-details {
+  margin: 12px 0;
+  padding: 0 10px;
+  border-left: 2px solid var(--line);
+}
+.reference-material-details > summary { margin: 0 0 10px; }
+
 .reference-separation small,
 .theme-card small {
   color: var(--muted);
@@ -727,6 +780,8 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
     align-items: stretch;
     flex-direction: column;
   }
+  .material-palette > summary { align-items: flex-start; }
+  .material-swatches i { width: 18px; height: 18px; }
   .theme-card {
     align-items: stretch;
     flex-direction: column;

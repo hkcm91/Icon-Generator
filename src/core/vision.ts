@@ -12,6 +12,7 @@
  */
 
 import { describeImage } from './replicate';
+import type { MaterialRecipe, MaterialRole } from './materialPalette';
 
 export interface ThemeSuggestion {
   name: string;
@@ -28,6 +29,8 @@ export interface ReferenceAnalysis {
   subjectStyle: string;
   /** Material/opacity/geometry treatment of surrounding frame decoration only. */
   frameStyle: string;
+  /** Reusable material roles inferred once before family generation. */
+  materials: MaterialRecipe[];
   /** Plausible set directions the user may opt into. */
   themes: ThemeSuggestion[];
   /** Visual construction suggested by the reference, separate from its theme. */
@@ -37,15 +40,15 @@ export interface ReferenceAnalysis {
 export const DEFAULT_VISION_MODEL = 'yorickvp/llava-13b';
 
 /** Field name each family expects for its image input. */
-function visionInput(model: string, prompt: string, image: string): Record<string, unknown> {
+function visionInput(model: string, prompt: string, image: string, maxTokens = 700): Record<string, unknown> {
   if (model.includes('llava') || model.includes('bakllava')) {
-    return { image, prompt, max_tokens: 64, temperature: 0.1 };
+    return { image, prompt, max_tokens: maxTokens, temperature: 0.1 };
   }
   if (model.includes('qwen') || model.includes('internvl') || model.includes('moondream')) {
-    return { image, prompt, max_new_tokens: 64 };
+    return { image, prompt, max_new_tokens: maxTokens };
   }
   if (model.includes('gpt') || model.includes('claude') || model.includes('gemini')) {
-    return { image_input: [image], prompt, max_tokens: 64 };
+    return { image_input: [image], prompt, max_tokens: maxTokens };
   }
   return { image, prompt };
 }
@@ -61,12 +64,13 @@ const SYMBOL_PROMPT = [
 const REFERENCE_PROMPT = [
   'Analyze this image as a style reference for a cohesive icon family.',
   'Return only valid JSON with this exact shape:',
-  '{"subject":"short literal noun phrase","style":"shared visual language","subjectStyle":"central subject treatment","frameStyle":"surrounding frame treatment","construction":"filled-container|open-frame-with-subject|isolated-subject|unknown","themes":[{"name":"theme name","rationale":"short reason","subjects":["subject 1","subject 2"]}]}',
+  '{"subject":"short literal noun phrase","style":"shared visual language","subjectStyle":"central subject treatment","frameStyle":"surrounding frame treatment","materials":[{"role":"base|glyph|frame|accent","name":"short material name","description":"texture and optical recipe"}],"construction":"filled-container|open-frame-with-subject|isolated-subject|unknown","themes":[{"name":"theme name","rationale":"short reason","subjects":["subject 1","subject 2"]}]}',
   'The subject is the literal depicted object, such as "ghost".',
   'The style must describe only transferable appearance: transparency, material, palette, iridescence, lighting, dimensionality, edge treatment, texture, camera and rendering technique.',
   'Do not repeat the depicted subject or its anatomy in the style field.',
   'subjectStyle must describe how the central depicted object itself is rendered, independently of what that object is. Be explicit about whether it is solid or hollow, filled or outline-only, its opacity, brightness, material, volume, edge thickness, highlights and contrast.',
   'frameStyle must separately describe the surrounding border, swirls, bubbles, ribbons or container decoration. Never collapse subjectStyle and frameStyle into the same treatment when they differ.',
+  'Dissect the image into no more than four reusable materials. Use base for a filled container surface, glyph for the central subject, frame for border/ribbon decoration, and accent only for a genuinely separate highlight or particle material. Describe texture, translucency, opacity, gloss, thickness, refraction, iridescence, highlight shape and color behavior. Omit roles that are not visibly present.',
   'Use open-frame-with-subject when a finished example has a recognizable outer container envelope made from rims, swirls, bubbles or decoration while substantial interior areas remain truly transparent.',
   'Suggest 2 to 4 distinct plausible icon-set themes. Include an obvious semantic theme when appropriate, but also broader aesthetic or era-based themes such as Y2K or Frutiger Aero when visually supported.',
   'For every theme, suggest 6 to 10 varied objects that belong in that set. Do not make every suggestion a variation of the reference subject.',
@@ -100,7 +104,7 @@ export async function nameSymbol(
   imageDataUrl: string,
   model: string = DEFAULT_VISION_MODEL,
 ): Promise<string> {
-  const text = await describeImage(model, visionInput(model, SYMBOL_PROMPT, imageDataUrl));
+  const text = await describeImage(model, visionInput(model, SYMBOL_PROMPT, imageDataUrl, 64));
   return cleanSymbolAnswer(text);
 }
 
@@ -110,7 +114,7 @@ const clean = (value: unknown, limit: number): string =>
 /** Parse vision output defensively: caption models sometimes wrap otherwise valid JSON. */
 export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
   const match = text.match(/\{[\s\S]*\}/);
-  if (!match) return { subject: cleanSymbolAnswer(text), style: '', subjectStyle: '', frameStyle: '', themes: [], construction: 'unknown' };
+  if (!match) return { subject: cleanSymbolAnswer(text), style: '', subjectStyle: '', frameStyle: '', materials: [], themes: [], construction: 'unknown' };
 
   try {
     const raw = JSON.parse(match[0]) as Record<string, unknown>;
@@ -126,11 +130,22 @@ export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
           };
         }).filter((theme) => theme.name)
       : [];
+    const allowedRoles = new Set<MaterialRole>(['base', 'glyph', 'frame', 'accent']);
+    const materials = Array.isArray(raw.materials)
+      ? raw.materials.slice(0, 4).flatMap((entry) => {
+          const item = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+          const role = clean(item.role, 20) as MaterialRole;
+          const description = clean(item.description, 700);
+          if (!allowedRoles.has(role) || !description) return [];
+          return [{ role, name: clean(item.name, 80) || `${role} material`, description }];
+        })
+      : [];
     return {
       subject: clean(raw.subject, 100),
       style: clean(raw.style, 700),
       subjectStyle: clean(raw.subjectStyle, 700),
       frameStyle: clean(raw.frameStyle, 700),
+      materials,
       themes,
       construction:
         raw.construction === 'filled-container' ||
@@ -140,7 +155,7 @@ export function parseReferenceAnalysis(text: string): ReferenceAnalysis {
           : 'unknown',
     };
   } catch {
-    return { subject: '', style: '', subjectStyle: '', frameStyle: '', themes: [], construction: 'unknown' };
+    return { subject: '', style: '', subjectStyle: '', frameStyle: '', materials: [], themes: [], construction: 'unknown' };
   }
 }
 
