@@ -3,6 +3,7 @@ import { buildConditioning, edgeSvg, maskSvg, shapeReferenceSvg } from '../src/c
 import { containerPath } from '../src/core/geometry';
 import { completeIconPrompt, glyphPrompt, modelConditioning, modelInput } from '../src/core/replicate';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../src/core/spec';
+import { recipePrompt } from '../src/state/useGeneration';
 
 const spec = (overrides: Partial<ContainerSpec> = {}) =>
   normalizeSpec({ ...DEFAULT_SPEC, ...overrides });
@@ -131,6 +132,13 @@ describe('complete icon prompt', () => {
     expect(prompt).toContain('fill the square canvas edge to edge');
     expect(prompt).toContain('Zero extra outer padding');
     expect(prompt).toContain('no black keyline');
+    expect(prompt).toContain('Never trace or reuse their coordinates');
     expect(prompt).toContain('No transparency');
+  });
+
+  it('gives each family revision a non-visible composition variation', () => {
+    const prompt = recipePrompt('base', { variationKey: 'abc123' } as never);
+    expect(prompt).toContain('Internal composition variation abc123');
+    expect(prompt).toContain('Do not display or spell this key');
   });
 });

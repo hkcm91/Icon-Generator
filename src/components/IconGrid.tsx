@@ -9,6 +9,7 @@ import { exactGlyph, fileDataUrl, imageSourceDataUrl, sourceReference } from '..
 import { makeItem } from '../core/library';
 import { estimateGlyphBatch, needsPaidGeneration } from '../core/cost';
 import { cancelActiveGenerations } from '../core/replicate';
+import { hashString } from '../core/hash';
 
 interface Props {
   spec: ContainerSpec;
@@ -175,6 +176,9 @@ export default function IconGrid(props: Props) {
                 {
                   ...props.options,
                   glyphSubject: subject,
+                  // A stable key per revision keeps network retries/cache hits
+                  // safe while making every icon and Redo use a new layout.
+                  variationKey: hashString(`${item.id}:v${item.revision + 1}`),
                   glyphReference: item.sourceUrl ? await sourceReference(item.sourceUrl) : null,
                   references: [...anchorReferences, ...(props.options.references ?? [])],
                 },

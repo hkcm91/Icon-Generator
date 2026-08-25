@@ -42,10 +42,14 @@ export interface GenerationOptions {
   familyPrompt?: string;
   negativePrompt?: string;
   quality?: 'low' | 'medium' | 'high';
+  /** Stable per icon revision: varies composition without breaking retry deduplication. */
+  variationKey?: string;
 }
 
-function recipePrompt(prompt: string, options: GenerationOptions): string {
-  return [prompt, options.familyPrompt?.trim(), options.negativePrompt?.trim()
+export function recipePrompt(prompt: string, options: GenerationOptions): string {
+  return [prompt, options.familyPrompt?.trim(), options.variationKey
+    ? `Internal composition variation ${options.variationKey}: choose a distinct arrangement of decorative microdetails for this icon. Do not display or spell this key.`
+    : '', options.negativePrompt?.trim()
     ? `Avoid: ${options.negativePrompt.trim()}` : ''].filter(Boolean).join('\n');
 }
 
