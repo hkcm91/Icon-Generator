@@ -8,7 +8,7 @@ import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '.
 import { clearOpenFrameCenter, hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
-import { frameVariantTarget, makeItem, repairedTransparentOutputMode, resolveIconOutputMode, stableFrameIndex, type ContainerMode, type IconItem } from '../core/library';
+import { containerGenerationUsesAlpha, frameVariantTarget, makeItem, repairedTransparentOutputMode, resolveIconOutputMode, stableFrameIndex, type ContainerMode, type IconItem } from '../core/library';
 import {
   PLATFORM_TARGETS,
   blobBytes,
@@ -22,7 +22,7 @@ import {
   renderTransparentAtSize,
   svgMask,
 } from '../core/export';
-import { modelOutputCost, needsPaidGeneration } from '../core/cost';
+import { modelOutputCost } from '../core/cost';
 import { mergeMaterialPalette, type MaterialPalette, type MaterialRole } from '../core/materialPalette';
 import { inspectOpenFrame } from '../core/frameValidation';
 
@@ -85,7 +85,6 @@ interface Props {
   onClearSelectedGlyphs: (ids: Iterable<string>) => void;
   lockedContainer: boolean;
   onLockedContainer: (value: boolean) => void;
-  glyphTransparency: boolean;
   onGlyphTransparency: (value: boolean) => void;
   containerMode: ContainerMode;
   onContainerMode: (value: ContainerMode) => void;
@@ -388,7 +387,9 @@ export default function SimpleStudio(props: Props) {
       setStatus({ kind: 'error', message: 'Extract or approve a subject-free transparent frame before generating icons.' });
       return;
     }
-    const layeredOutput = props.containerMode !== 'filled' || props.glyphTransparency;
+    // Construction is authoritative. A stale legacy transparency preference
+    // must never turn a selected Filled tile into a glyph-only request.
+    const layeredOutput = containerGenerationUsesAlpha(props.containerMode);
     const options: GenerationOptions = {
         spec: props.spec,
         model: props.model,
@@ -639,7 +640,7 @@ export default function SimpleStudio(props: Props) {
         const stem = safe(item.name);
         const familyItem = ready.length ? item as IconItem : null;
         const outputMode = familyItem
-          ? resolveIconOutputMode(familyItem, props.glyphTransparency, props.containerMode)
+          ? resolveIconOutputMode(familyItem, containerGenerationUsesAlpha(props.containerMode), props.containerMode)
           : props.containerMode === 'open-frame'
             ? 'framed'
             : props.containerMode === 'isolated'
@@ -847,7 +848,9 @@ export default function SimpleStudio(props: Props) {
               <label className={props.containerMode === mode ? 'construction-choice construction-choice-on' : 'construction-choice'} key={mode}>
                 <input type="radio" name="construction" checked={props.containerMode === mode} onChange={() => {
                   props.onContainerMode(mode);
-                  if (mode !== 'filled') props.onGlyphTransparency(true);
+                  // Keep the legacy saved preference aligned for advanced view
+                  // compatibility, but let this construction choice be final.
+                  props.onGlyphTransparency(mode !== 'filled');
                   if (mode === 'open-frame') props.onFrameReady(false);
                 }} />
                 <span><b>{label}</b><small>{description}</small></span>
@@ -1033,32 +1036,13 @@ export default function SimpleStudio(props: Props) {
               <option value="google/nano-banana-pro">Nano Banana Pro — ~$0.150</option>
             </select>
           </label>
-          <label className="toggle glyph-alpha-toggle">
-            <input type="checkbox" checked={props.glyphTransparency}
-              disabled={props.containerMode !== 'filled' || props.model !== 'openai/gpt-image-2'}
-              onChange={(event) => {
-                const legacyMode = props.glyphTransparency ? 'transparent' : undefined;
-                props.onItems(props.items.map((item) => {
-                  if (item.outputMode || !props.glyphs.has(item.id)) return item;
-                  return {
-                    ...item,
-                    outputMode: legacyMode ?? (needsPaidGeneration(item) ? 'complete' : 'composed'),
-                  };
-                }));
-                props.onGlyphTransparency(event.target.checked);
-              }} />
-            <span>
-              <b>Transparent glyph output</b>
-              <small>{props.glyphTransparency
-                ? 'On for empty cards and future generations. Finished icons keep their original appearance.'
-                : 'Off for empty cards and future generations. Finished icons keep their original appearance.'}</small>
-            </span>
-          </label>
           {cost !== null && <p className={cost > 0.05 ? 'status status-error' : 'status status-ok'}>
             Estimated Replicate charge: about ${cost.toFixed(3)} per generated output.
-            {' '}{props.materialLayer
-              ? 'Your uploaded master is reused, so only the requested symbol is generated.'
-              : 'A new material plus an AI glyph uses two outputs; exact library artwork uses none.'}
+            {' '}{props.containerMode === 'filled'
+              ? 'Each result is generated as one complete tile containing both its container and symbol.'
+              : props.materialLayer
+                ? 'Your prepared frame is reused, so only the requested subject is generated.'
+                : 'A new material plus an AI subject uses two outputs; exact library artwork uses none.'}
           </p>}
           {cost !== null && cost > 0.05 && (
             <label className="toggle premium-lock">
@@ -1141,7 +1125,7 @@ export default function SimpleStudio(props: Props) {
           <div className="row">
             <button type="button" className="primary" onClick={run}
               disabled={busy || premiumBlocked || (props.containerMode === 'open-frame' && !props.frameReady)}>
-              {busy ? 'Working…' : `${props.materialLayer && props.glyphTransparency ? 'Generate symbol' : 'Generate icon'}${cost !== null ? ` · ~${(cost * (!props.glyphTransparency || !props.glyph.trim() || props.materialLayer ? 1 : 2)).toFixed(3)}` : ''}`}
+              {busy ? 'Working…' : `${props.containerMode === 'isolated' ? 'Generate subject' : 'Generate icon'}${cost !== null ? ` · ~${(cost * (props.containerMode === 'filled' || !props.glyph.trim() || props.materialLayer ? 1 : 2)).toFixed(3)}` : ''}`}
             </button>
             <button
               type="button"
@@ -1207,10 +1191,10 @@ export default function SimpleStudio(props: Props) {
               material: props.material,
               glyphStyle: '',
               conditioning: 'auto',
-              wantAlpha: props.containerMode !== 'filled' || props.glyphTransparency,
+              wantAlpha: containerGenerationUsesAlpha(props.containerMode),
               master: props.containerMode === 'open-frame'
                 ? (props.master?.dataUrl ?? null)
-                : (props.containerMode !== 'filled' || props.glyphTransparency) && props.lockedContainer
+                : containerGenerationUsesAlpha(props.containerMode) && props.lockedContainer
                   ? null
                   : (props.master?.dataUrl ?? null),
               references: props.references.map((reference) => reference.dataUrl),

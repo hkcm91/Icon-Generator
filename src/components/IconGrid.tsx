@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
+  containerGenerationUsesAlpha,
   modelGlyphReferenceSource,
   parseLibrary,
   resolveIconOutputMode,
@@ -96,6 +97,12 @@ export default function IconGrid(props: Props) {
   const selectedItems = props.items.filter((item) => item.selected);
   const nextEstimate = estimateGlyphBatch(selectedItems, props.options.model, props.options.quality);
   const budgetBlocked = nextEstimate.cost !== null && nextEstimate.cost > props.maxBatchCost;
+  const constructionPlural = props.containerMode === 'filled'
+    ? 'filled tiles'
+    : props.containerMode === 'open-frame' ? 'open-frame icons' : 'isolated subjects';
+  const constructionAction = props.containerMode === 'filled'
+    ? 'tile'
+    : props.containerMode === 'open-frame' ? 'open frame' : 'subject';
   const composeFor = (item: IconItem): ComposeOptions => ({
     ...props.compose,
     glyphScale: props.compose.glyphScale * (item.opticalScale ?? 1),
@@ -152,6 +159,11 @@ export default function IconGrid(props: Props) {
 
   const runBatch = async (targets: IconItem[]) => {
     if (!targets.length || running) return;
+    // Freeze the selected family output for this entire click. React props can
+    // change while a long batch is running; every queued card must still use
+    // the mode that was visible when Make/Redo was pressed.
+    const requestedContainerMode = props.containerMode;
+    const requestedWantAlpha = containerGenerationUsesAlpha(requestedContainerMode);
     const hasPaidGeneration = targets.some(needsPaidGeneration);
     if (hasPaidGeneration && props.generationBlocked) {
       setMessage(props.generationBlocked);
@@ -211,6 +223,7 @@ export default function IconGrid(props: Props) {
             : await props.generate(
                 {
                   ...props.options,
+                  wantAlpha: requestedWantAlpha,
                   glyphSubject: subject,
                   themeTreatment: item.themeTreatment,
                   // A stable key per revision keeps network retries/cache hits
@@ -228,13 +241,11 @@ export default function IconGrid(props: Props) {
             layer = maskGeneratedGlyph(layer, exactMask, props.spec.size);
           }
           const nextRevision = item.revision + 1;
-          const outputMode = props.containerMode === 'open-frame'
+          const outputMode = requestedContainerMode === 'open-frame'
             ? 'framed'
-            : props.containerMode === 'isolated'
+            : requestedContainerMode === 'isolated'
               ? 'transparent'
-              : props.options.wantAlpha
-                ? 'composed'
-                : needsPaidGeneration(item) ? 'complete' : 'composed';
+              : needsPaidGeneration(item) ? 'complete' : 'composed';
           props.onItemGlyph(item.id, layer, nextRevision);
           // Deselect on success, so the next "Generate selected" targets only
           // what still needs doing.
@@ -383,8 +394,8 @@ export default function IconGrid(props: Props) {
           ))}
           onClick={() => runBatch(props.items.filter((item) => item.selected))}
         >
-          {running ? 'Generating…'
-            : `Generate ${selectedCount || ''} selected${nextEstimate.cost !== null ? ` · ~$${nextEstimate.cost.toFixed(2)}` : ''}`}
+          {running ? `Generating ${constructionPlural}…`
+            : `Generate ${selectedCount || ''} selected as ${constructionPlural}${nextEstimate.cost !== null ? ` · ~$${nextEstimate.cost.toFixed(2)}` : ''}`}
         </button>
         {running && (
           <button type="button" className="ghost" onClick={() => {
@@ -429,7 +440,7 @@ export default function IconGrid(props: Props) {
       ) : (
         <div className="card-grid">
           {props.items.map((item) => {
-            const outputMode = resolveIconOutputMode(item, props.options.wantAlpha, props.containerMode);
+            const outputMode = resolveIconOutputMode(item, containerGenerationUsesAlpha(props.containerMode), props.containerMode);
             return (
             <article
               key={item.id}
@@ -560,6 +571,13 @@ export default function IconGrid(props: Props) {
                     : item.status}
                 </span>
                 {item.status === 'ready' && (
+                  <span className="badge" title="The output mode saved with this revision">
+                    {outputMode === 'transparent'
+                      ? 'isolated subject'
+                      : outputMode === 'framed' ? 'open frame' : 'filled tile'}
+                  </span>
+                )}
+                {item.status === 'ready' && (
                   <button
                     type="button"
                     className="ghost tiny"
@@ -591,7 +609,7 @@ export default function IconGrid(props: Props) {
                   disabled={running || Boolean(props.generationBlocked && needsPaidGeneration(item))}
                   onClick={() => runBatch([item])}
                 >
-                  {item.status === 'ready' ? 'Redo' : 'Make'}
+                  {item.status === 'ready' ? `Redo ${constructionAction}` : `Make ${constructionAction}`}
                 </button>
                 <button
                   type="button"

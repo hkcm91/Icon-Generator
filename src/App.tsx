@@ -361,7 +361,6 @@ export default function App() {
           onClearSelectedGlyphs={store.clearItemGlyphs}
           lockedContainer={project.lockedContainer}
           onLockedContainer={(value) => setField('lockedContainer', value)}
-          glyphTransparency={project.glyphTransparency}
           onGlyphTransparency={(value) => setField('glyphTransparency', value)}
           containerMode={project.containerMode}
           onContainerMode={(value) => setField('containerMode', value)}
