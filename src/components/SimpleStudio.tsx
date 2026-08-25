@@ -136,7 +136,8 @@ export default function SimpleStudio(props: Props) {
   const lockedInput = useRef<HTMLInputElement>(null);
   const referenceInput = useRef<HTMLInputElement>(null);
   const active = matchPreset(props.spec);
-  const cost = modelOutputCost(props.model, props.quality);
+  const scaleSaverQuality = 'low' as const;
+  const cost = modelOutputCost(props.model, scaleSaverQuality);
   const premiumBlocked = cost !== null && cost > 0.05 && !props.premiumAllowed;
   const premiumMessage = premiumBlocked
     ? `Premium generation is locked: this setting is about $${cost.toFixed(3)} per output.`
@@ -230,7 +231,7 @@ export default function SimpleStudio(props: Props) {
         references: props.references.map((reference) => reference.dataUrl),
         familyPrompt: props.familyPrompt,
         negativePrompt: props.negativePrompt,
-        quality: props.quality,
+        quality: scaleSaverQuality,
       };
     if (props.lockedContainer && props.materialLayer) {
       if (!props.glyph.trim()) {
@@ -475,14 +476,11 @@ export default function SimpleStudio(props: Props) {
             <input value={props.model} placeholder="owner/model" onChange={(event) => props.onModel(event.target.value)} />
           </label>
           {props.model === 'openai/gpt-image-2' && (
-            <label className="field">
+            <div className="field">
               <span className="field-label">Quality and cost</span>
-              <select value={props.quality} onChange={(event) => props.onQuality(event.target.value as Props['quality'])}>
-                <option value="low">Low — about $0.012/image</option>
-                <option value="medium">Medium — about $0.047/image</option>
-                <option value="high">High — about $0.128/image</option>
-              </select>
-            </label>
+              <div className="scale-saver-quality">Scale Saver Low — about $0.012/output</div>
+              <p className="hint">Final exports keep this tier; size and finishing are handled locally.</p>
+            </div>
           )}
           {cost !== null && <p className={cost > 0.05 ? 'status status-error' : 'status status-ok'}>
             Estimated Replicate charge: about ${cost.toFixed(3)} per generated output.
@@ -615,7 +613,7 @@ export default function SimpleStudio(props: Props) {
               references: props.references.map((reference) => reference.dataUrl),
               familyPrompt: props.familyPrompt,
               negativePrompt: props.negativePrompt,
-              quality: props.quality,
+              quality: scaleSaverQuality,
             }}
             generationBlocked={premiumMessage}
             calibrationRequired={props.calibrationRequired}
