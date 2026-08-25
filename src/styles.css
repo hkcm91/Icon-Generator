@@ -491,7 +491,7 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   animation: tut-rise 260ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
 }
 
-.tut-rail { display: flex; gap: 4px; padding: 14px 18px 0; }
+.tut-rail { display: flex; gap: 4px; padding: 10px 18px 0; }
 .tut-rail-seg {
   flex: 1 1 0;
   background: none;
@@ -507,16 +507,54 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   transform-origin: left;
 }
 .tut-rail-done { background: rgba(56, 189, 248, 0.45); }
-.tut-rail-fill[data-live] {
+/* The active segment fills through a pseudo-element rather than scaling
+ * itself: scaling the segment would take its own unfilled track to zero
+ * width with it, so the scene you are on would be the one with no bar. */
+.tut-rail-fill[data-live] { position: relative; }
+.tut-rail-fill[data-live]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
   background: var(--accent);
+  transform-origin: left;
   animation: tut-fill linear both;
+  animation-duration: inherit;
+  animation-play-state: inherit;
+}
+
+.tut-tracks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px 0;
+}
+.tut-chip {
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tut-chip-on { background: var(--accent); color: #06121c; border-color: var(--accent); }
+.tut-blurb {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tut-head {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 18px 0;
+  padding: 4px 18px 0;
 }
 .tut-chapter {
   font-size: 11.5px;
@@ -525,7 +563,7 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   text-transform: uppercase;
   color: var(--accent);
 }
-.tut-runtime { flex: 1; font-size: 11.5px; color: var(--muted); }
+.tut-runtime { font-size: 11.5px; color: var(--muted); }
 .tut-close {
   background: none;
   color: var(--muted);
@@ -906,3 +944,216 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 }
 
 button.ghost-on { border-color: var(--accent); color: var(--accent); }
+
+/* --- Walkthrough: making a family ---------------------------------------- */
+
+/* Scene — the glyph picker. */
+.tut-picker {
+  width: min(560px, 100%);
+  padding: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  animation: tut-pop 380ms ease both;
+}
+.tut-picker-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.tut-picker .tut-chip { font-weight: 500; padding: 5px 11px; font-size: 11.5px; }
+.tut-search {
+  display: block;
+  padding: 8px 11px;
+  margin-bottom: 9px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tut-type-short { animation: tut-type 700ms steps(6) 300ms both, tut-caret 700ms step-end 3 both; }
+
+.tut-picker-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.tut-picker-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 11px;
+  font-size: 12.5px;
+  border-bottom: 1px solid rgba(38, 49, 73, 0.5);
+  animation: tut-slide 320ms ease both;
+}
+.tut-picker-row:last-child { border-bottom: 0; }
+.tut-picker .tut-picker-name { color: var(--text); }
+.tut-picker .tut-picker-concept {
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The checkbox ticking itself: the tick is a rotated corner drawn on ::after,
+ * so there is no glyph to load and it scales with the box. */
+.tut-box {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-2);
+  animation: tut-checked 240ms ease both;
+}
+.tut-box::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0.5px;
+  width: 4px;
+  height: 8px;
+  border: solid #06121c;
+  border-width: 0 2px 2px 0;
+  transform: rotate(42deg) scale(0);
+  animation: tut-tick 220ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  animation-delay: inherit;
+}
+.tut-picker-add { display: inline-block; padding: 9px 15px; font-size: 13px; animation: tut-pop 300ms ease 3700ms both; }
+
+/* Scene — redoing one card. */
+.tut-cards-4 { grid-template-columns: repeat(4, 1fr); }
+.tut-card-bad { border-color: var(--bad); animation: tut-mend 600ms ease 2600ms forwards; }
+.tut-card-fail {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  border-radius: 16px;
+  background: rgba(248, 113, 113, 0.14);
+  border: 1px dashed var(--bad);
+  color: var(--bad);
+  font-size: 24px;
+  font-weight: 700;
+  animation: tut-fade-out 400ms ease 2600ms forwards;
+}
+.tut-card-fixed {
+  position: absolute;
+  top: 12px;
+  opacity: 0;
+  animation: tut-pop 460ms cubic-bezier(0.2, 1.3, 0.4, 1) 2800ms both;
+}
+.tut-card-fixed .tut-tile { width: 62px; height: 62px; }
+/* One badge, two readings: the label swaps when the card is remade. */
+.tut-card-badge-swap { position: relative; min-height: 14px; }
+.tut-card-badge-swap::before,
+.tut-card-badge-swap::after {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+}
+.tut-card-badge-swap::before { content: attr(data-before); color: var(--bad); animation: tut-fade-out 300ms ease 2700ms forwards; }
+.tut-card-badge-swap::after { content: attr(data-after); color: var(--ok); opacity: 0; animation: tut-fade-in 300ms ease 2900ms forwards; }
+
+.tut-redo-btn {
+  margin-top: 7px;
+  padding: 4px 10px;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.tut-redo-btn-live {
+  color: var(--text);
+  border-color: var(--accent);
+  animation: tut-glow 1.1s ease-in-out 2 900ms;
+}
+
+/* Scene — transparency. */
+.tut-alpha { align-content: center; gap: 22px; }
+.tut-alpha-row { display: flex; align-items: center; gap: 16px; }
+.tut-alpha-side { margin: 0; display: grid; justify-items: center; gap: 9px; animation: tut-pop 400ms ease both; }
+.tut-alpha-side:nth-child(3) { animation-delay: 700ms; }
+.tut-alpha-side:nth-child(5) { animation-delay: 1400ms; }
+.tut-alpha-side figcaption { font-size: 11px; color: var(--muted); }
+.tut-alpha-plate {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  border-radius: 14px;
+  font-size: 44px;
+  color: #fff;
+  border: 1px solid var(--line);
+}
+/* The block the model actually returned: opaque, and obvious about it. */
+.tut-alpha-opaque { background: #d8dee9; color: #10131b; }
+/* The checkerboard is the universal "this part is nothing". */
+.tut-alpha-clear {
+  background-image:
+    linear-gradient(45deg, #1b2231 25%, transparent 25%, transparent 75%, #1b2231 75%),
+    linear-gradient(45deg, #1b2231 25%, transparent 25%, transparent 75%, #1b2231 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+  background-color: #10141d;
+}
+.tut-alpha-final { width: 96px; height: 96px; }
+.tut-alpha-arrow { color: var(--muted); font-size: 20px; animation: tut-fade-in 300ms ease 600ms both; }
+.tut-alpha-arrow:nth-of-type(2) { animation-delay: 1300ms; }
+
+.tut-toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 13px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 12.5px;
+  animation: tut-slide 380ms ease 1900ms both;
+}
+.tut-toggle-row em { color: var(--muted); font-style: normal; font-size: 11.5px; }
+.tut-check {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+.tut-check::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0.5px;
+  width: 4px;
+  height: 8px;
+  border: solid #06121c;
+  border-width: 0 2px 2px 0;
+  transform: rotate(42deg);
+}
+
+/* Scene — what survives a reload. */
+.tut-keep { align-content: center; gap: 18px; }
+.tut-reload { font-size: 30px; color: var(--accent); animation: tut-spin 900ms ease-in-out 300ms both; }
+.tut-card-back { animation: tut-land 620ms cubic-bezier(0.2, 1.2, 0.4, 1) both; }
+
+@keyframes tut-fade-in { to { opacity: 1; } }
+@keyframes tut-fade-out { to { opacity: 0; } }
+@keyframes tut-checked { from { background: var(--panel-2); } to { background: var(--accent); border-color: var(--accent); } }
+@keyframes tut-tick { from { transform: rotate(42deg) scale(0); } to { transform: rotate(42deg) scale(1); } }
+@keyframes tut-mend { to { border-color: var(--line); } }
+@keyframes tut-spin { from { transform: rotate(-360deg); opacity: 0.2; } to { transform: none; opacity: 1; } }
+
+@media (max-width: 700px) {
+  .tut-tracks { flex-wrap: wrap; }
+  .tut-blurb { order: 3; flex-basis: 100%; white-space: normal; }
+  .tut-alpha-row { flex-wrap: wrap; justify-content: center; }
+  .tut-alpha-plate, .tut-alpha-final { width: 72px; height: 72px; font-size: 34px; }
+  .tut-cards-4 { grid-template-columns: repeat(2, 1fr); }
+  .tut-toggle-row { flex-wrap: wrap; }
+}

@@ -89,7 +89,13 @@ export default function App() {
         </div>
       </header>
 
-      {project.tutorial && <Tutorial onClose={() => setField('tutorial', false)} />}
+      {project.tutorial && (
+        <Tutorial
+          track={project.tutorialTrack}
+          onTrack={(id) => setField('tutorialTrack', id)}
+          onClose={() => setField('tutorial', false)}
+        />
+      )}
 
       {!advanced && (
         <SimpleStudio

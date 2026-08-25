@@ -15,6 +15,8 @@ export interface Project {
    * whatever the visitor last chose after that.
    */
   tutorial: boolean;
+  /** Which walkthrough track the Tutorial button opens on. */
+  tutorialTrack: string;
   spec: ContainerSpec;
   compose: ComposeOptions;
   model: string;
@@ -34,6 +36,7 @@ export interface Project {
 const DEFAULT_PROJECT: Project = {
   advanced: false,
   tutorial: true,
+  tutorialTrack: 'first-icon',
   spec: DEFAULT_SPEC,
   compose: DEFAULT_COMPOSE,
   model: 'google/nano-banana-pro',

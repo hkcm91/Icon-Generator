@@ -6,10 +6,18 @@
  * not reviewable. The component supplies a picture per scene; this file
  * supplies every word and how long it stays up.
  *
- * The editorial rule for what belongs here: **the shortest path from a master
- * icon you already have to a downloaded set.** Sliders, conditioning modes,
- * the determinism check and the measurement tools are all deliberately absent
- * — they live behind "All controls" and nobody needs them to finish the job.
+ * Two tracks, because there are two different questions. **First icon** is
+ * for someone who has never seen the app: the shortest path from a master
+ * they already have to a downloaded set, and nothing else. **Making a
+ * family** is for someone already using it: the handful of controls that
+ * come up once you are working at volume — the glyph library, batch size,
+ * redoing a bad card, and what to do when a symbol comes back on a solid
+ * block.
+ *
+ * The editorial rule for both: only what someone actually needs. Sliders,
+ * conditioning modes, the determinism check and the measurement tools are
+ * deliberately absent — they live behind "All controls" and nobody needs
+ * them to finish the job.
  */
 
 export interface TutorialScene {
@@ -26,7 +34,16 @@ export interface TutorialScene {
   seconds: number;
 }
 
-export const TUTORIAL: TutorialScene[] = [
+export interface TutorialTrack {
+  id: string;
+  /** Switcher label. */
+  label: string;
+  /** One line on who this track is for. */
+  blurb: string;
+  scenes: TutorialScene[];
+}
+
+const FIRST_ICON: TutorialScene[] = [
   {
     id: 'start',
     chapter: 'Start',
@@ -35,7 +52,7 @@ export const TUTORIAL: TutorialScene[] = [
       'The short path is five steps, and the first one does most of the work. Everything else in this app is optional.',
     points: [
       'Give it the master icon you already approved',
-      'Pick the symbols the rest of the family needs',
+      'Say what it should be made of',
       'Download every platform size at once',
     ],
     seconds: 6,
@@ -89,21 +106,8 @@ export const TUTORIAL: TutorialScene[] = [
     seconds: 5,
   },
   {
-    id: 'family',
-    chapter: '4 · Family',
-    title: 'Then make the whole family.',
-    caption:
-      'Pick your symbols, say how many should run at once, and let the batch go.',
-    points: [
-      'Browse glyphs — 7,400 built in, or import your own list',
-      'At once: 1 is gentle on your rate limit, 6 is fastest, 3 is a good default',
-      'Any card that came out wrong has its own Redo',
-    ],
-    seconds: 8,
-  },
-  {
     id: 'download',
-    chapter: '5 · Download',
+    chapter: '4 · Download',
     title: 'Download every size in one go.',
     caption:
       'iOS, Android, macOS, Windows and web, plus a .ico and the shape spec, as a single zip.',
@@ -113,15 +117,99 @@ export const TUTORIAL: TutorialScene[] = [
   {
     id: 'done',
     chapter: 'Done',
-    title: 'That is the whole job.',
+    title: 'That is a full set out.',
     caption:
-      'All controls holds the geometry sliders, the determinism check and the measurement tools. You never need them to get a set out.',
-    points: ['Reopen this walkthrough any time — Tutorial, top right'],
+      'All controls holds the geometry sliders, the determinism check and the measurement tools. You never need them for this.',
+    points: [
+      'Making a family — the other track — covers glyphs, batching and transparency',
+      'Reopen either any time — Tutorial, top right',
+    ],
     seconds: 6,
   },
 ];
 
-/** Total runtime if nobody touches anything. */
-export function tutorialSeconds(scenes: TutorialScene[] = TUTORIAL): number {
+const FAMILY: TutorialScene[] = [
+  {
+    id: 'library',
+    chapter: '1 · Glyphs',
+    title: 'Add the symbols the family needs.',
+    caption:
+      'Browse glyphs opens 7,400 built-in names across three sets. Search, tick the ones you want, add them in one go.',
+    points: [
+      'Material Symbols, brand marks, and the Y2K Dream set',
+      'Search matches the name, the category and the keywords',
+      'Add all matching takes every hit at once — or import a CSV, JSON or one name per line',
+    ],
+    seconds: 8,
+  },
+  {
+    id: 'batch',
+    chapter: '2 · Batch',
+    title: 'Generate them one at a time — or six.',
+    caption:
+      'Select the cards you want and set At once. It is a bounded pool, so the rest queue rather than all firing together.',
+    points: [
+      '1 is gentle on your rate limit, 6 is fastest, 3 is a good default',
+      'Stop halts the queue and keeps every card that already finished',
+      'Cards deselect as they succeed, so Generate selected always means what is left',
+    ],
+    seconds: 8,
+  },
+  {
+    id: 'redo',
+    chapter: '3 · Fix',
+    title: 'Redo just the ones that came out wrong.',
+    caption:
+      'Every card carries its own button and its own version. A card that fails does not take the batch down with it.',
+    points: [
+      'Redo re-rolls one card and bumps it to v2',
+      'A failed card keeps its error and stays selected for the next run',
+    ],
+    seconds: 6,
+  },
+  {
+    id: 'alpha',
+    chapter: '4 · Transparency',
+    title: 'When a symbol comes back on a solid block.',
+    caption:
+      'Image models ignore "transparent background" constantly, so the app keys the flat background out itself — corners sampled, dominant colour removed.',
+    points: [
+      'That happens automatically; usually you never see it',
+      'All controls → Request a real alpha channel asks the model directly instead',
+      'Only some models offer it — the checkbox greys out on the ones that do not',
+    ],
+    seconds: 8,
+  },
+  {
+    id: 'keep',
+    chapter: '5 · Keep',
+    title: 'Your renders survive a refresh.',
+    caption:
+      'Finished cards are stored as image blobs, not in the project file, so a family of several hundred comes back intact.',
+    points: [
+      'Close the tab and pick the same family up later',
+      'A card whose image did not survive admits it and asks to be remade',
+    ],
+    seconds: 6,
+  },
+];
+
+export const TRACKS: TutorialTrack[] = [
+  {
+    id: 'first-icon',
+    label: 'Your first icon',
+    blurb: 'The short path: a master you already have, out as a full set.',
+    scenes: FIRST_ICON,
+  },
+  {
+    id: 'family',
+    label: 'Making a family',
+    blurb: 'Working at volume: glyphs, batch size, redoing, transparency.',
+    scenes: FAMILY,
+  },
+];
+
+/** Total runtime of a track if nobody touches anything. */
+export function tutorialSeconds(scenes: TutorialScene[]): number {
   return scenes.reduce((total, scene) => total + scene.seconds, 0);
 }

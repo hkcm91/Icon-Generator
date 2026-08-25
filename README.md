@@ -25,20 +25,32 @@ Where this sits relative to the existing tools, and the gap it takes:
 
 ## The walkthrough
 
-The app opens on a **walkthrough**: about a minute, no sound, covering only the
-short path — the master icon you already have goes in, a whole family comes
-out. Skip it and it stays skipped; **Tutorial** in the header brings it back.
+The app opens on a **walkthrough**, in two tracks — pick either from the
+switcher at the top, or **Tutorial** in the header. Skip it and it stays
+skipped; the track you were last on is remembered.
 
-It plays itself, but it is not a cutscene. Every scene is reachable from the
-chapter rail, `←`/`→` step, space pauses, `Esc` closes, and someone who has
-asked for reduced motion gets the same words with the pictures held still.
+| Track | For | Runtime |
+|---|---|---|
+| **Your first icon** | Never seen the app. The master you already have, out as a full set: upload, the two wording fields, one generation, download. | ~45s |
+| **Making a family** | Already using it. The glyph library, batch size, redoing one bad card, transparency, and what survives a reload. | ~35s |
 
-Deliberately absent: geometry sliders, conditioning modes, the determinism
-check, the measurement tools. They are all real and all documented below, and
-none of them are on the path from one icon to a downloaded set. The script
-lives in [`src/core/tutorial.ts`](src/core/tutorial.ts) as plain data, so what
-it claims is reviewable in a diff — and `test/tutorial.test.ts` fails if the
-shape presets it names stop matching the ones the app offers.
+They play themselves, but neither is a cutscene. Every scene is reachable
+from the chapter rail, `←`/`→` step, space pauses, `Esc` closes, and someone
+who has asked for reduced motion gets the same words with the pictures held
+still.
+
+Deliberately absent from both: geometry sliders, conditioning modes, the
+determinism check, the measurement tools. They are all real and all
+documented below, and none of them are on the path from one icon to a
+downloaded set.
+
+The script lives in [`src/core/tutorial.ts`](src/core/tutorial.ts) as plain
+data, so what it claims is reviewable in a diff. `test/tutorial.test.ts` ties
+those claims to the code they describe: the shape presets it names must be
+the ones the guided view renders, the glyph count must match what the three
+bundled catalogues actually hold, the transparency scene may only call the
+feature model-dependent while the model roster is genuinely mixed, and
+neither track may run 60 seconds or longer.
 
 ## Two views
 

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { containerPath } from '../core/geometry';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../core/spec';
-import { TUTORIAL, tutorialSeconds } from '../core/tutorial';
+import { TRACKS, tutorialSeconds } from '../core/tutorial';
 
 interface Props {
+  /** Which track to open on. */
+  track: string;
+  onTrack: (id: string) => void;
   /** Close the walkthrough and leave it off until it is asked for again. */
   onClose: () => void;
 }
@@ -198,34 +201,6 @@ function SceneOne() {
   );
 }
 
-function SceneFamily() {
-  return (
-    <div className="tut-stage-inner tut-family">
-      <div className="tut-family-bar">
-        <span className="tut-btn tut-btn-primary">Generate 6 selected</span>
-        <span className="tut-atonce">
-          At once
-          <b>3</b>
-        </span>
-      </div>
-      <div className="tut-cards">
-        {GLYPHS.map((glyph, index) => (
-          <div
-            key={glyph}
-            className="tut-card"
-            // Three at a time: the first row lands together, the second waits
-            // for a slot. This is the concurrency setting, drawn.
-            style={{ animationDelay: `${900 + Math.floor(index / 3) * 1500 + (index % 3) * 120}ms` }}
-          >
-            <Tile glyph={glyph} />
-            <span className="tut-card-badge">v1</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function SceneDownload() {
   const targets = ['iOS', 'Android', 'macOS', 'Windows', 'web', '.ico', 'spec.json'];
   return (
@@ -261,36 +236,209 @@ function SceneDone() {
   );
 }
 
+/* --- Making a family ----------------------------------------------------- */
+
+/** The glyph picker: catalogue tabs, a search, rows ticking themselves. */
+function SceneLibrary() {
+  const rows: Array<[string, string]> = [
+    ['rocket', 'a rocket taking off'],
+    ['rocket_launch', 'a launch with exhaust'],
+    ['satellite_alt', 'an orbiting satellite'],
+    ['travel_explore', 'a globe with a magnifier'],
+  ];
+  // Ticks land one after another; the count in the button keeps up with them.
+  const tick = (index: number) => 2000 + index * 420;
+  return (
+    <div className="tut-stage-inner tut-library">
+      <div className="tut-picker">
+        <div className="tut-picker-tabs">
+          <span className="tut-chip tut-chip-on">Material Symbols (3,899)</span>
+          <span className="tut-chip">Brands (3,453)</span>
+          <span className="tut-chip">Y2K Dream (48)</span>
+        </div>
+        <span className="tut-search">
+          <span className="tut-type tut-type-short">rocket</span>
+        </span>
+        <div className="tut-picker-list">
+          {rows.map(([name, concept], index) => (
+            <span className="tut-picker-row" key={name} style={{ animationDelay: `${900 + index * 130}ms` }}>
+              <span className="tut-box" style={{ animationDelay: `${tick(index)}ms` }} />
+              <span className="tut-picker-name">{name}</span>
+              <span className="tut-picker-concept">{concept}</span>
+            </span>
+          ))}
+        </div>
+        <span className="tut-btn tut-btn-primary tut-picker-add">Add 4 checked</span>
+      </div>
+    </div>
+  );
+}
+
+/** The batch: six cards, three at a time, with the At once control beside it. */
+function SceneBatch() {
+  return (
+    <div className="tut-stage-inner tut-family">
+      <div className="tut-family-bar">
+        <span className="tut-btn tut-btn-primary">Generate 6 selected</span>
+        <span className="tut-atonce">
+          At once
+          <b>3</b>
+        </span>
+      </div>
+      <div className="tut-cards">
+        {GLYPHS.map((glyph, index) => (
+          <div
+            key={glyph}
+            className="tut-card"
+            // Three at a time: the first row lands together, the second waits
+            // for a slot. This is the concurrency setting, drawn.
+            style={{ animationDelay: `${900 + Math.floor(index / 3) * 1500 + (index % 3) * 120}ms` }}
+          >
+            <Tile glyph={glyph} />
+            <span className="tut-card-badge">v1</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** One bad card among good ones, re-rolled on its own. */
+function SceneRedo() {
+  return (
+    <div className="tut-stage-inner tut-redo">
+      <div className="tut-cards tut-cards-4">
+        {['✈', '★', '⚙', '☂'].map((glyph, index) => (
+          <div key={glyph} className={index === 2 ? 'tut-card tut-card-bad' : 'tut-card'}>
+            {index === 2 ? (
+              <>
+                {/* The same card twice, cross-faded: failed, then remade. */}
+                <span className="tut-card-fail" aria-hidden="true">
+                  !
+                </span>
+                <span className="tut-card-fixed">
+                  <Tile glyph={glyph} />
+                </span>
+                <span className="tut-card-badge tut-card-badge-swap" data-before="failed" data-after="v2" />
+              </>
+            ) : (
+              <>
+                <Tile glyph={glyph} />
+                <span className="tut-card-badge">v1</span>
+              </>
+            )}
+            <span className={index === 2 ? 'tut-redo-btn tut-redo-btn-live' : 'tut-redo-btn'}>
+              {index === 2 ? 'Redo' : 'Redo'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Opaque block in, keyed glyph out — and the switch that asks the model instead. */
+function SceneAlpha() {
+  return (
+    <div className="tut-stage-inner tut-alpha">
+      <div className="tut-alpha-row">
+        <figure className="tut-alpha-side">
+          <span className="tut-alpha-plate tut-alpha-opaque">✈</span>
+          <figcaption>as returned</figcaption>
+        </figure>
+        <span className="tut-alpha-arrow" aria-hidden="true">
+          →
+        </span>
+        <figure className="tut-alpha-side">
+          <span className="tut-alpha-plate tut-alpha-clear">✈</span>
+          <figcaption>background keyed out</figcaption>
+        </figure>
+        <span className="tut-alpha-arrow" aria-hidden="true">
+          →
+        </span>
+        <figure className="tut-alpha-side">
+          <Tile glyph="✈" className="tut-alpha-final" />
+          <figcaption>composited</figcaption>
+        </figure>
+      </div>
+      <span className="tut-toggle-row">
+        <span className="tut-check" aria-hidden="true" />
+        Request a real alpha channel
+        <em>All controls → Generate</em>
+      </span>
+    </div>
+  );
+}
+
+/** The family coming back after a reload. */
+function SceneKeep() {
+  return (
+    <div className="tut-stage-inner tut-keep">
+      <span className="tut-reload" aria-hidden="true">
+        ⟳
+      </span>
+      <div className="tut-cards">
+        {GLYPHS.map((glyph, index) => (
+          <div key={glyph} className="tut-card tut-card-back" style={{ animationDelay: `${900 + index * 90}ms` }}>
+            <Tile glyph={glyph} />
+            <span className="tut-card-badge">v1</span>
+          </div>
+        ))}
+      </div>
+      <span className="tut-done-note">Same tab tomorrow · same family</span>
+    </div>
+  );
+}
+
 const SCENES: Record<string, () => JSX.Element> = {
   start: SceneStart,
   container: SceneContainer,
   read: SceneRead,
   describe: SceneDescribe,
   one: SceneOne,
-  family: SceneFamily,
   download: SceneDownload,
   done: SceneDone,
+  library: SceneLibrary,
+  batch: SceneBatch,
+  redo: SceneRedo,
+  alpha: SceneAlpha,
+  keep: SceneKeep,
 };
 
 /**
- * The walkthrough: a short silent film of the minimum path, with the controls
- * of a video player.
+ * The walkthrough: two short silent films, with the controls of a video player.
  *
- * It plays itself because the point is to be watched, not operated — but every
- * scene is reachable directly from the chapter rail, and someone who reduces
- * motion gets it paused on scene one with the same words on screen.
+ * They play themselves because the point is to be watched, not operated — but
+ * every scene is reachable directly from the chapter rail, and someone who
+ * reduces motion gets it paused on scene one with the same words on screen.
  */
-export default function Tutorial({ onClose }: Props) {
+export default function Tutorial({ track, onTrack, onClose }: Props) {
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
   const closeButton = useRef<HTMLButtonElement>(null);
 
-  const scene = TUTORIAL[index];
-  const last = index === TUTORIAL.length - 1;
+  const current = TRACKS.find((entry) => entry.id === track) ?? TRACKS[0];
+  const scenes = current.scenes;
+  // A stale index would index past a shorter track for one render; clamping
+  // here rather than in an effect avoids that frame entirely.
+  const position = Math.min(index, scenes.length - 1);
+  const scene = scenes[position];
+  const last = position === scenes.length - 1;
+  const nextTrack = TRACKS[TRACKS.indexOf(current) + 1];
 
-  const go = useCallback((next: number) => {
-    setIndex(Math.max(0, Math.min(TUTORIAL.length - 1, next)));
-  }, []);
+  const go = useCallback(
+    (next: number) => setIndex(Math.max(0, Math.min(scenes.length - 1, next))),
+    [scenes.length],
+  );
+
+  const switchTo = useCallback(
+    (id: string) => {
+      onTrack(id);
+      setIndex(0);
+      setPlaying(true);
+    },
+    [onTrack],
+  );
 
   // Someone who has asked for less motion should not be handed an autoplaying
   // slideshow. Same content, paused, theirs to advance.
@@ -307,9 +455,9 @@ export default function Tutorial({ onClose }: Props) {
       const done = setTimeout(() => setPlaying(false), scene.seconds * 1000);
       return () => clearTimeout(done);
     }
-    const timer = setTimeout(() => setIndex((current) => current + 1), scene.seconds * 1000);
+    const timer = setTimeout(() => setIndex((value) => value + 1), scene.seconds * 1000);
     return () => clearTimeout(timer);
-  }, [playing, index, last, scene.seconds]);
+  }, [playing, position, last, scene.seconds]);
 
   useEffect(() => {
     closeButton.current?.focus();
@@ -318,39 +466,57 @@ export default function Tutorial({ onClose }: Props) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
-      else if (event.key === 'ArrowRight') { setPlaying(false); go(index + 1); }
-      else if (event.key === 'ArrowLeft') { setPlaying(false); go(index - 1); }
-      else if (event.key === ' ') { event.preventDefault(); setPlaying((current) => !current); }
+      else if (event.key === 'ArrowRight') { setPlaying(false); go(position + 1); }
+      else if (event.key === 'ArrowLeft') { setPlaying(false); go(position - 1); }
+      else if (event.key === ' ') { event.preventDefault(); setPlaying((value) => !value); }
       else return;
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [index, go, onClose]);
+  }, [position, go, onClose]);
 
   const Scene = SCENES[scene.id] ?? SceneStart;
-  const total = tutorialSeconds();
+  const total = tutorialSeconds(scenes);
 
   return (
     <div className="tut-backdrop" role="dialog" aria-modal="true" aria-label="How this works">
       <figure className="tut">
+        <div className="tut-tracks">
+          {TRACKS.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              className={entry.id === current.id ? 'tut-chip tut-chip-on' : 'tut-chip'}
+              aria-current={entry.id === current.id}
+              onClick={() => switchTo(entry.id)}
+            >
+              {entry.label}
+            </button>
+          ))}
+          <span className="tut-blurb">{current.blurb}</span>
+          <button ref={closeButton} type="button" className="tut-close" onClick={onClose} aria-label="Close walkthrough">
+            ✕
+          </button>
+        </div>
+
         <div className="tut-rail">
-          {TUTORIAL.map((entry, position) => (
+          {scenes.map((entry, at) => (
             <button
               key={entry.id}
               type="button"
               className="tut-rail-seg"
               aria-label={`${entry.chapter}: ${entry.title}`}
-              aria-current={position === index}
-              onClick={() => { setPlaying(false); go(position); }}
+              aria-current={at === position}
+              onClick={() => { setPlaying(false); go(at); }}
             >
               <span
-                className={position < index ? 'tut-rail-fill tut-rail-done' : 'tut-rail-fill'}
+                className={at < position ? 'tut-rail-fill tut-rail-done' : 'tut-rail-fill'}
                 style={
-                  position === index
+                  at === position
                     ? { animationDuration: `${entry.seconds}s`, animationPlayState: playing ? 'running' : 'paused' }
                     : undefined
                 }
-                data-live={position === index || undefined}
+                data-live={at === position || undefined}
               />
             </button>
           ))}
@@ -359,15 +525,12 @@ export default function Tutorial({ onClose }: Props) {
         <div className="tut-head">
           <span className="tut-chapter">{scene.chapter}</span>
           <span className="tut-runtime">
-            {index + 1} / {TUTORIAL.length} · about {Math.round(total / 5) * 5}s in full
+            {position + 1} / {scenes.length} · about {Math.round(total / 5) * 5}s in full
           </span>
-          <button ref={closeButton} type="button" className="tut-close" onClick={onClose} aria-label="Close walkthrough">
-            ✕
-          </button>
         </div>
 
-        {/* Keyed by scene: remounting is what restarts every CSS animation. */}
-        <div className="tut-stage" key={scene.id}>
+        {/* Keyed by track and scene: remounting is what restarts every CSS animation. */}
+        <div className="tut-stage" key={`${current.id}-${scene.id}`}>
           <Scene />
         </div>
 
@@ -382,19 +545,23 @@ export default function Tutorial({ onClose }: Props) {
         </figcaption>
 
         <div className="tut-controls">
-          <button type="button" className="ghost" onClick={() => { setPlaying(false); go(index - 1); }} disabled={index === 0}>
+          <button type="button" className="ghost" onClick={() => { setPlaying(false); go(position - 1); }} disabled={position === 0}>
             ‹ Back
           </button>
-          <button type="button" className="ghost" onClick={() => setPlaying((current) => !current)}>
+          <button type="button" className="ghost" onClick={() => setPlaying((value) => !value)}>
             {playing ? '❚❚ Pause' : '▶ Play'}
           </button>
-          {last ? (
-            <button type="button" className="primary" onClick={onClose}>
-              Start making icons
+          {!last ? (
+            <button type="button" className="ghost" onClick={() => { setPlaying(false); go(position + 1); }}>
+              Next ›
+            </button>
+          ) : nextTrack ? (
+            <button type="button" className="primary" onClick={() => switchTo(nextTrack.id)}>
+              Next: {nextTrack.label} ›
             </button>
           ) : (
-            <button type="button" className="ghost" onClick={() => { setPlaying(false); go(index + 1); }}>
-              Next ›
+            <button type="button" className="primary" onClick={onClose}>
+              Start making icons
             </button>
           )}
           <button type="button" className="tut-skip" onClick={onClose}>
