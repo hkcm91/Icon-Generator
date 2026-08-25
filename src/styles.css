@@ -252,17 +252,17 @@ button.tiny { padding: 4px 9px; font-size: 11px; }
 
 /* Wide enough that a 250-card library gets a usable number of columns; the
    left rail stays narrow so the guided flow itself does not sprawl. */
-.app-simple { max-width: 1220px; }
+.app-simple { max-width: 1500px; }
 
-.studio { display: grid; grid-template-columns: minmax(260px, 320px) 1fr; gap: 32px; align-items: start; }
+.studio { display: grid; grid-template-columns: minmax(220px, 280px) 1fr; gap: 26px; align-items: start; }
 @media (max-width: 780px) { .studio { grid-template-columns: 1fr; } }
 
 .studio .preview { margin: 0; position: sticky; top: 20px; padding: 16px; }
 .studio .preview-canvas { max-width: 300px; }
 .studio-flow { min-width: 0; }
-.family-name-field { margin-bottom: 22px; max-width: 420px; }
+.family-name-field { margin-bottom: 12px; max-width: 420px; }
 
-.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 28px; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
 .steps h3 {
   display: flex;
   align-items: center;
@@ -336,10 +336,46 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px;
   margin-top: 12px;
-  max-height: 520px;
-  overflow-y: auto;
-  padding-right: 4px;
 }
+
+.compact-step {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.compact-step > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+  padding: 9px 11px;
+  list-style: none;
+  color: var(--text);
+}
+.compact-step > summary::-webkit-details-marker { display: none; }
+.compact-step > summary::after { content: '▾'; color: var(--muted); flex: none; }
+.compact-step[open] > summary::after { transform: rotate(180deg); }
+.compact-step-title { display: flex; align-items: center; gap: 9px; font-weight: 600; }
+.compact-step-value {
+  min-width: 0;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compact-step-body { padding: 4px 11px 11px; }
+.compact-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.compact-fields > .glyph-alpha-toggle,
+.compact-fields > .status,
+.compact-fields > .premium-lock,
+.compact-fields > .guided-options { grid-column: 1 / -1; }
+@media (max-width: 640px) { .compact-fields { grid-template-columns: 1fr; } }
+
+.icon-library { margin-top: 8px; }
+.icon-library .grid-head h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
 
 .card {
   position: relative;
@@ -356,7 +392,20 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 .card-pick { position: absolute; top: 6px; left: 6px; }
 .card-pick input { accent-color: var(--accent); }
 
-.card-thumb { width: 100%; height: auto; display: block; border-radius: 7px; }
+.card-thumb {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 7px;
+  background-color: #0a0e17;
+  background-image:
+    linear-gradient(45deg, #263149 25%, transparent 25%),
+    linear-gradient(-45deg, #263149 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #263149 75%),
+    linear-gradient(-45deg, transparent 75%, #263149 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
 
 .card-name {
   margin: 6px 0 4px;
