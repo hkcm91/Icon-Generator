@@ -88,6 +88,12 @@ describe('model input wiring', () => {
     expect(input.background).toBe('opaque');
   });
 
+  it('does not teach edit models to reproduce a visible frame', () => {
+    const svg = shapeReferenceSvg(spec());
+    expect(svg).not.toContain('stroke=');
+    expect(svg).not.toContain('fill="none"');
+  });
+
   it('uses an explicitly selected GPT Image quality tier', () => {
     expect(modelInput('openai/gpt-image-2', 'p', 1024, [], undefined, false, 'high').quality).toBe('high');
   });
@@ -122,6 +128,8 @@ describe('complete icon prompt', () => {
     const prompt = completeIconPrompt('moon', 'pearl glass', true);
     expect(prompt).toContain('complete container and symbol together');
     expect(prompt).toContain('fully opaque PNG');
+    expect(prompt).toContain('fill the square canvas edge to edge');
+    expect(prompt).toContain('Zero extra outer padding');
     expect(prompt).toContain('no black keyline');
     expect(prompt).toContain('No transparency');
   });

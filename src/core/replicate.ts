@@ -329,7 +329,8 @@ export function completeIconPrompt(
       ? 'Use the reference as the authoritative container, material, palette, lighting, camera, and proportions. Keep the container and replace only its symbol with the requested subject.'
       : 'Include a polished, fully visible icon container behind the symbol.',
     'Return a fully opaque PNG containing the complete container and symbol together.',
-    'Exactly one centered icon, square composition, consistent empty margins.',
+    'The artwork must fill the square canvas edge to edge and extend underneath the supplied silhouette.',
+    'Zero extra outer padding or empty margin. Never place a smaller framed icon inside the output square.',
     'The container has a clean borderless outer edge: no black keyline, dark outline, stroke, rim, frame, or halo.',
     'No transparency, isolated glyph, chroma screen, contact sheet, text, label, watermark, device, or mockup.',
   ].filter(Boolean).join(' ');

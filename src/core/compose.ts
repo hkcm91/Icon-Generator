@@ -167,7 +167,11 @@ export function composeIcon(
   ctx.fillRect(0, 0, spec.size, spec.size);
 
   if (layers.material) {
-    drawCover(ctx, layers.material, box.x, box.y, box.edge, box.edge);
+    // Generated and uploaded layers already use full-canvas coordinates. The
+    // old inner-box destination applied spec.padding a second time, shrinking
+    // the artwork and exposing its generated frame/rim inside the real clip.
+    // Draw at canvas scale; the analytic path above remains the only edge.
+    drawCover(ctx, layers.material, 0, 0, spec.size, spec.size);
   }
 
   // 3. Glyph, clipped again to the safe area so it can never touch the rim.
