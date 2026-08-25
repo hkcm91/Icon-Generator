@@ -187,13 +187,16 @@ export default function App() {
         </div>
         <div className="row row-tight">
           <ApiKeyBar />
-          {!advanced && (
-            <>
-              <details className="project-menu">
-                <summary>Icon sets ({savedProjects.length})</summary>
-                <div className="project-menu-body">
+          <details className="project-menu">
+            <summary>
+              <span className="project-menu-label">Set</span>
+              <span className="project-menu-name">{project.name || 'Untitled'}</span>
+            </summary>
+            <div className="project-menu-body">
+              {!advanced && (
+                <>
                   <label className="field">
-                    <span className="field-label">Saved sets</span>
+                    <span className="field-label">Switch icon set</span>
                     <select
                       aria-label="Saved icon sets"
                       value={activeProjectId ?? ''}
@@ -208,8 +211,8 @@ export default function App() {
                       ))}
                     </select>
                   </label>
-                  <div className="row row-tight">
-                    <button type="button" className="ghost" disabled={projectBusy}
+                  <div className="project-menu-primary">
+                    <button type="button" disabled={projectBusy}
                       onClick={() => void saveLocalProject()}>
                       {projectBusy ? 'Saving…' : 'Save set'}
                     </button>
@@ -217,19 +220,49 @@ export default function App() {
                       onClick={() => void newLocalProject()}>
                       New set
                     </button>
-                    <button type="button" className="ghost" disabled={!activeProjectId || projectBusy}
-                      onClick={() => void deleteLocalProject()}>
-                      Delete saved set
-                    </button>
                   </div>
-                  <div className="row row-tight project-backups">
-                    <button type="button" className="ghost" onClick={() => void downloadProject()}>Download backup</button>
-                    <button type="button" className="ghost" onClick={() => projectInput.current?.click()}>
-                      Import backup
-                    </button>
-                  </div>
+                </>
+              )}
+
+              <button
+                type="button"
+                className="ghost project-view-toggle"
+                onClick={() => setField('advanced', !advanced)}
+              >
+                {advanced ? 'Return to simple view' : 'Open all controls'}
+              </button>
+
+              <details className="project-more">
+                <summary>More actions</summary>
+                <div className="project-menu-body">
+                  {!advanced && (
+                    <>
+                      <button type="button" className="ghost" onClick={() => void downloadProject()}>Download backup</button>
+                      <button type="button" className="ghost" onClick={() => projectInput.current?.click()}>
+                        Import backup
+                      </button>
+                      <button type="button" className="ghost" disabled={!activeProjectId || projectBusy}
+                        onClick={() => void deleteLocalProject()}>
+                        Delete saved set
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="ghost project-reset"
+                    onClick={() => {
+                      reset();
+                      store.clearAll();
+                    }}
+                  >
+                    Reset current work
+                  </button>
                 </div>
               </details>
+            </div>
+          </details>
+          {!advanced && (
+            <>
               <input
                 ref={projectInput}
                 type="file"
@@ -239,25 +272,6 @@ export default function App() {
               />
             </>
           )}
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => setField('advanced', !advanced)}
-          >
-            {advanced ? 'Simple view' : 'All controls'}
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => {
-              reset();
-              // Reset means reset: leaving orphaned blobs behind would have the
-              // next project silently inherit the last one's renders.
-              store.clearAll();
-            }}
-          >
-            Reset
-          </button>
         </div>
       </header>
 
