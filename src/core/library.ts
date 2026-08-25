@@ -63,7 +63,7 @@ export function repairedTransparentOutputMode(
   hasRealAlpha: boolean,
 ): IconOutputMode | undefined {
   const generated = !item.sourceUrl || item.sourceMode === 'styled';
-  return item.status === 'ready' && generated && hasRealAlpha
+  return generated && hasRealAlpha
     ? 'transparent'
     : item.outputMode;
 }
