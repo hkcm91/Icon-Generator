@@ -16,11 +16,11 @@ const rows: GlyphCatalogEntry[] = [
 ];
 
 describe('organized glyph catalog', () => {
-  it('provides exactly 175 unique mobile essentials that exist in the bundled library', () => {
+  it('provides exactly 250 unique mobile essentials that exist in the bundled library', () => {
     const available = new Set(materialCatalog.map((entry) => entry.slug));
 
-    expect(MATERIAL_ESSENTIALS).toHaveLength(175);
-    expect(new Set(MATERIAL_ESSENTIALS).size).toBe(175);
+    expect(MATERIAL_ESSENTIALS).toHaveLength(250);
+    expect(new Set(MATERIAL_ESSENTIALS).size).toBe(250);
     expect(MATERIAL_ESSENTIALS.filter((slug) => !available.has(slug))).toEqual([]);
   });
 
@@ -30,7 +30,7 @@ describe('organized glyph catalog', () => {
     expect(result.some((entry) => entry.slug === '10mp')).toBe(false);
   });
 
-  it('keeps mobile search inside the 175-icon collection', () => {
+  it('keeps mobile search inside the 250-icon collection', () => {
     expect(organizeGlyphEntries(rows, 'mobile', 'all', '10mp')).toHaveLength(0);
     expect(organizeGlyphEntries(rows, 'material', 'all', '10mp')).toHaveLength(1);
   });
