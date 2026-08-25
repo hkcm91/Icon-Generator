@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { makeItem, type IconItem } from '../core/library';
-
-interface CatalogEntry {
-  name: string;
-  slug?: string;
-  concept?: string;
-  category?: string;
-  keywords?: string[];
-}
+import {
+  GLYPH_SECTIONS,
+  glyphEntryKey,
+  humanizeGlyphName,
+  organizeGlyphEntries,
+  type GlyphCatalogEntry as CatalogEntry,
+  type GlyphCatalogId,
+} from '../core/glyphCatalog';
 
 interface Catalog {
-  id: string;
+  id: GlyphCatalogId;
   label: string;
   file: string;
   note?: string;
@@ -25,18 +25,22 @@ interface Catalog {
 const CATALOGS: Catalog[] = [
   {
     id: 'material',
-    label: 'Material Symbols',
+    label: 'Everyday symbols',
     file: '/libraries/material-symbols.json',
     source: (entry) => entry.slug ? `/libraries/glyphs/material/${entry.slug}-fill.svg` : undefined,
   },
   {
+    id: 'y2k',
+    label: 'Curated concepts',
+    file: '/libraries/y2k-dream.json',
+  },
+  {
     id: 'brands',
-    label: 'Brands',
+    label: 'Brand logos',
     file: '/libraries/simple-icons.json',
     source: (entry) => entry.slug ? `/libraries/glyphs/brands/${entry.slug}.svg` : undefined,
     note: 'Brand names are trademarks of their owners. See SIMPLE-ICONS-DISCLAIMER.md.',
   },
-  { id: 'y2k', label: 'Y2K Dream', file: '/libraries/y2k-dream.json' },
 ];
 
 /** Rows rendered at once. The full list is thousands long; the DOM need not be. */
@@ -50,6 +54,7 @@ interface Props {
 
 export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
   const [catalogId, setCatalogId] = useState(CATALOGS[0].id);
+  const [sectionId, setSectionId] = useState(GLYPH_SECTIONS.material[0].id);
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [query, setQuery] = useState('');
@@ -62,6 +67,8 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
     () => new Set(existing.map((item) => item.name.toLowerCase())),
     [existing],
   );
+  const sections = GLYPH_SECTIONS[catalogId];
+  const section = sections.find((candidate) => candidate.id === sectionId) ?? sections[0];
 
   useEffect(() => {
     let live = true;
@@ -85,22 +92,16 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
     };
   }, [catalog]);
 
-  const matches = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return entries;
-    return entries.filter(
-      (entry) =>
-        entry.name.toLowerCase().includes(needle) ||
-        entry.category?.toLowerCase().includes(needle) ||
-        entry.keywords?.some((keyword) => keyword.toLowerCase().includes(needle)),
-    );
-  }, [entries, query]);
+  const matches = useMemo(
+    () => organizeGlyphEntries(entries, catalogId, sectionId, query),
+    [entries, catalogId, sectionId, query],
+  );
 
   const toItems = (rows: CatalogEntry[]): IconItem[] =>
     rows
-      .filter((entry) => !already.has(entry.name.toLowerCase()))
+      .filter((entry) => !already.has(humanizeGlyphName(entry.name, catalogId).toLowerCase()))
       .map((entry) =>
-        makeItem(entry.name, {
+        makeItem(humanizeGlyphName(entry.name, catalogId), {
           concept: entry.concept ?? '',
           category: entry.category,
           keywords: entry.keywords,
@@ -116,12 +117,14 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
   };
 
   const addPicked = () => {
-    const items = toItems(matches.filter((entry) => picked.has(entry.name)));
+    const items = toItems(matches.filter((entry) => picked.has(glyphEntryKey(entry))));
     if (items.length) onAdd(items);
     setPicked(new Set());
   };
 
-  const newMatches = matches.filter((entry) => !already.has(entry.name.toLowerCase())).length;
+  const newMatches = matches.filter(
+    (entry) => !already.has(humanizeGlyphName(entry.name, catalogId).toLowerCase()),
+  ).length;
 
   return (
     <div className="picker">
@@ -131,7 +134,11 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
             key={entry.id}
             type="button"
             className={entry.id === catalogId ? 'chip chip-on' : 'chip'}
-            onClick={() => setCatalogId(entry.id)}
+            onClick={() => {
+              setCatalogId(entry.id);
+              setSectionId(GLYPH_SECTIONS[entry.id][0].id);
+              setQuery('');
+            }}
           >
             {entry.label}
             {counts[entry.id] ? ` (${counts[entry.id].toLocaleString()})` : ''}
@@ -142,9 +149,25 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
         </button>
       </div>
 
+      <div className="picker-sections" aria-label={`${catalog.label} categories`}>
+        {sections.map((candidate) => (
+          <button
+            key={candidate.id}
+            type="button"
+            className={candidate.id === section.id ? 'chip chip-on' : 'chip'}
+            onClick={() => setSectionId(candidate.id)}
+          >
+            {candidate.label}
+          </button>
+        ))}
+      </div>
+      <p className="picker-section-note">
+        {query.trim() ? `Searching all ${catalog.label.toLowerCase()}.` : section.description}
+      </p>
+
       <input
         type="search"
-        placeholder={`Search ${catalog.label}…`}
+          placeholder={`Search all ${catalog.label.toLowerCase()}…`}
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />
@@ -164,18 +187,20 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
 
           <div className="picker-list">
             {matches.slice(0, VISIBLE_LIMIT).map((entry) => {
-              const have = already.has(entry.name.toLowerCase());
+              const displayName = humanizeGlyphName(entry.name, catalogId);
+              const entryKey = glyphEntryKey(entry);
+              const have = already.has(displayName.toLowerCase());
               return (
-                <label key={entry.name} className={have ? 'picker-row picker-have' : 'picker-row'}>
+                <label key={entryKey} className={have ? 'picker-row picker-have' : 'picker-row'}>
                   <input
                     type="checkbox"
                     disabled={have}
-                    checked={picked.has(entry.name)}
+                    checked={picked.has(entryKey)}
                     onChange={(event) =>
                       setPicked((current) => {
                         const next = new Set(current);
-                        if (event.target.checked) next.add(entry.name);
-                        else next.delete(entry.name);
+                        if (event.target.checked) next.add(entryKey);
+                        else next.delete(entryKey);
                         return next;
                       })
                     }
@@ -183,7 +208,7 @@ export default function LibraryPicker({ existing, onAdd, onClose }: Props) {
                   {catalog.source?.(entry) && (
                     <img className="picker-glyph" src={catalog.source(entry)} alt="" loading="lazy" />
                   )}
-                  <span className="picker-name">{entry.name}</span>
+                  <span className="picker-name">{displayName}</span>
                   {have && <span className="badge">added</span>}
                   {entry.concept && <span className="picker-concept">{entry.concept}</span>}
                 </label>
