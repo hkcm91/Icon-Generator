@@ -19,8 +19,12 @@ describe('generation cost controls', () => {
   });
 
   it('persists the explicitly selected GPT model tier', () => {
-    expect(hydrateProject({ quality: 'high', premiumAllowed: true }).quality).toBe('high');
+    expect(hydrateProject({ quality: 'high', qualitySelectionVersion: 1, premiumAllowed: true }).quality).toBe('high');
     expect(hydrateProject({ quality: 'automatic' as never }).quality).toBe('low');
+  });
+
+  it('migrates an old implicit High selection back to Low', () => {
+    expect(hydrateProject({ quality: 'high', premiumAllowed: true }).quality).toBe('low');
   });
 
   it("persists the user's native-transparency choice", () => {

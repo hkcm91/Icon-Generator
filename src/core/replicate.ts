@@ -168,8 +168,10 @@ async function waitFor(id: string): Promise<Polled> {
 export async function generate(
   model: string,
   input: Record<string, unknown>,
+  onStarted?: (id: string) => void,
 ): Promise<GenerateResult> {
   const started = await post<Started>('/api/generate', { model, input });
+  onStarted?.(started.id);
   activePredictions.add(started.id);
   try {
     const finished = await waitFor(started.id);
@@ -177,6 +179,18 @@ export async function generate(
     return { images: finished.images, predictionId: started.id };
   } finally {
     activePredictions.delete(started.id);
+  }
+}
+
+/** Resume a prediction created before a page refresh without paying again. */
+export async function resumeGeneration(id: string): Promise<GenerateResult> {
+  activePredictions.add(id);
+  try {
+    const finished = await waitFor(id);
+    if (!finished.images?.length) throw new Error('The model returned no image.');
+    return { images: finished.images, predictionId: id };
+  } finally {
+    activePredictions.delete(id);
   }
 }
 
@@ -207,17 +221,18 @@ export async function describeImage(
 export async function generateImage(
   model: string,
   input: Record<string, unknown>,
+  onStarted?: (id: string) => void,
 ): Promise<GenerateResult & { alphaRequested: boolean; alphaAccepted: boolean }> {
   const wantsAlpha = input.background === 'transparent';
   try {
-    const result = await generate(model, input);
+    const result = await generate(model, input, onStarted);
     return { ...result, alphaRequested: wantsAlpha, alphaAccepted: wantsAlpha };
   } catch (error) {
     const message = (error as Error).message ?? '';
     if (!wantsAlpha || !/background|transparent|unsupported|invalid/i.test(message)) throw error;
 
     const { background: _background, ...withoutAlpha } = input;
-    const result = await generate(model, withoutAlpha);
+    const result = await generate(model, withoutAlpha, onStarted);
     return { ...result, alphaRequested: true, alphaAccepted: false };
   }
 }
