@@ -17,6 +17,8 @@ export interface Project {
   quality: 'low' | 'medium' | 'high';
   /** Versioned proof that the tier came from the explicit priced dropdown. */
   qualitySelectionVersion: number;
+  /** Versioned proof that a saved rim was chosen after borderless became the default. */
+  borderlessVersion: number;
   premiumAllowed: boolean;
   /** Vision model used to name the symbol in an uploaded master. */
   visionModel: string;
@@ -55,6 +57,7 @@ const DEFAULT_PROJECT: Project = {
   model: 'openai/gpt-image-2',
   quality: 'low',
   qualitySelectionVersion: 1,
+  borderlessVersion: 1,
   premiumAllowed: false,
   visionModel: DEFAULT_VISION_MODEL,
   // Empty by design. A pre-filled default is indistinguishable from a field
@@ -80,6 +83,7 @@ const DEFAULT_PROJECT: Project = {
 
 export function hydrateProject(parsed: Partial<Project>): Project {
   const migrateExpensiveDefault = parsed.quality === undefined && parsed.model === 'google/nano-banana-pro';
+  const compose = { ...DEFAULT_COMPOSE, ...(parsed.compose ?? {}) };
   return {
     ...DEFAULT_PROJECT,
     ...parsed,
@@ -90,12 +94,18 @@ export function hydrateProject(parsed: Partial<Project>): Project {
       ? parsed.quality
       : 'low',
     qualitySelectionVersion: 1,
+    borderlessVersion: 1,
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
     calibrationRequired: parsed.calibrationRequired ?? true,
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
     glyphTransparency: parsed.glyphTransparency ?? true,
     spec: normalizeSpec(parsed.spec),
-    compose: { ...DEFAULT_COMPOSE, ...(parsed.compose ?? {}) },
+    // Older project/template JSON could silently carry a dark analytic rim.
+    // Clear it once; rims intentionally selected after this migration persist.
+    compose: {
+      ...compose,
+      rimWidth: parsed.borderlessVersion === 1 ? compose.rimWidth : 0,
+    },
     items: (parsed.items ?? []).map((item) =>
       item.status === 'queued' || item.status === 'generating'
         ? { ...item, status: 'draft' as const, error: undefined }

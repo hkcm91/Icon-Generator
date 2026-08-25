@@ -30,4 +30,9 @@ describe('generation cost controls', () => {
   it("persists the user's native-transparency choice", () => {
     expect(hydrateProject({ glyphTransparency: false }).glyphTransparency).toBe(false);
   });
+
+  it('clears legacy template rims but preserves a newly selected rim', () => {
+    expect(hydrateProject({ compose: { rimWidth: 8 } as never }).compose.rimWidth).toBe(0);
+    expect(hydrateProject({ borderlessVersion: 1, compose: { rimWidth: 8 } as never }).compose.rimWidth).toBe(8);
+  });
 });

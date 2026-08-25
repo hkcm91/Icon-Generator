@@ -496,3 +496,6 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 .glyph-alpha-toggle { align-items: flex-start; margin: 10px 0; }
 .glyph-alpha-toggle span { display: grid; gap: 2px; }
 .glyph-alpha-toggle small { color: var(--muted); font-weight: 400; }
+.guided-options { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.guided-options summary, .scale-saver summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.guided-options[open] summary, .scale-saver[open] summary { margin-bottom: 12px; color: var(--text); }

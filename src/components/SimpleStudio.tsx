@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Preview from './Preview';
 import { containerPath } from '../core/geometry';
 import { traceMaster } from '../core/trace';
@@ -147,6 +147,20 @@ export default function SimpleStudio(props: Props) {
     ? `Premium generation is locked: this setting is about $${cost.toFixed(3)} per output.`
     : undefined;
 
+  // The full-resolution layer lives in IndexedDB, while the compact master is
+  // persisted with the project. Restore that saved upload after a refresh so
+  // the simple flow never repaints it merely because the page was reopened.
+  useEffect(() => {
+    if (!props.master || props.materialLayer) return;
+    let cancelled = false;
+    const image = new Image();
+    image.onload = () => {
+      if (!cancelled) props.onMaterialLayer(image);
+    };
+    image.src = props.master.dataUrl;
+    return () => { cancelled = true; };
+  }, [props.master, props.materialLayer, props.onMaterialLayer]);
+
   /**
    * One upload does everything: shape, colour, material wording, and — where a
    * vision model is reachable — the name of the symbol. Every field it fills
@@ -165,8 +179,10 @@ export default function SimpleStudio(props: Props) {
       // Registered before anything else can fail, so a later vision error still
       // leaves every generation referencing the approved master.
       props.onMaster({ name: file.name, dataUrl: master.stored });
+      // The upload is already the approved master. Reuse its pixels instead of
+      // paying for a second model call to repaint a surface the user supplied.
+      props.onMaterialLayer(master.layer);
       props.onLockedContainer(exact);
-      if (exact) props.onMaterialLayer(master.layer);
 
       const traced = traceMaster(master.pixels, 'symmetric', props.spec);
       props.onSpec(traced.spec);
@@ -244,9 +260,9 @@ export default function SimpleStudio(props: Props) {
       void generateCompleteIcon(options, props.onMaterialLayer, props.onGlyphLayer);
       return;
     }
-    if (props.lockedContainer && props.materialLayer) {
+    if (props.materialLayer) {
       if (!props.glyph.trim()) {
-        setStatus({ kind: 'ok', message: 'Approved container kept exactly; no glyph requested.' });
+        setStatus({ kind: 'ok', message: 'Uploaded master kept; no paid generation was needed.' });
         return;
       }
       void generateGlyph(options, props.onGlyphLayer);
@@ -476,16 +492,6 @@ export default function SimpleStudio(props: Props) {
             />
           </label>
           <label className="field">
-            <span className="field-label">Family art direction</span>
-            <textarea value={props.familyPrompt} placeholder="shared lighting, material, camera and style rules"
-              onChange={(event) => props.onFamilyPrompt(event.target.value)} />
-          </label>
-          <label className="field">
-            <span className="field-label">Exclude</span>
-            <input value={props.negativePrompt} placeholder="text, extra objects, inconsistent perspective"
-              onChange={(event) => props.onNegativePrompt(event.target.value)} />
-          </label>
-          <label className="field">
             <span className="field-label">Generation model</span>
             <select value={selectedModel} onChange={(event) => {
               const [model, quality] = event.target.value.split('#');
@@ -515,7 +521,9 @@ export default function SimpleStudio(props: Props) {
           </label>
           {cost !== null && <p className={cost > 0.05 ? 'status status-error' : 'status status-ok'}>
             Estimated Replicate charge: about ${cost.toFixed(3)} per generated output.
-            {' '}A new material plus an AI glyph uses two outputs; exact library artwork uses none.
+            {' '}{props.materialLayer
+              ? 'Your uploaded master is reused, so only the requested symbol is generated.'
+              : 'A new material plus an AI glyph uses two outputs; exact library artwork uses none.'}
           </p>}
           {cost !== null && cost > 0.05 && (
             <label className="toggle premium-lock">
@@ -524,55 +532,50 @@ export default function SimpleStudio(props: Props) {
               Allow premium generation at about ${cost.toFixed(3)} per output
             </label>
           )}
-          <label className="field field-inline">
-            <span className="field-label">Glyph colour</span>
-            <input
-              type="color"
-              value={props.glyphColor}
-              onChange={(event) => props.onGlyphColor(event.target.value)}
-            />
-          </label>
-          <div className="row reference-row">
-            <button type="button" className="ghost" onClick={() => referenceInput.current?.click()}>
-              Add appearance references
-            </button>
-            <input
-              ref={referenceInput}
-              type="file"
-              accept="image/*"
-              multiple
-              hidden
-              onChange={(event) => void addReferences(event.target.files)}
-            />
-            {props.references.map((reference, index) => (
-              <button
-                key={`${reference.name}-${index}`}
-                type="button"
-                className="chip"
-                title="Remove reference"
-                onClick={() => props.onReferences(props.references.filter((_, at) => at !== index))}
-              >
-                {reference.name} ×
+          <details className="guided-options">
+            <summary>Optional fine-tuning</summary>
+            <label className="field">
+              <span className="field-label">Family art direction</span>
+              <textarea value={props.familyPrompt} placeholder="shared lighting, material, camera and style rules"
+                onChange={(event) => props.onFamilyPrompt(event.target.value)} />
+            </label>
+            <label className="field">
+              <span className="field-label">Exclude</span>
+              <input value={props.negativePrompt} placeholder="text, extra objects, inconsistent perspective"
+                onChange={(event) => props.onNegativePrompt(event.target.value)} />
+            </label>
+            <label className="field field-inline">
+              <span className="field-label">Glyph colour</span>
+              <input type="color" value={props.glyphColor}
+                onChange={(event) => props.onGlyphColor(event.target.value)} />
+            </label>
+            <div className="row reference-row">
+              <button type="button" className="ghost" onClick={() => referenceInput.current?.click()}>
+                Add appearance references
               </button>
-            ))}
-          </div>
-          <div className="style-grid simple-controls">
-            <label className="field">
-              <span className="field-label">Glyph size <b>{Math.round(props.compose.glyphScale * 100)}%</b></span>
-              <input type="range" min={50} max={140} value={props.compose.glyphScale * 100}
-                onChange={(event) => props.onCompose({ glyphScale: Number(event.target.value) / 100 })} />
-            </label>
-            <label className="field">
-              <span className="field-label">Rim <b>{props.compose.rimWidth}px</b></span>
-              <input type="range" min={0} max={24} value={props.compose.rimWidth}
-                onChange={(event) => props.onCompose({ rimWidth: Number(event.target.value) })} />
-            </label>
-            <label className="field">
-              <span className="field-label">Shadow <b>{props.compose.shadowBlur}px</b></span>
-              <input type="range" min={0} max={120} value={props.compose.shadowBlur}
-                onChange={(event) => props.onCompose({ shadowBlur: Number(event.target.value) })} />
-            </label>
-          </div>
+              <input ref={referenceInput} type="file" accept="image/*" multiple hidden
+                onChange={(event) => void addReferences(event.target.files)} />
+              {props.references.map((reference, index) => (
+                <button key={`${reference.name}-${index}`} type="button" className="chip"
+                  title="Remove reference"
+                  onClick={() => props.onReferences(props.references.filter((_, at) => at !== index))}>
+                  {reference.name} ×
+                </button>
+              ))}
+            </div>
+            <div className="style-grid simple-controls">
+              <label className="field">
+                <span className="field-label">Glyph size <b>{Math.round(props.compose.glyphScale * 100)}%</b></span>
+                <input type="range" min={50} max={140} value={props.compose.glyphScale * 100}
+                  onChange={(event) => props.onCompose({ glyphScale: Number(event.target.value) / 100 })} />
+              </label>
+              <label className="field">
+                <span className="field-label">Shadow <b>{props.compose.shadowBlur}px</b></span>
+                <input type="range" min={0} max={120} value={props.compose.shadowBlur}
+                  onChange={(event) => props.onCompose({ shadowBlur: Number(event.target.value) })} />
+              </label>
+            </div>
+          </details>
         </li>
 
         <li>
@@ -581,7 +584,7 @@ export default function SimpleStudio(props: Props) {
           </h3>
           <div className="row">
             <button type="button" className="primary" onClick={run} disabled={busy || premiumBlocked}>
-              {busy ? 'Working…' : `Generate icon${cost !== null ? ` · ~${(cost * (!props.glyphTransparency || !props.glyph.trim() ? 1 : 2)).toFixed(3)}` : ''}`}
+              {busy ? 'Working…' : `${props.materialLayer && props.glyphTransparency ? 'Generate symbol' : 'Generate icon'}${cost !== null ? ` · ~${(cost * (!props.glyphTransparency || !props.glyph.trim() || props.materialLayer ? 1 : 2)).toFixed(3)}` : ''}`}
             </button>
             <button
               type="button"
@@ -589,6 +592,8 @@ export default function SimpleStudio(props: Props) {
               onClick={() => {
                 props.onMaterialLayer(null);
                 props.onGlyphLayer(null);
+                props.onMaster(null);
+                props.onLockedContainer(false);
               }}
               disabled={busy}
             >
@@ -604,8 +609,8 @@ export default function SimpleStudio(props: Props) {
           <h3>
             <span className="step-num">4</span> Make a whole family
           </h3>
-          <div className="scale-saver">
-            <strong>Scale saver</strong>
+          <details className="scale-saver">
+            <summary><strong>Batch cost safeguards</strong></summary>
             <label className="toggle">
               <input type="checkbox" checked={props.calibrationRequired}
                 onChange={(event) => props.onCalibrationRequired(event.target.checked)} />
@@ -618,7 +623,7 @@ export default function SimpleStudio(props: Props) {
                 onChange={(event) => props.onMaxBatchCost(Math.max(0, Number(event.target.value) || 0))} />
             </label>
             <p className="hint">Exact SVG/custom artwork renders locally for $0. Identical AI requests reuse the saved result.</p>
-          </div>
+          </details>
           <IconGrid
             spec={props.spec}
             compose={props.compose}

@@ -122,6 +122,7 @@ describe('complete icon prompt', () => {
     const prompt = completeIconPrompt('moon', 'pearl glass', true);
     expect(prompt).toContain('complete container and symbol together');
     expect(prompt).toContain('fully opaque PNG');
+    expect(prompt).toContain('no black keyline');
     expect(prompt).toContain('No transparency');
   });
 });
