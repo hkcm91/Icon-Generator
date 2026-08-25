@@ -15,7 +15,7 @@
  * Node; rasterisation to a data URL happens separately, in the browser.
  */
 
-import { containerPath, innerBox } from './geometry';
+import { containerPath } from './geometry';
 import type { ContainerSpec } from './spec';
 
 export type ConditioningMode = 'off' | 'reference' | 'masked-fill';
@@ -38,15 +38,12 @@ export function maskSvg(spec: ContainerSpec): string {
 /**
  * Base plate for image-to-image conditioning.
  *
- * Deliberately more than a flat fill: a soft top-down gradient and an inner rim
- * give the model a legible sense of which way is up and where the surface turns
- * over, which is what makes it light the real corners rather than inventing new
- * ones. Kept low-contrast so it reads as a hint, not as art to preserve.
+ * Deliberately more than a flat fill: a soft top-down gradient gives the model
+ * a legible sense of which way is up. There is intentionally no outline or
+ * inner rim: edit models reproduce those cues as a visible frame.
  */
 export function shapeReferenceSvg(spec: ContainerSpec, baseColor = '#8a8f98'): string {
   const path = containerPath(spec);
-  const { edge } = innerBox(spec);
-  const rim = Math.max(1, edge * 0.012);
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${spec.size}" height="${spec.size}"`,
@@ -57,16 +54,12 @@ export function shapeReferenceSvg(spec: ContainerSpec, baseColor = '#8a8f98'): s
     `<stop offset="0.55" stop-color="#000000" stop-opacity="0"/>`,
     `<stop offset="1" stop-color="#000000" stop-opacity="0.28"/>`,
     '</linearGradient>',
-    `<clipPath id="shell"><path d="${path}"/></clipPath>`,
     '</defs>',
     // Neutral surround: mid-grey rather than white or black, so the model does
     // not read the background as part of the subject's lighting.
     `<rect width="${spec.size}" height="${spec.size}" fill="#3d4048"/>`,
     `<path d="${path}" fill="${baseColor}" fill-rule="evenodd"/>`,
     `<path d="${path}" fill="url(#body)" fill-rule="evenodd"/>`,
-    `<g clip-path="url(#shell)">`,
-    `<path d="${path}" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="${rim * 2}"/>`,
-    '</g>',
     '</svg>',
   ].join('');
 }
