@@ -283,7 +283,7 @@ export function glyphPrompt(
     // With a real alpha channel the background must not be described at all:
     // naming one invites the model to draw it despite the transparency flag.
     nativeAlpha
-      ? 'Nothing behind or around the glyph.'
+      ? 'Return a transparent PNG containing only the isolated glyph pixels. Everything outside the glyph must have zero alpha. No opaque or translucent backing shape, color field, tile, or plate.'
       : 'Isolated on a completely flat uniform #00FF00 chroma-green background with no gradient, no vignette, and no color spill.',
     'The glyph is fully visible, centered, with generous even margin on all four sides.',
     'Front-facing orthographic view.',
