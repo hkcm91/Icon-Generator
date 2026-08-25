@@ -7,7 +7,7 @@
  * one, antialiased for 32px — not a smeared resample of a big corner.
  */
 
-import { composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from './compose';
+import { composeCompleteIcon, composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from './compose';
 import { containerPath, toSvgDocument } from './geometry';
 import type { ContainerSpec } from './spec';
 
@@ -92,6 +92,22 @@ export function renderOpenFrameAtSize(
   options: ComposeOptions,
 ): HTMLCanvasElement {
   return composeOpenFrame({ ...spec, size }, layers, options);
+}
+
+/** Render a self-contained complete tile while retaining its translucent rim. */
+export function renderCompleteAtSize(
+  spec: ContainerSpec,
+  size: number,
+  image: CanvasImageSource | null | undefined,
+  options: ComposeOptions,
+): HTMLCanvasElement {
+  const k = size / spec.size;
+  return composeCompleteIcon({ ...spec, size }, image, {
+    ...options,
+    rimWidth: options.rimWidth * k,
+    shadowBlur: options.shadowBlur * k,
+    shadowOffsetY: options.shadowOffsetY * k,
+  });
 }
 
 // ---------------------------------------------------------------------------

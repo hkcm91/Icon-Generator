@@ -262,6 +262,11 @@ export function preserveMasterContainerRim(
   context.save();
   context.clip(outer, 'evenodd');
   drawCover(context, generated, 0, 0, spec.size, spec.size);
+  // Keep only the new generation's central subject/surface. The perimeter is
+  // replaced rather than blended, otherwise a translucent glass master rim is
+  // flattened against the generated opaque tile underneath it.
+  context.globalCompositeOperation = 'destination-in';
+  context.fill(new Path2D(containerPath(spec, innerScale)), 'evenodd');
   context.restore();
 
   const rim = createCanvas(spec.size);
@@ -274,6 +279,47 @@ export function preserveMasterContainerRim(
   rimContext.restore();
 
   context.drawImage(rim, 0, 0);
+  return canvas;
+}
+
+/**
+ * Render a self-contained generated tile without painting an opaque fallback
+ * below it. Complete results can carry real translucent glass at their edge;
+ * the normal material compositor's base fill would destroy that appearance.
+ */
+export function composeCompleteIcon(
+  spec: ContainerSpec,
+  image: CanvasImageSource | null | undefined,
+  options: ComposeOptions = DEFAULT_COMPOSE,
+): HTMLCanvasElement {
+  const canvas = createCanvas(spec.size);
+  if (!image) return canvas;
+  const context = context2d(canvas);
+  const outline = new Path2D(containerPath(spec));
+
+  if (options.shadowBlur > 0) {
+    context.save();
+    context.shadowColor = options.shadowColor;
+    context.shadowBlur = options.shadowBlur;
+    context.shadowOffsetY = options.shadowOffsetY;
+    context.fillStyle = '#000000';
+    context.fill(outline, 'evenodd');
+    context.restore();
+  }
+
+  context.save();
+  context.clip(outline, 'evenodd');
+  drawCover(context, image, 0, 0, spec.size, spec.size);
+  context.restore();
+
+  if (options.rimWidth > 0) {
+    context.save();
+    context.clip(outline, 'evenodd');
+    context.strokeStyle = options.rimColor;
+    context.lineWidth = options.rimWidth * 2;
+    context.stroke(outline);
+    context.restore();
+  }
   return canvas;
 }
 
