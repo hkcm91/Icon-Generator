@@ -307,7 +307,7 @@ export function glyphPrompt(
     // Saying so explicitly is what stops the model copying its subject, which
     // is the usual failure when a reference image is present.
     hasMaster
-      ? 'Match the reference image exactly for material, palette, lighting direction, stroke weight, and level of detail. Draw the new subject described above; do not copy or trace the reference subject.'
+      ? 'Match the reference image for material, palette, lighting direction, stroke weight, and level of detail. Draw the new subject described above; do not copy or trace the reference subject or the positions of bubbles, sparkles, particles, highlights, or other decorative accents.'
       : '',
     'No container, tile, badge, frame, card, rounded rectangle, circle backing, border,',
     'text, label, watermark, mockup, or scene.',
@@ -326,12 +326,13 @@ export function completeIconPrompt(
     `Create one complete finished app icon depicting ${subject.trim() || 'a simple symbol'}.`,
     material.trim() ? `Material and finish: ${material.trim()}.` : '',
     hasMaster
-      ? 'Use the reference as the authoritative container, material, palette, lighting, camera, and proportions. Keep the container and replace only its symbol with the requested subject.'
+      ? 'Use the reference as authoritative for container silhouette, material vocabulary, palette, lighting, camera, and proportions, but not as a pixel-layout template. Recompose the surface and replace its symbol with the requested subject.'
       : 'Include a polished, fully visible icon container behind the symbol.',
     'Return a fully opaque PNG containing the complete container and symbol together.',
     'The artwork must fill the square canvas edge to edge and extend underneath the supplied silhouette.',
     'Zero extra outer padding or empty margin. Never place a smaller framed icon inside the output square.',
     'The container has a clean borderless outer edge: no black keyline, dark outline, stroke, rim, frame, or halo.',
+    'Arrange decorative microdetails such as bubbles, sparkles, particles, glints, droplets, and highlights in new positions that suit this subject. Never trace or reuse their coordinates from a reference image or another icon.',
     'No transparency, isolated glyph, chroma screen, contact sheet, text, label, watermark, device, or mockup.',
   ].filter(Boolean).join(' ');
 }
