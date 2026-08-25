@@ -62,6 +62,8 @@ interface Props {
   onClearGlyphs: () => void;
   lockedContainer: boolean;
   onLockedContainer: (value: boolean) => void;
+  glyphTransparency: boolean;
+  onGlyphTransparency: (value: boolean) => void;
   references: Array<{ name: string; dataUrl: string }>;
   onReferences: (value: Array<{ name: string; dataUrl: string }>) => void;
   exportApprovedOnly: boolean;
@@ -226,8 +228,10 @@ export default function SimpleStudio(props: Props) {
         glyphSubject: props.glyph,
         glyphStyle: '',
         conditioning: 'auto',
-        wantAlpha: true,
-        master: props.master?.dataUrl ?? null,
+        wantAlpha: props.glyphTransparency,
+        // A locked container is output artwork, not a glyph-style reference.
+        // Sending it here teaches the model to repaint the whole tile.
+        master: props.lockedContainer ? null : (props.master?.dataUrl ?? null),
         references: props.references.map((reference) => reference.dataUrl),
         familyPrompt: props.familyPrompt,
         negativePrompt: props.negativePrompt,
@@ -482,6 +486,17 @@ export default function SimpleStudio(props: Props) {
               <p className="hint">Final exports keep this tier; size and finishing are handled locally.</p>
             </div>
           )}
+          <label className="toggle glyph-alpha-toggle">
+            <input type="checkbox" checked={props.glyphTransparency}
+              disabled={props.model !== 'openai/gpt-image-2'}
+              onChange={(event) => props.onGlyphTransparency(event.target.checked)} />
+            <span>
+              <b>Transparent glyph only</b>
+              <small>{props.glyphTransparency
+                ? 'Native alpha; the locked container is never sent to the glyph model.'
+                : 'Off; generate on chroma green and remove the background locally.'}</small>
+            </span>
+          </label>
           {cost !== null && <p className={cost > 0.05 ? 'status status-error' : 'status status-ok'}>
             Estimated Replicate charge: about ${cost.toFixed(3)} per generated output.
             {' '}A new material plus an AI glyph uses two outputs; exact library artwork uses none.
@@ -608,8 +623,8 @@ export default function SimpleStudio(props: Props) {
               material: props.material,
               glyphStyle: '',
               conditioning: 'auto',
-              wantAlpha: true,
-              master: props.master?.dataUrl ?? null,
+              wantAlpha: props.glyphTransparency,
+              master: props.lockedContainer ? null : (props.master?.dataUrl ?? null),
               references: props.references.map((reference) => reference.dataUrl),
               familyPrompt: props.familyPrompt,
               negativePrompt: props.negativePrompt,

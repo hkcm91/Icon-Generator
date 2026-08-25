@@ -168,6 +168,8 @@ export default function App() {
           onClearGlyphs={store.clearGlyphs}
           lockedContainer={project.lockedContainer}
           onLockedContainer={(value) => setField('lockedContainer', value)}
+          glyphTransparency={project.glyphTransparency}
+          onGlyphTransparency={(value) => setField('glyphTransparency', value)}
           references={project.references}
           onReferences={(value) => setField('references', value)}
           exportApprovedOnly={project.exportApprovedOnly}

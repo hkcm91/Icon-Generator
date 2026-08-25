@@ -493,3 +493,6 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 .scale-saver .field-inline { margin-top: 10px; max-width: 270px; }
 .scale-saver input[type='number'] { width: 90px; }
 .scale-saver-quality { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: var(--panel); }
+.glyph-alpha-toggle { align-items: flex-start; margin: 10px 0; }
+.glyph-alpha-toggle span { display: grid; gap: 2px; }
+.glyph-alpha-toggle small { color: var(--muted); font-weight: 400; }

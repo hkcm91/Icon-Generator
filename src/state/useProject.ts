@@ -28,6 +28,8 @@ export interface Project {
   master: { name: string; dataUrl: string } | null;
   /** Reuse the approved container pixels instead of repainting the material. */
   lockedContainer: boolean;
+  /** Ask capable models for an isolated native-alpha glyph; off uses chroma keying. */
+  glyphTransparency: boolean;
   /** Additional appearance references shared by the family. */
   references: Array<{ name: string; dataUrl: string }>;
   /** Production export gate. */
@@ -63,6 +65,7 @@ const DEFAULT_PROJECT: Project = {
   glyphColor: '#ffffff',
   master: null,
   lockedContainer: false,
+  glyphTransparency: true,
   references: [],
   exportApprovedOnly: false,
   exportSelectedOnly: false,
@@ -84,6 +87,7 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
     calibrationRequired: parsed.calibrationRequired ?? true,
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
+    glyphTransparency: parsed.glyphTransparency ?? true,
     spec: normalizeSpec(parsed.spec),
     compose: { ...DEFAULT_COMPOSE, ...(parsed.compose ?? {}) },
     items: (parsed.items ?? []).map((item) =>

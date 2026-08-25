@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildConditioning, edgeSvg, maskSvg, shapeReferenceSvg } from '../src/core/condition';
 import { containerPath } from '../src/core/geometry';
-import { modelConditioning, modelInput } from '../src/core/replicate';
+import { glyphPrompt, modelConditioning, modelInput } from '../src/core/replicate';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../src/core/spec';
 
 const spec = (overrides: Partial<ContainerSpec> = {}) =>
@@ -95,5 +95,18 @@ describe('model input wiring', () => {
     expect(modelInput('google/nano-banana', 'p', 1024).aspect_ratio).toBe('1:1');
     const seedream = modelInput('bytedance/seedream-4', 'p', 1024);
     expect(seedream.width).toBe(seedream.height);
+  });
+});
+
+describe('glyph isolation prompt', () => {
+  it('requires zero-alpha surroundings and forbids backing tiles for native transparency', () => {
+    const prompt = glyphPrompt('moon', 'pearl', true, false);
+    expect(prompt).toContain('zero alpha');
+    expect(prompt).toContain('No opaque or translucent backing shape');
+    expect(prompt).toContain('No container, tile');
+  });
+
+  it('uses chroma green when transparency is turned off', () => {
+    expect(glyphPrompt('moon', 'pearl', false, false)).toContain('#00FF00');
   });
 });

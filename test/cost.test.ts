@@ -21,4 +21,8 @@ describe('generation cost controls', () => {
   it('does not restore a legacy high-cost front-page tier', () => {
     expect(hydrateProject({ quality: 'high', premiumAllowed: true }).quality).toBe('low');
   });
+
+  it("persists the user's native-transparency choice", () => {
+    expect(hydrateProject({ glyphTransparency: false }).glyphTransparency).toBe(false);
+  });
 });
