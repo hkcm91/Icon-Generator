@@ -362,7 +362,7 @@ export default function IconGrid(props: Props) {
               <Thumb
                 spec={props.spec}
                 compose={composeFor(item)}
-                empty={!props.options.wantAlpha && !props.glyphs.has(item.id)}
+                empty={!props.glyphs.has(item.id)}
                 layers={props.options.wantAlpha || !needsPaidGeneration(item)
                   ? { material: props.material, glyph: props.glyphs.get(item.id) ?? null }
                   : { material: props.glyphs.get(item.id) ?? null, glyph: null }}
@@ -375,50 +375,50 @@ export default function IconGrid(props: Props) {
                   onChange={(event) => patch(item.id, { name: event.target.value })}
                 />
               </div>
-              <input
-                className="card-concept"
-                aria-label={`${item.name} description`}
-                value={item.concept}
-                placeholder="Describe this glyph"
-                onChange={(event) => patch(item.id, { concept: event.target.value })}
-              />
-              {item.sourceUrl && (
-                <button
-                  type="button"
-                  className="ghost tiny source-mode"
-                  disabled={running}
-                  onClick={() => patch(item.id, {
-                    sourceMode: item.sourceMode === 'styled' ? 'exact' : 'styled',
-                    status: 'draft',
-                    selected: true,
-                  })}
-                >
-                  {item.sourceMode === 'styled' ? 'AI styled' : 'Exact artwork'}
-                </button>
-              )}
-              <label className="ghost tiny artwork-override">
-                Replace artwork
-                <input type="file" accept=".svg,image/svg+xml,image/png,image/webp,image/jpeg" hidden
-                  onChange={async (event) => {
-                    const file = event.target.files?.[0];
-                    if (!file) return;
-                    patch(item.id, {
-                      sourceUrl: await fileDataUrl(file),
-                      sourceMode: 'exact',
+              <details className="card-editor">
+                <summary>Edit details</summary>
+                <input
+                  className="card-concept"
+                  aria-label={`${item.name} description`}
+                  value={item.concept}
+                  placeholder="Describe this glyph"
+                  onChange={(event) => patch(item.id, { concept: event.target.value })}
+                />
+                {item.sourceUrl && (
+                  <button
+                    type="button"
+                    className="ghost tiny source-mode"
+                    disabled={running}
+                    onClick={() => patch(item.id, {
+                      sourceMode: item.sourceMode === 'styled' ? 'exact' : 'styled',
                       status: 'draft',
                       selected: true,
-                      approved: false,
-                    });
-                  }} />
-              </label>
-              <div className="card-flags">
-                <button type="button" className={item.anchor ? 'chip chip-on' : 'chip'}
-                  onClick={() => patch(item.id, { anchor: !item.anchor, approved: false })}>
-                  Anchor
-                </button>
-              </div>
-              <details className="card-editor">
-                <summary>Per-icon settings</summary>
+                    })}
+                  >
+                    {item.sourceMode === 'styled' ? 'AI styled' : 'Exact artwork'}
+                  </button>
+                )}
+                <label className="ghost tiny artwork-override">
+                  Replace artwork
+                  <input type="file" accept=".svg,image/svg+xml,image/png,image/webp,image/jpeg" hidden
+                    onChange={async (event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      patch(item.id, {
+                        sourceUrl: await fileDataUrl(file),
+                        sourceMode: 'exact',
+                        status: 'draft',
+                        selected: true,
+                        approved: false,
+                      });
+                    }} />
+                </label>
+                <div className="card-flags">
+                  <button type="button" className={item.anchor ? 'chip chip-on' : 'chip'}
+                    onClick={() => patch(item.id, { anchor: !item.anchor, approved: false })}>
+                    Anchor
+                  </button>
+                </div>
                 <input aria-label={`${item.name} category`} value={item.category ?? ''} placeholder="Category"
                   onChange={(event) => patch(item.id, { category: event.target.value })} />
                 <select aria-label={`${item.name} complexity`} value={item.complexity ?? 'medium'}
