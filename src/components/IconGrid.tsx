@@ -6,6 +6,7 @@ import {
   modelGlyphReferenceSource,
   parseLibrary,
   resolveIconOutputMode,
+  shouldMaskGeneratedCatalogSubject,
   frameVariantTarget,
   stableFrameIndex,
   type IconItem,
@@ -236,7 +237,11 @@ export default function IconGrid(props: Props) {
                 },
                 subject,
               );
-          if (needsPaidGeneration(item) && isAiGuidedCatalogSource(item.sourceUrl)) {
+          if (
+            shouldMaskGeneratedCatalogSubject(requestedContainerMode) &&
+            needsPaidGeneration(item) &&
+            isAiGuidedCatalogSource(item.sourceUrl)
+          ) {
             const exactMask = await exactGlyph(item.sourceUrl!, '#ffffff');
             layer = maskGeneratedGlyph(layer, exactMask, props.spec.size);
           }

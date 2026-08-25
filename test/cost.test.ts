@@ -6,6 +6,7 @@ import {
   makeItem,
   repairedTransparentOutputMode,
   resolveIconOutputMode,
+  shouldMaskGeneratedCatalogSubject,
   stableFrameIndex,
 } from '../src/core/library';
 import { hydrateProject } from '../src/state/useProject';
@@ -15,6 +16,12 @@ describe('generation cost controls', () => {
     expect(containerGenerationUsesAlpha('filled')).toBe(false);
     expect(containerGenerationUsesAlpha('open-frame')).toBe(true);
     expect(containerGenerationUsesAlpha('isolated')).toBe(true);
+  });
+
+  it('never cuts a complete filled tile down to the catalog glyph silhouette', () => {
+    expect(shouldMaskGeneratedCatalogSubject('filled')).toBe(false);
+    expect(shouldMaskGeneratedCatalogSubject('open-frame')).toBe(true);
+    expect(shouldMaskGeneratedCatalogSubject('isolated')).toBe(true);
   });
 
   it('bounds decorative frame pools from one to six reusable variants', () => {

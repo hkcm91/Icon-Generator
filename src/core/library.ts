@@ -20,6 +20,14 @@ export function containerGenerationUsesAlpha(mode: ContainerMode): boolean {
   return mode !== 'filled';
 }
 
+/**
+ * Subject masks belong only to layered constructions. Applying one to a
+ * complete filled-tile result would cut the generated container back off.
+ */
+export function shouldMaskGeneratedCatalogSubject(mode: ContainerMode): boolean {
+  return mode !== 'filled';
+}
+
 /** 0% reuses one frame; 100% spreads the family across six approved frames. */
 export function frameVariantTarget(detailVariation: number): number {
   const value = Math.max(0, Math.min(100, Number(detailVariation) || 0));
