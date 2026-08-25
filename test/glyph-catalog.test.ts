@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { humanizeGlyphName, organizeGlyphEntries, type GlyphCatalogEntry } from '../src/core/glyphCatalog';
+import materialCatalog from '../public/libraries/material-symbols.json';
+import {
+  MATERIAL_ESSENTIALS,
+  humanizeGlyphName,
+  organizeGlyphEntries,
+  type GlyphCatalogEntry,
+} from '../src/core/glyphCatalog';
 
 const rows: GlyphCatalogEntry[] = [
   { name: '10mp', slug: '10mp' },
@@ -10,9 +16,17 @@ const rows: GlyphCatalogEntry[] = [
 ];
 
 describe('organized glyph catalog', () => {
+  it('provides exactly 175 unique mobile essentials that exist in the bundled library', () => {
+    const available = new Set(materialCatalog.map((entry) => entry.slug));
+
+    expect(MATERIAL_ESSENTIALS).toHaveLength(175);
+    expect(new Set(MATERIAL_ESSENTIALS).size).toBe(175);
+    expect(MATERIAL_ESSENTIALS.filter((slug) => !available.has(slug))).toEqual([]);
+  });
+
   it('opens Material on useful essentials instead of the raw alphabetical inventory', () => {
     const result = organizeGlyphEntries(rows, 'material', 'essentials', '');
-    expect(result.map((entry) => entry.slug)).toEqual(['home', 'calendar_month', 'shopping_cart', 'cloud']);
+    expect(result.map((entry) => entry.slug)).toEqual(['home', 'calendar_month', 'cloud', 'shopping_cart']);
     expect(result.some((entry) => entry.slug === '10mp')).toBe(false);
   });
 
