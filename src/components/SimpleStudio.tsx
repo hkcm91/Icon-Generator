@@ -8,7 +8,7 @@ import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '.
 import type { ComposeLayers, ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
-import type { IconItem } from '../core/library';
+import { resolveIconOutputMode, type IconItem } from '../core/library';
 import {
   PLATFORM_TARGETS,
   blobBytes,
@@ -295,17 +295,20 @@ export default function SimpleStudio(props: Props) {
 
       for (const { item, glyph } of targets) {
         const stem = safe(item.name);
-        const completeFamilyIcon = 'sourceMode' in item && !props.glyphTransparency && needsPaidGeneration(item as IconItem);
-        const layers = !completeFamilyIcon
-          ? { material: props.materialLayer, glyph }
-          : { material: glyph ?? props.materialLayer, glyph: null };
+        const familyItem = ready.length ? item as IconItem : null;
+        const outputMode = familyItem
+          ? resolveIconOutputMode(familyItem, props.glyphTransparency)
+          : props.glyphTransparency ? 'transparent' : 'composed';
+        const layers = outputMode === 'complete'
+          ? { material: glyph ?? props.materialLayer, glyph: null }
+          : { material: props.materialLayer, glyph };
         const itemCompose: ComposeOptions = {
           ...props.compose,
           glyphScale: props.compose.glyphScale * ('opticalScale' in item ? (item.opticalScale ?? 1) : 1),
           glyphOffsetX: 'opticalOffsetX' in item ? (item.opticalOffsetX ?? 0) : 0,
           glyphOffsetY: 'opticalOffsetY' in item ? (item.opticalOffsetY ?? 0) : 0,
         };
-        const render = (size: number) => props.glyphTransparency
+        const render = (size: number) => outputMode === 'transparent'
           ? renderTransparentAtSize(props.spec, size, glyph, itemCompose)
           : renderAtSize(props.spec, size, layers, itemCompose);
         for (const target of PLATFORM_TARGETS) {
@@ -523,12 +526,22 @@ export default function SimpleStudio(props: Props) {
           <label className="toggle glyph-alpha-toggle">
             <input type="checkbox" checked={props.glyphTransparency}
               disabled={props.model !== 'openai/gpt-image-2'}
-              onChange={(event) => props.onGlyphTransparency(event.target.checked)} />
+              onChange={(event) => {
+                const legacyMode = props.glyphTransparency ? 'transparent' : undefined;
+                props.onItems(props.items.map((item) => {
+                  if (item.status !== 'ready' || item.outputMode || !props.glyphs.has(item.id)) return item;
+                  return {
+                    ...item,
+                    outputMode: legacyMode ?? (needsPaidGeneration(item) ? 'complete' : 'composed'),
+                  };
+                }));
+                props.onGlyphTransparency(event.target.checked);
+              }} />
             <span>
               <b>Transparent glyph output</b>
               <small>{props.glyphTransparency
-                ? 'On: generated assets stay on a clear canvas; no shared container is added.'
-                : 'Off: generate complete opaque icons; unfinished cards stay empty checkerboards.'}</small>
+                ? 'On for empty cards and future generations. Finished icons keep their original appearance.'
+                : 'Off for empty cards and future generations. Finished icons keep their original appearance.'}</small>
             </span>
           </label>
           {cost !== null && <p className={cost > 0.05 ? 'status status-error' : 'status status-ok'}>

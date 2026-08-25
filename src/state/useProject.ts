@@ -81,6 +81,7 @@ const DEFAULT_PROJECT: Project = {
 export function hydrateProject(parsed: Partial<Project>): Project {
   const migrateExpensiveDefault = parsed.quality === undefined && parsed.model === 'google/nano-banana-pro';
   const compose = { ...DEFAULT_COMPOSE, ...(parsed.compose ?? {}) };
+  const savedTransparency = parsed.glyphTransparency ?? true;
   return {
     ...DEFAULT_PROJECT,
     ...parsed,
@@ -94,7 +95,7 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     borderlessVersion: 1,
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
-    glyphTransparency: parsed.glyphTransparency ?? true,
+    glyphTransparency: savedTransparency,
     spec: normalizeSpec(parsed.spec),
     // Older project/template JSON could silently carry a dark analytic rim.
     // Clear it once; rims intentionally selected after this migration persist.
@@ -102,11 +103,22 @@ export function hydrateProject(parsed: Partial<Project>): Project {
       ...compose,
       rimWidth: parsed.borderlessVersion === 1 ? compose.rimWidth : 0,
     },
-    items: (parsed.items ?? []).map((item) =>
-      item.status === 'queued' || item.status === 'generating'
-        ? { ...item, status: 'draft' as const, error: undefined }
-        : item,
-    ),
+    items: (parsed.items ?? []).map((item) => {
+      if (item.status === 'queued' || item.status === 'generating') {
+        return { ...item, status: 'draft' as const, error: undefined };
+      }
+      if (item.status === 'ready' && !item.outputMode) {
+        const generated = !item.sourceUrl || item.sourceMode === 'styled';
+        return {
+          ...item,
+          // Freeze legacy cards in the exact mode in which the saved project
+          // was already displaying them. Future toggle changes cannot restyle
+          // completed work.
+          outputMode: savedTransparency ? 'transparent' as const : generated ? 'complete' as const : 'composed' as const,
+        };
+      }
+      return item;
+    }),
   };
 }
 

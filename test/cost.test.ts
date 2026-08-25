@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { estimateGlyphBatch, modelOutputCost } from '../src/core/cost';
-import { makeItem } from '../src/core/library';
+import { makeItem, resolveIconOutputMode } from '../src/core/library';
 import { hydrateProject } from '../src/state/useProject';
 
 describe('generation cost controls', () => {
@@ -29,6 +29,26 @@ describe('generation cost controls', () => {
 
   it("persists the user's native-transparency choice", () => {
     expect(hydrateProject({ glyphTransparency: false }).glyphTransparency).toBe(false);
+  });
+
+  it('freezes legacy finished cards in their saved rendering mode', () => {
+    const transparent = makeItem('Transparent', { status: 'ready', revision: 1 });
+    const complete = makeItem('Complete', { status: 'ready', revision: 1 });
+    const exact = makeItem('Exact', {
+      status: 'ready', revision: 1, sourceUrl: '/glyph.svg', sourceMode: 'exact',
+    });
+
+    expect(hydrateProject({ glyphTransparency: true, items: [transparent] }).items[0].outputMode)
+      .toBe('transparent');
+    const opaque = hydrateProject({ glyphTransparency: false, items: [complete, exact] }).items;
+    expect(opaque.map((item) => item.outputMode)).toEqual(['complete', 'composed']);
+  });
+
+  it('never lets the global toggle restyle a finished card', () => {
+    const transparent = makeItem('Transparent', { outputMode: 'transparent' });
+    const complete = makeItem('Complete', { outputMode: 'complete' });
+    expect(resolveIconOutputMode(transparent, false)).toBe('transparent');
+    expect(resolveIconOutputMode(complete, true)).toBe('complete');
   });
 
   it('clears legacy template rims but preserves a newly selected rim', () => {

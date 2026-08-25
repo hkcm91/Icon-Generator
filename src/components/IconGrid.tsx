@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { composeIcon, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
-import { parseLibrary, type IconItem } from '../core/library';
+import { parseLibrary, resolveIconOutputMode, type IconItem } from '../core/library';
 import LibraryPicker from './LibraryPicker';
 import { runPool, type PoolProgress } from '../core/queue';
 import type { ContainerSpec } from '../core/spec';
@@ -195,6 +195,9 @@ export default function IconGrid(props: Props) {
                 subject,
               );
           const nextRevision = item.revision + 1;
+          const outputMode = props.options.wantAlpha
+            ? 'transparent'
+            : needsPaidGeneration(item) ? 'complete' : 'composed';
           props.onItemGlyph(item.id, layer, nextRevision);
           // Deselect on success, so the next "Generate selected" targets only
           // what still needs doing.
@@ -202,6 +205,7 @@ export default function IconGrid(props: Props) {
             status: 'ready',
             revision: nextRevision,
             activeRevision: nextRevision,
+            outputMode,
             selected: false,
             approved: false,
           });
@@ -350,7 +354,9 @@ export default function IconGrid(props: Props) {
         <p className="hint">No icons yet. Import a list to get started.</p>
       ) : (
         <div className="card-grid">
-          {props.items.map((item) => (
+          {props.items.map((item) => {
+            const outputMode = resolveIconOutputMode(item, props.options.wantAlpha);
+            return (
             <article
               key={item.id}
               className={item.selected ? 'card card-on' : 'card'}
@@ -368,10 +374,10 @@ export default function IconGrid(props: Props) {
                 spec={props.spec}
                 compose={composeFor(item)}
                 empty={!props.glyphs.has(item.id)}
-                transparent={props.options.wantAlpha}
-                layers={props.options.wantAlpha
+                transparent={outputMode === 'transparent'}
+                layers={outputMode === 'transparent'
                   ? { material: null, glyph: props.glyphs.get(item.id) ?? null }
-                  : !needsPaidGeneration(item)
+                  : outputMode === 'composed'
                     ? { material: props.material, glyph: props.glyphs.get(item.id) ?? null }
                   : { material: props.glyphs.get(item.id) ?? null, glyph: null }}
               />
@@ -498,7 +504,8 @@ export default function IconGrid(props: Props) {
               </div>
               {item.error && <p className="card-error" title={item.error}>{item.error}</p>}
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>

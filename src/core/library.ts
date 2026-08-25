@@ -12,6 +12,7 @@
  */
 
 export type ItemStatus = 'draft' | 'queued' | 'generating' | 'ready' | 'failed';
+export type IconOutputMode = 'transparent' | 'composed' | 'complete';
 
 export interface IconItem {
   id: string;
@@ -38,9 +39,18 @@ export interface IconItem {
   revision: number;
   /** Revision currently shown/exported; revision remains the latest number. */
   activeRevision?: number;
+  /** How this finished revision was rendered. The global toggle must not restyle it. */
+  outputMode?: IconOutputMode;
   /** Explicit production sign-off for the current revision. */
   approved?: boolean;
   error?: string;
+}
+
+/** Finished cards keep their stored mode; the global toggle only supplies a draft default. */
+export function resolveIconOutputMode(item: IconItem, wantAlpha: boolean): IconOutputMode {
+  if (item.outputMode) return item.outputMode;
+  if (wantAlpha) return 'transparent';
+  return !item.sourceUrl || item.sourceMode === 'styled' ? 'complete' : 'composed';
 }
 
 let counter = 0;
