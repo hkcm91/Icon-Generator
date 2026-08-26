@@ -495,7 +495,19 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 .card[data-status='generating'] { border-color: var(--warn); }
 .card[data-status='failed'] { border-color: var(--bad); }
 
-.card-pick { position: absolute; top: 6px; left: 6px; }
+.card-pick {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  left: 6px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(5, 10, 20, 0.72);
+  cursor: pointer;
+}
 .card-pick input { accent-color: var(--accent); }
 .card-art { position: relative; }
 .card-fullscreen {
