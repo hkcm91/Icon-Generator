@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { directorPrompt, parseDirectorResponse, type DirectorContext } from '../src/core/director';
+import { directorPrompt, parseDirectorResponse, stageDirectorInstruction, type DirectorContext } from '../src/core/director';
 import { hydrateProject } from '../src/state/useProject';
 
 const context: DirectorContext = {
@@ -81,6 +81,26 @@ describe('Icon Director response safety', () => {
     expect(prompt).toContain('Keep the approved frame.');
     expect(prompt).toContain('"draft":299');
     expect(prompt.length).toBeLessThan(18000);
+  });
+
+  it('routes natural language directly to named image generations without a planner model', () => {
+    const result = stageDirectorInstruction(
+      'The Menu lost the thick glass frame. Restore it.',
+      context,
+      '',
+    );
+    expect(result.patch.selection).toEqual({ mode: 'named', names: ['Menu'] });
+    expect(result.patch.cardInstructions?.[0]).toMatchObject({ name: 'Menu' });
+    expect(result.patch.cardInstructions?.[0].instruction).toContain('Restore it.');
+    expect(result.reply).toContain('Direction saved for Menu');
+  });
+
+  it('keeps conversation memory and sends general direction to the family prompt', () => {
+    const result = stageDirectorInstruction('Make every icon use the thicker shell.', context, 'Keep aqua gel.');
+    expect(result.memory).toContain('Keep aqua gel.');
+    expect(result.memory).toContain('LATEST: Make every icon use the thicker shell.');
+    expect(result.patch.familyPrompt).toContain('newest instruction overrides');
+    expect(result.patch.selection).toEqual({ mode: 'all', names: [] });
   });
 });
 

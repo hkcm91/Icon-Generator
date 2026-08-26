@@ -392,6 +392,7 @@ export function openFramePrompt(
     `The reference subject is ${referenceSubject.trim() || 'the central object'}. Remove that subject completely: no silhouette, face, eyes, anatomy, pose, or recognizable fragments may remain.`,
     material.trim() ? `Preserve this material and finish: ${material.trim()}.` : '',
     frameStyle.trim() ? `FRAME TREATMENT AUTHORITY: ${frameStyle.trim()}.` : '',
+    'CANVAS REGISTRATION: Keep the decorative frame at the reference image\'s exact outer pixel bounds, scale, center, position and transparent exterior margin. Never zoom, enlarge, shrink, crop or recenter it when removing the subject.',
     'PIXEL-PRESERVATION PRIORITY: Preserve every non-subject frame element from the reference, including its exact outer envelope, inward extensions, material vocabulary, iridescent palette, transparent gel, bubbles, swirls, highlights, lighting, camera and dimensionality. Do not simplify, thin, crop, move, repaint, or erase those details.',
     'This is an OPEN FRAME, not a filled tile. Make only the pixels formerly occupied by the named subject truly transparent. Do not enlarge that cleared region beyond the removed subject and do not apply a generic circular, square, or percentage-based center cut.',
     'Decorative frame elements may enter the interior and must remain where they are. Preserve every intentional transparent gap between swirl, bubble and rim elements.',

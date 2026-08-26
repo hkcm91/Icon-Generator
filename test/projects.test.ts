@@ -40,8 +40,14 @@ describe('project catalog migration', () => {
     expect(hydrated.catalogTextSubjectVersion).toBe(1);
   });
 
-  it('requires legacy carved frames to be re-extracted once', () => {
+  it('requires legacy carved or unaligned frames to be re-extracted once', () => {
     expect(hydrateProject({ frameReady: true }).frameReady).toBe(false);
-    expect(hydrateProject({ frameReady: true, openFramePreservationVersion: 1 }).frameReady).toBe(true);
+    expect(hydrateProject({ frameReady: true, openFramePreservationVersion: 1 }).frameReady).toBe(false);
+    expect(hydrateProject({ frameReady: true, openFramePreservationVersion: 2 }).frameReady).toBe(true);
+  });
+
+  it('migrates the retired LLaVA reference helper', () => {
+    expect(hydrateProject({ visionModel: 'yorickvp/llava-13b' }).visionModel)
+      .toBe('lucataco/qwen3-vl-8b-instruct');
   });
 });

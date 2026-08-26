@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  directIconFamily,
+  stageDirectorInstruction,
   type DirectorContext,
   type DirectorMessage,
   type DirectorResult,
@@ -8,7 +8,6 @@ import {
 
 interface Props {
   master: { name: string; dataUrl: string } | null;
-  model: string;
   messages: DirectorMessage[];
   memory: string;
   context: DirectorContext;
@@ -33,38 +32,22 @@ const newMessage = (role: DirectorMessage['role'], text: string): DirectorMessag
 
 export default function IconDirector(props: Props) {
   const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
   const log = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     log.current?.scrollTo({ top: log.current.scrollHeight });
-  }, [props.messages, busy]);
+  }, [props.messages]);
 
-  const send = async (request = draft) => {
+  const send = (request = draft) => {
     const instruction = request.trim().slice(0, 1200);
-    if (!instruction || !props.master || busy) return;
+    if (!instruction || !props.master) return;
     const nextMessages = [...props.messages, newMessage('user', instruction)].slice(-40);
     props.onMessages(nextMessages);
     setDraft('');
-    setError('');
-    setBusy(true);
-    try {
-      const result = await directIconFamily(
-        props.model,
-        props.master.dataUrl,
-        props.context,
-        nextMessages,
-        props.memory,
-      );
-      props.onMessages([...nextMessages, newMessage('assistant', result.reply)].slice(-40));
-      props.onMemory(result.memory);
-      props.onApply(result);
-    } catch (nextError) {
-      setError((nextError as Error).message || 'Icon Director could not respond.');
-    } finally {
-      setBusy(false);
-    }
+    const result = stageDirectorInstruction(instruction, props.context, props.memory);
+    props.onMessages([...nextMessages, newMessage('assistant', result.reply)].slice(-40));
+    props.onMemory(result.memory);
+    props.onApply(result);
   };
 
   return (
@@ -72,9 +55,9 @@ export default function IconDirector(props: Props) {
       <div className="director-head">
         <div>
           <strong>Icon Director</strong>
-          <small>One conversation for this set · your reference stays in context</small>
+          <small>One conversation for this set · directions go straight to the selected image model</small>
         </div>
-        <span className="director-cost-note">Image generation waits for your approval</span>
+        <span className="director-cost-note">No planning-model charge · generation waits for approval</span>
       </div>
 
       <div className="director-log" ref={log} aria-live="polite">
@@ -92,12 +75,11 @@ export default function IconDirector(props: Props) {
             {message.text}
           </div>
         ))}
-        {busy && <div className="director-message director-assistant director-thinking">Reviewing the reference and set…</div>}
       </div>
 
       <div className="director-quick" aria-label="Quick requests">
         {QUICK_REQUESTS.map((request) => (
-          <button type="button" className="chip" key={request} disabled={!props.master || busy} onClick={() => void send(request)}>
+          <button type="button" className="chip" key={request} disabled={!props.master} onClick={() => send(request)}>
             {request}
           </button>
         ))}
@@ -108,7 +90,6 @@ export default function IconDirector(props: Props) {
           rows={3}
           maxLength={1200}
           value={draft}
-          disabled={busy}
           placeholder={props.master
             ? 'Try: “The new icons lost the thick glass border. Keep that shell exactly like my reference and redo Menu, Search, and Apps.”'
             : 'Upload a reference first so the director can see the family style.'}
@@ -116,15 +97,14 @@ export default function IconDirector(props: Props) {
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
-              void send();
+              send();
             }
           }}
         />
-        <button type="button" disabled={!props.master || !draft.trim() || busy} onClick={() => void send()}>
-          {busy ? 'Directing…' : 'Apply direction'}
+        <button type="button" disabled={!props.master || !draft.trim()} onClick={() => send()}>
+          Apply direction
         </button>
       </div>
-      {error && <p className="status status-error">{error}</p>}
       {!props.master && <p className="hint director-hint">The chat activates after you upload the set’s visual reference in Step 1.</p>}
     </section>
   );

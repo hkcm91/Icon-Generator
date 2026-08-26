@@ -16,7 +16,7 @@ export default async function handler(request, response) {
       return response.status(created.status ?? 502).json({
         error:
           created.status === 404
-            ? `${created.error} Set a different vision model in All controls.`
+            ? `${created.error} The optional reference-analysis helper is unavailable; image generation is unaffected.`
             : created.error,
       });
     }

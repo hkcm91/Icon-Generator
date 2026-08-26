@@ -1,4 +1,3 @@
-import { describeImage } from './replicate';
 import type { ContainerMode, IconItem } from './library';
 
 export type DirectorRole = 'user' | 'assistant';
@@ -138,19 +137,6 @@ export function parseDirectorResponse(raw: string, previousMemory = ''): Directo
   }
 }
 
-function directorInput(model: string, prompt: string, image: string): Record<string, unknown> {
-  if (model.includes('llava') || model.includes('bakllava')) {
-    return { image, prompt, max_tokens: 1200, temperature: 0.1 };
-  }
-  if (model.includes('qwen') || model.includes('internvl') || model.includes('moondream')) {
-    return { image, prompt, max_new_tokens: 1200 };
-  }
-  if (model.includes('gpt') || model.includes('claude') || model.includes('gemini')) {
-    return { image_input: [image], prompt, max_tokens: 1200 };
-  }
-  return { image, prompt };
-}
-
 export function directorPrompt(
   context: DirectorContext,
   messages: DirectorMessage[],
@@ -192,13 +178,76 @@ export function directorPrompt(
   ].join('\n');
 }
 
-export async function directIconFamily(
-  model: string,
-  masterImage: string,
+const normalizeName = (value: string) => value.trim().toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ');
+
+function appendMemory(previousMemory: string, familyPrompt: string, instruction: string): string {
+  const previous = previousMemory.trim() || familyPrompt.trim();
+  const next = `${previous ? `${previous}\n` : ''}LATEST: ${instruction.trim()}`;
+  // Keep the newest part of a long conversation. The resulting prompt remains
+  // inexpensive and the newest instruction is never truncated away.
+  return next.length <= 2400 ? next : next.slice(next.length - 2400).replace(/^\S*\s/, '');
+}
+
+/**
+ * Stage ordinary language directly for the image-edit request.
+ *
+ * GPT Image accepts text plus image inputs, but it is not a structured JSON
+ * planning model. Targeting cards locally avoids a second hosted prediction,
+ * while the complete conversation direction reaches GPT Image at generation.
+ */
+export function stageDirectorInstruction(
+  instruction: string,
   context: DirectorContext,
-  messages: DirectorMessage[],
   memory: string,
-): Promise<DirectorResult> {
-  const raw = await describeImage(model, directorInput(model, directorPrompt(context, messages, memory), masterImage));
-  return parseDirectorResponse(raw, memory);
+): DirectorResult {
+  const cleaned = instruction.trim().replace(/\s+/g, ' ').slice(0, 1200);
+  if (!cleaned) return { reply: 'Type a direction first.', memory, patch: {} };
+
+  const normalized = ` ${normalizeName(cleaned)} `;
+  const namedCards = [...context.cards]
+    .sort((a, b) => b.name.length - a.name.length)
+    .filter((card) => {
+      const name = normalizeName(card.name);
+      return name.length > 1 && normalized.includes(` ${name} `);
+    });
+  const failedCards = /\b(failed|errors?|didn'?t work)\b/i.test(cleaned)
+    ? context.cards.filter((card) => card.status === 'failed')
+    : [];
+  const selectedCards = /\bselected(?: cards?| icons?)?\b/i.test(cleaned)
+    ? context.cards.filter((card) => card.selected)
+    : [];
+  const targets = namedCards.length ? namedCards : failedCards.length ? failedCards : selectedCards;
+  const nextMemory = appendMemory(memory, context.familyPrompt, cleaned);
+  const generationDirection = [
+    'ICON DIRECTOR CONVERSATION: Follow every compatible instruction below.',
+    'The newest instruction overrides any earlier conflict.',
+    nextMemory,
+  ].join(' ');
+  const patch: DirectorPatch = {};
+
+  if (targets.length) {
+    patch.selection = { mode: 'named', names: targets.map((card) => card.name) };
+    patch.cardInstructions = targets.map((card) => ({
+      name: card.name,
+      instruction: generationDirection,
+    }));
+  } else {
+    patch.familyPrompt = generationDirection;
+    if (/\b(all|every)\s+(?:the\s+)?(?:icons?|cards?)\b|\b(?:whole|entire)\s+(?:icon\s+)?(?:family|set)\b/i.test(cleaned)) {
+      patch.selection = { mode: 'all', names: [] };
+    }
+  }
+
+  if (/\bopen[- ]frame\b|\bhollow (?:glass )?frame\b/i.test(cleaned)) patch.containerMode = 'open-frame';
+  else if (/\b(?:no|without) (?:a )?(?:container|tile|frame)\b|\bisolated (?:icon|subject|glyph)\b/i.test(cleaned)) patch.containerMode = 'isolated';
+  else if (/\bfilled (?:glass )?(?:tile|container|frame)\b|\bcontainer plus (?:symbol|glyph)\b/i.test(cleaned)) patch.containerMode = 'filled';
+
+  const names = targets.map((card) => card.name);
+  return {
+    reply: names.length
+      ? `Direction saved for ${names.join(', ')}. Those cards are selected; generate when ready.`
+      : 'Family direction saved. It will go directly to the selected image model when you generate.',
+    memory: nextMemory,
+    patch,
+  };
 }

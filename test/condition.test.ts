@@ -222,6 +222,8 @@ describe('conditioned material prompt', () => {
 describe('open frame prompt', () => {
   it('removes the sample subject while preserving real alpha holes', () => {
     const prompt = openFramePrompt('iridescent transparent gel', 'ghost', true);
+    expect(prompt).toContain('exact outer pixel bounds');
+    expect(prompt).toContain('Never zoom, enlarge, shrink, crop or recenter');
     expect(prompt).toContain('Remove that subject completely');
     expect(prompt).toContain('reference subject is ghost');
     expect(prompt).toContain('OPEN FRAME, not a filled tile');
