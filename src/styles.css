@@ -482,6 +482,37 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   background: rgba(16, 185, 129, 0.06);
 }
 .byoc-container .badge { margin-right: auto; width: auto; }
+.codex-local-tools {
+  margin: 8px 0 10px;
+  padding: 0 10px;
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  border-radius: 9px;
+  background: rgba(56, 189, 248, 0.045);
+}
+.codex-local-tools > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 0;
+  color: var(--text);
+  font-weight: 600;
+}
+.codex-local-tools[open] > summary { margin-bottom: 2px; }
+.codex-local-tools .hint { margin-bottom: 8px; }
+.codex-local-tools code {
+  font: 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  color: #a8b6d1;
+  overflow-wrap: anywhere;
+}
+.codex-job-status {
+  display: grid;
+  gap: 3px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.codex-job-status strong { color: var(--good); }
 
 .card {
   position: relative;
