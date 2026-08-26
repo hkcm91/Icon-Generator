@@ -497,6 +497,27 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 
 .card-pick { position: absolute; top: 6px; left: 6px; }
 .card-pick input { accent-color: var(--accent); }
+.card-art { position: relative; }
+.card-fullscreen {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 7px;
+  color: #fff;
+  background: rgba(5, 10, 20, 0.76);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.34);
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.76;
+}
+.card-fullscreen:hover,
+.card-fullscreen:focus-visible { opacity: 1; background: rgba(5, 10, 20, 0.94); }
 
 .card-thumb {
   width: 100%;
@@ -552,6 +573,69 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.icon-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: clamp(10px, 2vw, 28px);
+  background: rgba(2, 6, 14, 0.9);
+  backdrop-filter: blur(10px);
+}
+.icon-lightbox-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(96vw, 1120px);
+  height: min(94vh, 1120px);
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.64);
+}
+.icon-lightbox-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.icon-lightbox-head > div { display: grid; gap: 1px; }
+.icon-lightbox-head small { color: var(--muted); }
+.icon-lightbox-close { min-width: 74px; }
+.icon-lightbox-stage {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(8px, 2vw, 24px);
+  overflow: hidden;
+  background-color: #080d16;
+  background-image:
+    linear-gradient(45deg, #182236 25%, transparent 25%),
+    linear-gradient(-45deg, #182236 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #182236 75%),
+    linear-gradient(-45deg, transparent 75%, #182236 75%);
+  background-size: 28px 28px;
+  background-position: 0 0, 0 14px, 14px -14px, -14px 0;
+}
+.icon-lightbox-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+@media (max-width: 600px) {
+  .icon-lightbox { padding: 0; }
+  .icon-lightbox-dialog { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
 }
 
 /* --- API key ------------------------------------------------------------- */
