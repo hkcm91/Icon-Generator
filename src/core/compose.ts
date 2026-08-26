@@ -14,6 +14,7 @@
 
 import { containerPath, glyphSafePath, innerBox } from './geometry';
 import type { ContainerSpec } from './spec';
+import { alphaBounds, boundsTransform } from './frameAlignment';
 
 export interface ComposeLayers {
   /** Full-bleed surface texture. Cropped to fill, then clipped to the path. */
@@ -221,6 +222,36 @@ export function preserveAlphaLayer(
   const canvas = createCanvas(size);
   drawContain(context2d(canvas), image, 0, 0, size, size);
   return canvas;
+}
+
+/**
+ * Match a subject-removed frame to the uploaded master's visible footprint.
+ * The image model may zoom an edit even when prompted not to; this geometric
+ * registration changes only scale and position, never alpha shape or details.
+ */
+export function alignLayerToReferenceBounds(
+  image: CanvasImageSource,
+  reference: CanvasImageSource,
+  size: number,
+): HTMLCanvasElement {
+  const source = preserveAlphaLayer(image, size);
+  const target = preserveAlphaLayer(reference, size);
+  const sourceContext = context2d(source);
+  const targetContext = context2d(target);
+  const sourceBounds = alphaBounds(sourceContext.getImageData(0, 0, size, size).data, size, size);
+  const targetBounds = alphaBounds(targetContext.getImageData(0, 0, size, size).data, size, size);
+  if (!sourceBounds || !targetBounds) return source;
+
+  const transform = boundsTransform(sourceBounds, targetBounds);
+  const aligned = createCanvas(size);
+  context2d(aligned).drawImage(
+    source,
+    transform.translateX,
+    transform.translateY,
+    size * transform.scaleX,
+    size * transform.scaleY,
+  );
+  return aligned;
 }
 
 /**

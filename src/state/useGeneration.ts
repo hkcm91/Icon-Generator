@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
+import { alignLayerToReferenceBounds, cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
 import { buildConditioning, type ConditioningMode } from '../core/condition';
 import {
   conditionedMaterialPrompt,
@@ -286,9 +286,9 @@ export function useGeneration() {
       wantAlpha,
       options.quality,
     );
-    // v2 caches the model's validated frame exactly. v1 permanently carved a
-    // 64% hole through inward glass details after the subject was already gone.
-    const key = await cacheKey('open-frame-v2-preserve-details', options.model, input);
+    // v3 preserves all validated pixels and registers their visible envelope
+    // to the upload. Earlier model edits sometimes zoomed the cleaned frame.
+    const key = await cacheKey('open-frame-v3-align-reference-bounds', options.model, input);
     const cached = await cachedLayer(key);
     if (cached) {
       if (!inspectOpenFrame(cached, options.spec.size).subjectLikely) return cached;
@@ -299,12 +299,14 @@ export function useGeneration() {
     const rawFrame = result.alphaAccepted && hasNativeAlpha(image)
       ? preserveAlphaLayer(image, options.spec.size)
       : keyOutBackground(image, options.spec.size);
-    const inspection = inspectOpenFrame(rawFrame, options.spec.size);
+    const reference = await loadImage(options.master);
+    const alignedFrame = alignLayerToReferenceBounds(rawFrame, reference, options.spec.size);
+    const inspection = inspectOpenFrame(alignedFrame, options.spec.size);
     if (inspection.subjectLikely) {
       throw new Error('The model left a large central subject in the extracted frame. Nothing was approved or cached, and the app did not erase any frame details. Press Extract clean frame again for a new attempt.');
     }
-    await rememberLayer(key, rawFrame);
-    return rawFrame;
+    await rememberLayer(key, alignedFrame);
+    return alignedFrame;
   }, []);
 
   const generateMaterial = useCallback(

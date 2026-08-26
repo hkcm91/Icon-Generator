@@ -26,7 +26,7 @@ export interface Project {
   builtinGlyphStyleVersion: number;
   /** Built-in subjects are prompted by text; their raw SVG pixels never enter the model. */
   catalogTextSubjectVersion: number;
-  /** v1 frames preserve validated model pixels without a destructive centre cut. */
+  /** v2 also registers the cleaned frame to the uploaded master's visible bounds. */
   openFramePreservationVersion: number;
   premiumAllowed: boolean;
   /** Vision model used to name the symbol in an uploaded master. */
@@ -90,7 +90,7 @@ const DEFAULT_PROJECT: Project = {
   borderlessVersion: 1,
   builtinGlyphStyleVersion: 1,
   catalogTextSubjectVersion: 1,
-  openFramePreservationVersion: 1,
+  openFramePreservationVersion: 2,
   premiumAllowed: false,
   visionModel: DEFAULT_VISION_MODEL,
   // Empty by design. A pre-filled default is indistinguishable from a field
@@ -167,14 +167,17 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     // after IndexedDB has loaded. App performs that one-time image repair.
     builtinGlyphStyleVersion: parsed.builtinGlyphStyleVersion ?? (parsed.items ? 0 : 1),
     catalogTextSubjectVersion: parsed.catalogTextSubjectVersion ?? (parsed.items ? 0 : 1),
-    openFramePreservationVersion: 1,
+    openFramePreservationVersion: 2,
+    visionModel: !parsed.visionModel || parsed.visionModel === 'yorickvp/llava-13b'
+      ? DEFAULT_VISION_MODEL
+      : parsed.visionModel,
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
     glyphTransparency: savedTransparency,
     containerMode: parsed.containerMode ?? (savedTransparency ? 'isolated' : 'filled'),
-    // Frames approved before preservation v1 may be the old 64%-carved layer.
-    // Keep the pixels for comparison, but require one explicit re-extraction.
-    frameReady: parsed.openFramePreservationVersion === 1 ? (parsed.frameReady ?? false) : false,
+    // v1 stopped the destructive centre carve, but its model result could be
+    // zoomed relative to the upload. Require one aligned v2 re-extraction.
+    frameReady: parsed.openFramePreservationVersion === 2 ? (parsed.frameReady ?? false) : false,
     materialPalette: normalizeMaterialPalette(parsed.materialPalette),
     styleFidelity: percentage(parsed.styleFidelity, 90),
     detailVariation: percentage(parsed.detailVariation, 70),

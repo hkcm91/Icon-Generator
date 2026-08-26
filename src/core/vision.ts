@@ -46,10 +46,13 @@ export interface ReferenceAnalysis {
   construction: 'filled-container' | 'open-frame-with-subject' | 'isolated-subject' | 'unknown';
 }
 
-export const DEFAULT_VISION_MODEL = 'yorickvp/llava-13b';
+export const DEFAULT_VISION_MODEL = 'lucataco/qwen3-vl-8b-instruct';
 
 /** Field name each family expects for its image input. */
 function visionInput(model: string, prompt: string, image: string, maxTokens = 700): Record<string, unknown> {
+  if (model.includes('qwen3-vl')) {
+    return { media: image, prompt, max_new_tokens: maxTokens, temperature: 0 };
+  }
   if (model.includes('llava') || model.includes('bakllava')) {
     return { image, prompt, max_tokens: maxTokens, temperature: 0.1 };
   }

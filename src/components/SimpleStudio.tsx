@@ -910,7 +910,6 @@ export default function SimpleStudio(props: Props) {
           <div className="compact-step-body compact-fields">
           <IconDirector
             master={props.master}
-            model={props.visionModel}
             messages={props.directorMessages}
             memory={props.directorMemory}
             context={{
@@ -953,7 +952,7 @@ export default function SimpleStudio(props: Props) {
                     {props.frameReady && props.materialLayer
                       ? <LayerThumbnail image={props.materialLayer} />
                       : <div className="frame-compare-art frame-compare-empty">Subject-removed version appears here</div>}
-                    <figcaption><strong>Subject-removed master</strong><small>{props.frameReady ? 'Used as the family frame' : 'Not created yet'}</small></figcaption>
+                    <figcaption><strong>Subject-removed master</strong><small>{props.frameReady ? 'Used as the family frame · size matched' : 'Not created yet'}</small></figcaption>
                   </figure>
                 </div>
               )}
