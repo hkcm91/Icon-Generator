@@ -849,7 +849,12 @@ export default function SimpleStudio(props: Props) {
         id: globalThis.crypto?.randomUUID?.() ?? `director-generate-${Date.now()}-${Math.random()}`,
         targetIds: targets.map((item) => item.id),
       });
-      const message = `Starting ${targets.length} selected card${targets.length === 1 ? '' : 's'} as ${effectiveMode === 'filled' ? 'complete icons' : effectiveMode === 'open-frame' ? 'open-frame icons' : 'isolated subjects'}. Estimated batch cost: ${estimate.cost === null ? 'model-priced' : `$${estimate.cost.toFixed(2)}`}.`;
+      const construction = effectiveMode === 'filled'
+        ? `complete icon${targets.length === 1 ? '' : 's'}`
+        : effectiveMode === 'open-frame'
+          ? `open-frame icon${targets.length === 1 ? '' : 's'}`
+          : `isolated subject${targets.length === 1 ? '' : 's'}`;
+      const message = `Starting ${targets.length} selected card${targets.length === 1 ? '' : 's'} as ${construction}. Estimated batch cost: ${estimate.cost === null ? 'model-priced' : `$${estimate.cost.toFixed(2)}`}.`;
       setStatus({ kind: 'ok', message });
       return message;
     }

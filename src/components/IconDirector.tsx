@@ -46,8 +46,10 @@ export default function IconDirector(props: Props) {
     setDraft('');
     const result = stageDirectorInstruction(instruction, props.context, props.memory);
     props.onMemory(result.memory);
-    const appliedReply = props.onApply(result) || result.reply;
-    props.onMessages([...nextMessages, newMessage('assistant', appliedReply)].slice(-40));
+    const appliedReply = props.onApply(result) ?? result.reply;
+    if (appliedReply.trim()) {
+      props.onMessages([...nextMessages, newMessage('assistant', appliedReply)].slice(-40));
+    }
   };
 
   return (

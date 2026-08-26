@@ -48,3 +48,21 @@ export function boundsTransform(source: PixelBounds, reference: PixelBounds): Bo
     translateY: reference.y - source.y * scaleY,
   };
 }
+
+/** Uniformly fit one visible envelope into another without stretching it. */
+export function boundsContainTransform(source: PixelBounds, reference: PixelBounds): BoundsTransform {
+  const scale = Math.min(
+    reference.width / Math.max(1, source.width),
+    reference.height / Math.max(1, source.height),
+  );
+  const sourceCenterX = source.x + source.width / 2;
+  const sourceCenterY = source.y + source.height / 2;
+  const targetCenterX = reference.x + reference.width / 2;
+  const targetCenterY = reference.y + reference.height / 2;
+  return {
+    scaleX: scale,
+    scaleY: scale,
+    translateX: targetCenterX - sourceCenterX * scale,
+    translateY: targetCenterY - sourceCenterY * scale,
+  };
+}

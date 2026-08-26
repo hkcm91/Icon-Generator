@@ -189,6 +189,19 @@ function appendMemory(previousMemory: string, familyPrompt: string, instruction:
   return next.length <= 2400 ? next : next.slice(next.length - 2400).replace(/^\S*\s/, '');
 }
 
+function mentionedTheme(instruction: string): string | undefined {
+  const patterns = [
+    /\b(?:want|use|using|with|give(?: it)?|make(?: it)?)\s+(?:an?\s+)?([a-z][a-z0-9 &'\/-]{1,70}?)\s+theme\b/i,
+    /\btheme\s*(?:is|of|:)\s*([a-z][a-z0-9 &'\/-]{1,70})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = instruction.match(pattern);
+    const candidate = match?.[1]?.trim().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '');
+    if (candidate) return candidate;
+  }
+  return undefined;
+}
+
 /**
  * Stage ordinary language directly for the image-edit request.
  *
@@ -218,7 +231,11 @@ export function stageDirectorInstruction(
     ? context.cards.filter((card) => card.selected)
     : [];
   const targets = namedCards.length ? namedCards : failedCards.length ? failedCards : selectedCards;
-  const wantsGeneration = /\b(?:generate|regenerate|render)\b|\bredo\b|\btest\b[^.]{0,80}\bselected\b/i.test(cleaned);
+  const confirmsGeneration = /^(?:(?:yes|ok(?:ay)?)[,.]?\s*)?(?:please\s+)?(?:now(?:\s+please)?|go ahead(?:\s+now)?|do it(?:\s+now)?|start(?:\s+(?:it|them|those))?(?:\s+now)?|run (?:it|them|those)(?:\s+now)?)(?:\s+please)?[.!]*$/i.test(cleaned);
+  const createsNamedCard = namedCards.length > 0 && /\bcreate\b/i.test(cleaned);
+  const wantsGeneration = /\b(?:generate|regenerate|render)\b|\bredo\b|\btest\b[^.]{0,80}\bselected\b/i.test(cleaned)
+    || confirmsGeneration
+    || createsNamedCard;
   const nextMemory = appendMemory(memory, context.familyPrompt, cleaned);
   const generationDirection = [
     'ICON DIRECTOR CONVERSATION: Follow every compatible instruction below.',
@@ -226,6 +243,8 @@ export function stageDirectorInstruction(
     nextMemory,
   ].join(' ');
   const patch: DirectorPatch = {};
+  const requestedTheme = mentionedTheme(cleaned);
+  if (requestedTheme) patch.theme = requestedTheme;
 
   if (targets.length) {
     patch.selection = { mode: 'named', names: targets.map((card) => card.name) };
@@ -249,7 +268,6 @@ export function stageDirectorInstruction(
     (replacesSubject && keepsCompleteContainer)
   ) patch.containerMode = 'filled';
 
-  const names = targets.map((card) => card.name);
   const selectedAfterPatch = patch.selection?.mode === 'all'
     ? context.cards.length
     : patch.selection?.mode === 'named'
@@ -261,9 +279,7 @@ export function stageDirectorInstruction(
       ? `Generation requested for ${selectedAfterPatch} selected card${selectedAfterPatch === 1 ? '' : 's'}.`
       : wantsGeneration
         ? 'I can generate here, but no cards are selected. Select the cards you want and ask me to generate again.'
-        : names.length
-          ? `Direction saved for ${names.join(', ')}. Those cards are selected; generate when ready.`
-          : 'Family direction saved. It will go directly to the selected image model when you generate.',
+        : '',
     memory: nextMemory,
     patch,
     action,

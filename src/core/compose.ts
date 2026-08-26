@@ -14,7 +14,7 @@
 
 import { containerPath, glyphSafePath, innerBox } from './geometry';
 import type { ContainerSpec } from './spec';
-import { alphaBounds, boundsTransform } from './frameAlignment';
+import { alphaBounds, boundsContainTransform, boundsTransform } from './frameAlignment';
 
 export interface ComposeLayers {
   /** Full-bleed surface texture. Cropped to fill, then clipped to the path. */
@@ -255,6 +255,38 @@ export function alignLayerToReferenceBounds(
 }
 
 /**
+ * Register a complete generated icon to the family's analytic container box.
+ * This corrects inconsistent transparent padding without cropping or stretching
+ * the generated artwork, and is shared by previews and every export size.
+ */
+export function alignLayerToContainerBounds(
+  image: CanvasImageSource,
+  spec: ContainerSpec,
+): HTMLCanvasElement {
+  const source = preserveAlphaLayer(image, spec.size);
+  const sourceContext = context2d(source);
+  const sourceBounds = alphaBounds(sourceContext.getImageData(0, 0, spec.size, spec.size).data, spec.size, spec.size);
+  if (!sourceBounds) return source;
+  // An opaque fallback has no measurable exterior transparency. Leave it at
+  // canvas scale; the exact family path will still clip its outer boundary.
+  if (sourceBounds.x === 0 && sourceBounds.y === 0 && sourceBounds.width === spec.size && sourceBounds.height === spec.size) {
+    return source;
+  }
+  const box = innerBox(spec);
+  const targetBounds = { x: box.x, y: box.y, width: box.edge, height: box.edge };
+  const transform = boundsContainTransform(sourceBounds, targetBounds);
+  const aligned = createCanvas(spec.size);
+  context2d(aligned).drawImage(
+    source,
+    transform.translateX,
+    transform.translateY,
+    spec.size * transform.scaleX,
+    spec.size * transform.scaleY,
+  );
+  return aligned;
+}
+
+/**
  * Render a self-contained generated tile without painting an opaque fallback
  * below it. Complete results can carry real translucent glass at their edge;
  * the normal material compositor's base fill would destroy that appearance.
@@ -268,6 +300,7 @@ export function composeCompleteIcon(
   if (!image) return canvas;
   const context = context2d(canvas);
   const outline = new Path2D(containerPath(spec));
+  const aligned = alignLayerToContainerBounds(image, spec);
 
   if (options.shadowBlur > 0) {
     context.save();
@@ -281,7 +314,7 @@ export function composeCompleteIcon(
 
   context.save();
   context.clip(outline, 'evenodd');
-  drawCover(context, image, 0, 0, spec.size, spec.size);
+  drawCover(context, aligned, 0, 0, spec.size, spec.size);
   context.restore();
 
   if (options.rimWidth > 0) {
