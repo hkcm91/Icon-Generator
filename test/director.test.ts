@@ -115,7 +115,7 @@ describe('Icon Director response safety', () => {
     };
     const result = stageDirectorInstruction('Can you generate from here?', selectedContext, 'Keep the thick glass frame.');
     expect(result.action).toBe('generate-selected');
-    expect(result.reply).toContain('Starting 3 selected cards now');
+    expect(result.reply).toContain('Generation requested for 3 selected cards');
     expect(result.patch.familyPrompt).toContain('Keep the thick glass frame.');
   });
 
@@ -137,6 +137,26 @@ describe('Icon Director response safety', () => {
     expect(result.action).toBe('generate-selected');
     expect(result.patch.selection).toEqual({ mode: 'named', names: ['Home', 'Menu', 'Search'] });
     expect(result.patch.cardInstructions).toHaveLength(3);
+  });
+
+  it('uses complete-icon editing when replacing subjects but keeping the uploaded container', () => {
+    const openFrameContext: DirectorContext = {
+      ...context,
+      containerMode: 'open-frame',
+      cards: ['Home', 'Menu', 'Search'].map((name) => ({
+        name,
+        concept: name,
+        status: 'draft' as const,
+        selected: true,
+      })),
+    };
+    const result = stageDirectorInstruction(
+      'Please keep the materials and container shape the same but change the subject to match the glyph subject. I want a halloween/fall theme. test the three I have selected',
+      openFrameContext,
+      '',
+    );
+    expect(result.patch.containerMode).toBe('filled');
+    expect(result.action).toBe('generate-selected');
   });
 });
 

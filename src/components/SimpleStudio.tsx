@@ -25,7 +25,7 @@ import {
   renderTransparentAtSize,
   svgMask,
 } from '../core/export';
-import { modelOutputCost } from '../core/cost';
+import { estimateGlyphBatch, modelOutputCost } from '../core/cost';
 import { mergeMaterialPalette, type MaterialPalette, type MaterialRole } from '../core/materialPalette';
 import { inspectOpenFrame } from '../core/frameValidation';
 
@@ -818,16 +818,42 @@ export default function SimpleStudio(props: Props) {
     }
 
     if (result.action === 'generate-selected') {
-      const targetIds = nextItems.filter((item) => item.selected).map((item) => item.id);
-      if (!targetIds.length) {
-        setStatus({ kind: 'error', message: 'Select at least one card before asking the Director to generate.' });
-        return;
+      const targets = nextItems.filter((item) => item.selected);
+      if (!targets.length) {
+        const message = 'Generation blocked: select at least one card, then ask the Director to generate again.';
+        setStatus({ kind: 'error', message });
+        return message;
+      }
+      if (premiumMessage) {
+        const message = `Generation blocked: ${premiumMessage}`;
+        setStatus({ kind: 'error', message });
+        return message;
+      }
+      const effectiveMode = patch.containerMode ?? props.containerMode;
+      if (effectiveMode === 'open-frame' && !props.frameReady) {
+        const inspection = props.materialLayer ? inspectOpenFrame(props.materialLayer, props.spec.size) : null;
+        const coverage = inspection?.subjectLikely
+          ? ` The current artwork occupies ${Math.round(inspection.centralCoverage * 100)}% of the central safe area.`
+          : '';
+        const message = `Generation blocked: Open frame requires a subject-free reusable frame.${coverage} Extract the frame first, or ask the Director to keep the complete container and replace its subject.`;
+        setStatus({ kind: 'error', message });
+        return message;
+      }
+      const estimate = estimateGlyphBatch(targets, props.model, props.quality);
+      if (estimate.cost !== null && estimate.cost > props.maxBatchCost) {
+        const message = `Generation blocked: this batch is estimated at $${estimate.cost.toFixed(2)}, above the $${props.maxBatchCost.toFixed(2)} limit.`;
+        setStatus({ kind: 'error', message });
+        return message;
       }
       setDirectorGenerationRequest({
         id: globalThis.crypto?.randomUUID?.() ?? `director-generate-${Date.now()}-${Math.random()}`,
-        targetIds,
+        targetIds: targets.map((item) => item.id),
       });
+      const message = `Starting ${targets.length} selected card${targets.length === 1 ? '' : 's'} as ${effectiveMode === 'filled' ? 'complete icons' : effectiveMode === 'open-frame' ? 'open-frame icons' : 'isolated subjects'}. Estimated batch cost: ${estimate.cost === null ? 'model-priced' : `$${estimate.cost.toFixed(2)}`}.`;
+      setStatus({ kind: 'ok', message });
+      return message;
     }
+    return result.reply;
   };
 
   const busy = status.kind === 'busy';
