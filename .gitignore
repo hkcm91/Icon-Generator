@@ -7,3 +7,5 @@ dist
 out
 tsconfig.tsbuildinfo
 .playwright-cli/
+__pycache__/
+*.pyc
