@@ -389,7 +389,8 @@ export function openFramePrompt(
   frameStyle = '',
 ): string {
   return [
-    'Create a reusable subject-free decorative app-icon frame from the supplied reference.',
+    'DIRECT IMAGE EDIT: Create a reusable subject-free decorative app-icon frame by editing the supplied reference. Do not return the reference unchanged.',
+    'SUBJECT REMOVAL IS THE PRIMARY REQUIREMENT. The returned PNG must visibly differ from the input by containing true transparency exactly where the subject was removed.',
     `The reference subject is ${referenceSubject.trim() || 'the central object'}. Remove that subject completely: no silhouette, face, eyes, anatomy, pose, or recognizable fragments may remain.`,
     material.trim() ? `Preserve this material and finish: ${material.trim()}.` : '',
     frameStyle.trim() ? `FRAME TREATMENT AUTHORITY: ${frameStyle.trim()}.` : '',

@@ -15,12 +15,14 @@ const MATERIAL_KEY = 'material';
 const SINGLE_GLYPH_KEY = 'glyph';
 const FRAME_PREFIX = 'frame:';
 const CONTAINER_OVERLAY_KEY = 'container-overlay';
+const EXTRACTED_SUBJECT_KEY = 'extracted-subject';
 
 export interface ImageBundle {
   material: string | null;
   glyph: string | null;
   glyphs: Record<string, string>;
   containerOverlay?: string | null;
+  extractedSubject?: string | null;
   revisions?: Record<string, string>;
   frames?: Record<string, string>;
 }
@@ -70,6 +72,7 @@ export function useImageStore() {
   const [material, setMaterialState] = useState<CanvasImageSource | null>(null);
   const [glyph, setGlyphState] = useState<CanvasImageSource | null>(null);
   const [containerOverlay, setContainerOverlayState] = useState<CanvasImageSource | null>(null);
+  const [extractedSubject, setExtractedSubjectState] = useState<CanvasImageSource | null>(null);
   const [frames, setFrames] = useState<Map<string, CanvasImageSource>>(new Map());
   const urls = useRef(new Map<string, string>());
 
@@ -99,6 +102,7 @@ export function useImageStore() {
       const materialBlob = await getBlob(LAYERS, MATERIAL_KEY);
       const singleBlob = await getBlob(LAYERS, SINGLE_GLYPH_KEY);
       const containerOverlayBlob = await getBlob(LAYERS, CONTAINER_OVERLAY_KEY);
+      const extractedSubjectBlob = await getBlob(LAYERS, EXTRACTED_SUBJECT_KEY);
       const restoredFrames = new Map<string, CanvasImageSource>();
       for (const key of await allKeys(LAYERS)) {
         if (!key.startsWith(FRAME_PREFIX)) continue;
@@ -127,6 +131,11 @@ export function useImageStore() {
         const image = await blobToImage(containerOverlayBlob);
         trackUrl(`layer:${CONTAINER_OVERLAY_KEY}`, image);
         if (live) setContainerOverlayState(image);
+      }
+      if (extractedSubjectBlob) {
+        const image = await blobToImage(extractedSubjectBlob);
+        trackUrl(`layer:${EXTRACTED_SUBJECT_KEY}`, image);
+        if (live) setExtractedSubjectState(image);
       }
       setFrames(restoredFrames);
       if (live) setLoaded(true);
@@ -174,6 +183,14 @@ export function useImageStore() {
     (image: CanvasImageSource | null) => {
       setContainerOverlayState(image);
       void persist(LAYERS, CONTAINER_OVERLAY_KEY, image);
+    },
+    [persist],
+  );
+
+  const setExtractedSubject = useCallback(
+    (image: CanvasImageSource | null) => {
+      setExtractedSubjectState(image);
+      void persist(LAYERS, EXTRACTED_SUBJECT_KEY, image);
     },
     [persist],
   );
@@ -255,6 +272,7 @@ export function useImageStore() {
     setMaterialState(null);
     setGlyphState(null);
     setContainerOverlayState(null);
+    setExtractedSubjectState(null);
     setFrames(new Map());
     void clearStore(GLYPHS);
     void clearStore(LAYERS);
@@ -282,10 +300,11 @@ export function useImageStore() {
       glyph: imageDataUrl(glyph),
       glyphs: encoded,
       containerOverlay: imageDataUrl(containerOverlay),
+      extractedSubject: imageDataUrl(extractedSubject),
       revisions,
       frames: encodedFrames,
     };
-  }, [glyphs, material, glyph, containerOverlay, frames]);
+  }, [glyphs, material, glyph, containerOverlay, extractedSubject, frames]);
 
   const importImages = useCallback(async (bundle: ImageBundle) => {
     await clearStore(GLYPHS);
@@ -303,6 +322,7 @@ export function useImageStore() {
     const nextMaterial = bundle.material ? await dataUrlImage(bundle.material) : null;
     const nextGlyph = bundle.glyph ? await dataUrlImage(bundle.glyph) : null;
     const nextContainerOverlay = bundle.containerOverlay ? await dataUrlImage(bundle.containerOverlay) : null;
+    const nextExtractedSubject = bundle.extractedSubject ? await dataUrlImage(bundle.extractedSubject) : null;
     const nextFrames = new Map<string, CanvasImageSource>();
     for (const [id, source] of Object.entries(bundle.frames ?? {})) {
       const image = await dataUrlImage(source);
@@ -313,10 +333,12 @@ export function useImageStore() {
     setMaterialState(nextMaterial);
     setGlyphState(nextGlyph);
     setContainerOverlayState(nextContainerOverlay);
+    setExtractedSubjectState(nextExtractedSubject);
     setFrames(nextFrames);
     await persist(LAYERS, MATERIAL_KEY, nextMaterial);
     await persist(LAYERS, SINGLE_GLYPH_KEY, nextGlyph);
     await persist(LAYERS, CONTAINER_OVERLAY_KEY, nextContainerOverlay);
+    await persist(LAYERS, EXTRACTED_SUBJECT_KEY, nextExtractedSubject);
   }, [persist]);
 
   return {
@@ -325,10 +347,12 @@ export function useImageStore() {
     material,
     glyph,
     containerOverlay,
+    extractedSubject,
     frames,
     setMaterial,
     setGlyph,
     setContainerOverlay,
+    setExtractedSubject,
     setFrameVariant,
     clearFrameVariants,
     setItemGlyph,

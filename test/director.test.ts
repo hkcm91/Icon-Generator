@@ -171,6 +171,27 @@ describe('Icon Director response safety', () => {
     expect(result.action).toBe('generate-selected');
   });
 
+  it('routes transparent subject-and-frame cutouts to complete icons without requiring frame extraction', () => {
+    const openFrameContext: DirectorContext = {
+      ...context,
+      containerMode: 'open-frame',
+      cards: ['Mouse', 'Compact Disc'].map((name) => ({
+        name,
+        concept: name,
+        status: 'ready' as const,
+        selected: true,
+      })),
+    };
+    const result = stageDirectorInstruction(
+      'please regenerate selected icons to have a pearly icy white subject and dark oilslick-like frame and flourish (like the reference depicts) keep them on theme for halloween while remaining recognizable at small scale. Transparent cutouts',
+      openFrameContext,
+      '',
+    );
+    expect(result.patch.containerMode).toBe('filled');
+    expect(result.action).toBe('generate-selected');
+    expect(result.patch.selection).toEqual({ mode: 'named', names: ['Mouse', 'Compact Disc'] });
+  });
+
   it('recreates named cards from unambiguous shorthand and acronyms', () => {
     const mobileContext: DirectorContext = {
       ...context,

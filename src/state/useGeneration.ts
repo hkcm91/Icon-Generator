@@ -19,6 +19,7 @@ import { GENERATION_CACHE, blobToImage, canvasToBlobAsync, getBlob, putBlob } fr
 import { deleteBlob } from '../core/store';
 import { inspectOpenFrame } from '../core/frameValidation';
 import { themeRestraintPrompt } from '../core/themeDirection';
+import { extractSubjectLayer } from '../core/subjectExtraction';
 
 export type GenStatus =
   | { kind: 'idle' }
@@ -281,7 +282,17 @@ export function useGeneration() {
         wantAlpha,
         options.frameStyleProfile,
       ),
-      { ...options, theme: undefined },
+      {
+        ...options,
+        // Family/card directions describe future icons. Sending them into the
+        // cleanup edit can tell the model to redraw the very subject it must
+        // remove, which made extraction appear to do nothing.
+        theme: undefined,
+        themeTreatment: undefined,
+        familyPrompt: '',
+        directorInstruction: undefined,
+        negativePrompt: '',
+      },
     );
     const input = modelInput(
       options.model,
@@ -292,27 +303,43 @@ export function useGeneration() {
       wantAlpha,
       options.quality,
     );
-    // v3 preserves all validated pixels and registers their visible envelope
-    // to the upload. Earlier model edits sometimes zoomed the cleaned frame.
-    const key = await cacheKey('open-frame-v3-align-reference-bounds', options.model, input);
+    // v4 also proves that alpha was removed from the uploaded subject and
+    // retains those original pixels as a separate reusable subject layer.
+    const key = await cacheKey('open-frame-v4-frame-and-subject', options.model, input);
+    const reference = await loadImage(options.master);
+    const validate = (frame: CanvasImageSource) => {
+      const frameInspection = inspectOpenFrame(frame, options.spec.size);
+      const referenceInspection = inspectOpenFrame(reference, options.spec.size);
+      const subject = extractSubjectLayer(reference, frame, options.spec.size);
+      const centralDrop = referenceInspection.centralCoverage - frameInspection.centralCoverage;
+      if (subject.metrics.centralCoverage < 0.008 || centralDrop < 0.008) {
+        throw new Error('The model returned the reference without removing its subject. Nothing was replaced or cached. Try Remove subject again.');
+      }
+      // Decorative flourishes are allowed to enter the middle. Only reject a
+      // busy centre when the edit removed too little alpha to plausibly be the
+      // requested subject.
+      if (frameInspection.subjectLikely && centralDrop < 0.08) {
+        throw new Error('The model removed only part of the central subject. Your previous frame and subject are still saved. Try Remove subject again.');
+      }
+      return { frame, subject: subject.layer };
+    };
     const cached = await cachedLayer(key);
     if (cached) {
-      if (!inspectOpenFrame(cached, options.spec.size).subjectLikely) return cached;
-      await deleteBlob(GENERATION_CACHE, key);
+      try {
+        return validate(cached);
+      } catch {
+        await deleteBlob(GENERATION_CACHE, key);
+      }
     }
     const result = await generateImage(options.model, input);
     const image = await loadImage(result.images[0]);
     const rawFrame = result.alphaAccepted && hasNativeAlpha(image)
       ? preserveAlphaLayer(image, options.spec.size)
       : keyOutBackground(image, options.spec.size);
-    const reference = await loadImage(options.master);
     const alignedFrame = alignLayerToReferenceBounds(rawFrame, reference, options.spec.size);
-    const inspection = inspectOpenFrame(alignedFrame, options.spec.size);
-    if (inspection.subjectLikely) {
-      throw new Error('The model left a large central subject in the extracted frame. Nothing was approved or cached, and the app did not erase any frame details. Press Extract clean frame again for a new attempt.');
-    }
+    const extracted = validate(alignedFrame);
     await rememberLayer(key, alignedFrame);
-    return alignedFrame;
+    return extracted;
   }, []);
 
   const generateMaterial = useCallback(
@@ -361,11 +388,17 @@ export function useGeneration() {
   );
 
   const generateOpenFrame = useCallback(
-    async (options: GenerationOptions, onFrame: (image: CanvasImageSource) => void) => {
-      setStatus({ kind: 'busy', what: 'Removing the reference subject and extracting the open frame' });
+    async (
+      options: GenerationOptions,
+      onFrame: (image: CanvasImageSource) => void,
+      onSubject?: (image: CanvasImageSource) => void,
+    ) => {
+      setStatus({ kind: 'busy', what: 'Separating the reference subject and open frame' });
       try {
-        onFrame(await runOpenFrame(options));
-        setStatus({ kind: 'ok', message: 'Subject-free transparent frame extracted. Inspect it before generating the family.' });
+        const extracted = await runOpenFrame(options);
+        onFrame(extracted.frame);
+        onSubject?.(extracted.subject);
+        setStatus({ kind: 'ok', message: 'Subject and transparent frame separated and saved. Inspect both before generating the family.' });
         return true;
       } catch (error) {
         setStatus({ kind: 'error', message: (error as Error).message });

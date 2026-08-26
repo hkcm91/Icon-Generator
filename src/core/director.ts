@@ -284,11 +284,20 @@ export function stageDirectorInstruction(
 
   const replacesSubject = /\b(?:change|replace|swap)\b[^.]{0,120}\bsubject\b|\bsubject\b[^.]{0,120}\b(?:match|follow|use)\b[^.]{0,80}\bglyph\b/i.test(cleaned);
   const keepsCompleteContainer = /\bkeep\b[^.]{0,140}\b(?:materials?|container|frame|shape)\b|\b(?:materials?|container|frame|shape)\b[^.]{0,80}\b(?:same|unchanged|preserved?)\b/i.test(cleaned);
+  const namesSubjectAndContainer = /\b(?:subjects?|glyphs?|symbols?)\b/i.test(cleaned)
+    && /\b(?:frames?|containers?|rims?|shells?|tiles?|flourishes?)\b/i.test(cleaned);
+  // In this studio a transparent cutout means a complete alpha-bearing icon:
+  // the exterior is transparent while the requested subject and frame remain
+  // together. "No container" and "isolated subject" remain the explicit way
+  // to request a subject-only result.
+  const requestsTransparentCutout = /\btransparent (?:icon )?cutouts?\b/i.test(cleaned);
   if (/\bopen[- ]frame\b|\bhollow (?:glass )?frame\b/i.test(cleaned)) patch.containerMode = 'open-frame';
   else if (/\b(?:no|without) (?:a )?(?:container|tile|frame)\b|\bisolated (?:icon|subject|glyph)\b/i.test(cleaned)) patch.containerMode = 'isolated';
   else if (
     /\bfilled (?:glass )?(?:tile|container|frame)\b|\bcontainer plus (?:symbol|glyph)\b/i.test(cleaned) ||
-    (replacesSubject && keepsCompleteContainer)
+    (replacesSubject && keepsCompleteContainer) ||
+    namesSubjectAndContainer ||
+    requestsTransparentCutout
   ) patch.containerMode = 'filled';
 
   const selectedAfterPatch = patch.selection?.mode === 'all'
