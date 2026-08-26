@@ -7,8 +7,18 @@
  * one, antialiased for 32px — not a smeared resample of a big corner.
  */
 
-import { composeIcon, type ComposeLayers, type ComposeOptions } from './compose';
+import {
+  ADAPTIVE_DP,
+  composeAdaptiveBackground,
+  composeAdaptiveForeground,
+  composeAdaptiveMonochrome,
+  composeForIos,
+  composeIcon,
+  type ComposeLayers,
+  type ComposeOptions,
+} from './compose';
 import { containerPath, toSvgDocument } from './geometry';
+import { crc32, encodeRgbPng, rgbOf } from './png';
 import type { ContainerSpec } from './spec';
 
 export interface PlatformTarget {
@@ -18,16 +28,6 @@ export interface PlatformTarget {
 }
 
 export const PLATFORM_TARGETS: PlatformTarget[] = [
-  { platform: 'ios', name: 'Icon-1024', size: 1024 },
-  { platform: 'ios', name: 'Icon-180', size: 180 },
-  { platform: 'ios', name: 'Icon-120', size: 120 },
-  { platform: 'ios', name: 'Icon-87', size: 87 },
-  { platform: 'ios', name: 'Icon-60', size: 60 },
-  { platform: 'android', name: 'xxxhdpi-192', size: 192 },
-  { platform: 'android', name: 'xxhdpi-144', size: 144 },
-  { platform: 'android', name: 'xhdpi-96', size: 96 },
-  { platform: 'android', name: 'hdpi-72', size: 72 },
-  { platform: 'android', name: 'mdpi-48', size: 48 },
   { platform: 'macos', name: 'icon_512x512@2x', size: 1024 },
   { platform: 'macos', name: 'icon_256x256@2x', size: 512 },
   { platform: 'macos', name: 'icon_128x128', size: 128 },
@@ -38,6 +38,48 @@ export const PLATFORM_TARGETS: PlatformTarget[] = [
   { platform: 'web', name: 'favicon-32', size: 32 },
   { platform: 'web', name: 'apple-touch-icon-180', size: 180 },
   { platform: 'web', name: 'maskable-512', size: 512 },
+];
+
+/**
+ * One entry in an Xcode AppIcon set: the pixel size, plus the idiom and scale
+ * that `Contents.json` files it under.
+ */
+export interface IosRole {
+  name: string;
+  idiom: string;
+  /** Point size as Xcode writes it, e.g. "60x60". */
+  points: string;
+  scale: string;
+  size: number;
+}
+
+/**
+ * The classic iOS app icon set.
+ *
+ * Xcode 14 and later accept a lone 1024px icon and derive the rest, but a
+ * project created before that still expects every slot filled, and an empty
+ * slot is a build warning. Filling them all costs five seconds of rendering
+ * and works in both.
+ */
+export const IOS_ROLES: IosRole[] = [
+  { name: 'Icon-20@2x', idiom: 'iphone', points: '20x20', scale: '2x', size: 40 },
+  { name: 'Icon-20@3x', idiom: 'iphone', points: '20x20', scale: '3x', size: 60 },
+  { name: 'Icon-29@2x', idiom: 'iphone', points: '29x29', scale: '2x', size: 58 },
+  { name: 'Icon-29@3x', idiom: 'iphone', points: '29x29', scale: '3x', size: 87 },
+  { name: 'Icon-40@2x', idiom: 'iphone', points: '40x40', scale: '2x', size: 80 },
+  { name: 'Icon-40@3x', idiom: 'iphone', points: '40x40', scale: '3x', size: 120 },
+  { name: 'Icon-60@2x', idiom: 'iphone', points: '60x60', scale: '2x', size: 120 },
+  { name: 'Icon-60@3x', idiom: 'iphone', points: '60x60', scale: '3x', size: 180 },
+  { name: 'Icon-20', idiom: 'ipad', points: '20x20', scale: '1x', size: 20 },
+  { name: 'Icon-20@2x~ipad', idiom: 'ipad', points: '20x20', scale: '2x', size: 40 },
+  { name: 'Icon-29', idiom: 'ipad', points: '29x29', scale: '1x', size: 29 },
+  { name: 'Icon-29@2x~ipad', idiom: 'ipad', points: '29x29', scale: '2x', size: 58 },
+  { name: 'Icon-40', idiom: 'ipad', points: '40x40', scale: '1x', size: 40 },
+  { name: 'Icon-40@2x~ipad', idiom: 'ipad', points: '40x40', scale: '2x', size: 80 },
+  { name: 'Icon-76', idiom: 'ipad', points: '76x76', scale: '1x', size: 76 },
+  { name: 'Icon-76@2x', idiom: 'ipad', points: '76x76', scale: '2x', size: 152 },
+  { name: 'Icon-83.5@2x', idiom: 'ipad', points: '83.5x83.5', scale: '2x', size: 167 },
+  { name: 'Icon-1024', idiom: 'ios-marketing', points: '1024x1024', scale: '1x', size: 1024 },
 ];
 
 /** Sizes packed into a Windows .ico. */
@@ -123,22 +165,6 @@ export async function buildIco(
 // ---------------------------------------------------------------------------
 // ZIP (stored, no compression)
 // ---------------------------------------------------------------------------
-
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[i] = c >>> 0;
-  }
-  return table;
-})();
-
-function crc32(data: Uint8Array): number {
-  let c = 0xffffffff;
-  for (let i = 0; i < data.length; i++) c = CRC_TABLE[(c ^ data[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-}
 
 /**
  * Minimal ZIP writer using stored entries.
@@ -227,3 +253,204 @@ export function download(blob: Blob, filename: string) {
 export async function blobBytes(blob: Blob): Promise<Uint8Array<ArrayBuffer>> {
   return new Uint8Array(await blob.arrayBuffer());
 }
+
+// ---------------------------------------------------------------------------
+// iOS
+// ---------------------------------------------------------------------------
+
+/**
+ * Render one iOS size as a PNG with no alpha channel.
+ *
+ * App Store Connect rejects an app icon for carrying an alpha channel at all —
+ * a fully opaque RGBA file fails the same check a transparent one does — and
+ * canvas cannot encode anything else, so the pixels are re-encoded as
+ * truecolour. See `core/png.ts` for why that costs file size.
+ */
+export function iosPng(
+  spec: ContainerSpec,
+  size: number,
+  layers: ComposeLayers,
+  options: ComposeOptions,
+): Uint8Array<ArrayBuffer> {
+  const canvas = composeForIos(spec, size, layers, options);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('This browser did not provide a 2D canvas context.');
+  const pixels = ctx.getImageData(0, 0, size, size).data;
+  return encodeRgbPng(pixels, size, size, rgbOf(options.baseColor));
+}
+
+/**
+ * The `Contents.json` Xcode expects beside an AppIcon set, so the folder can
+ * be dropped straight into an asset catalogue instead of placed by hand.
+ */
+export function appIconContentsJson(): string {
+  const images = IOS_ROLES.map((role) => ({
+    filename: `${role.name}.png`,
+    idiom: role.idiom,
+    scale: role.scale,
+    size: role.points,
+  }));
+  return JSON.stringify({ images, info: { author: 'icon-generator', version: 1 } }, null, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Android adaptive icons
+// ---------------------------------------------------------------------------
+
+/** Screen densities, and the multiplier each applies to a dp measurement. */
+export const ANDROID_DENSITIES = [
+  { name: 'mdpi', scale: 1 },
+  { name: 'hdpi', scale: 1.5 },
+  { name: 'xhdpi', scale: 2 },
+  { name: 'xxhdpi', scale: 3 },
+  { name: 'xxxhdpi', scale: 4 },
+] as const;
+
+/** The pre-adaptive launcher icon is 48dp; the adaptive layers are 108dp. */
+const LEGACY_DP = 48;
+
+/**
+ * `mipmap-anydpi-v26/ic_launcher.xml` — the file that makes the three layers
+ * an adaptive icon rather than three loose bitmaps.
+ *
+ * The monochrome entry is what a themed home screen uses. It is optional in
+ * the sense that the icon still builds without it, and not optional in the
+ * sense that an icon lacking it stays fully coloured while every icon around
+ * it takes the wallpaper's tint.
+ */
+export function adaptiveIconXml(): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>
+`;
+}
+
+/**
+ * The whole Android resource tree: three adaptive layers at five densities,
+ * a legacy launcher bitmap for anything older than API 26, the XML that binds
+ * them, and the 512px bitmap the Play listing asks for separately.
+ *
+ * Emitting real layers is close to free here and is not for most generators:
+ * the material and the glyph were never flattened together in the first place,
+ * so there is nothing to segment back apart.
+ */
+export async function buildAndroidResources(
+  spec: ContainerSpec,
+  layers: ComposeLayers,
+  options: ComposeOptions,
+): Promise<Array<{ name: string; bytes: Uint8Array<ArrayBuffer> }>> {
+  const files: Array<{ name: string; bytes: Uint8Array<ArrayBuffer> }> = [];
+  const png = async (canvas: HTMLCanvasElement) => blobBytes(await canvasToBlob(canvas));
+
+  for (const density of ANDROID_DENSITIES) {
+    const layer = Math.round(ADAPTIVE_DP * density.scale);
+    const legacy = Math.round(LEGACY_DP * density.scale);
+    const dir = `android/res/mipmap-${density.name}`;
+
+    files.push({
+      name: `${dir}/ic_launcher_background.png`,
+      bytes: await png(composeAdaptiveBackground(layer, layers, options)),
+    });
+    files.push({
+      name: `${dir}/ic_launcher_foreground.png`,
+      bytes: await png(composeAdaptiveForeground(layer, layers)),
+    });
+    files.push({
+      name: `${dir}/ic_launcher_monochrome.png`,
+      bytes: await png(composeAdaptiveMonochrome(spec, layer, layers)),
+    });
+    // Pre-26 launchers ignore the layers and use this one flattened bitmap,
+    // which is the icon exactly as the preview shows it.
+    files.push({
+      name: `${dir}/ic_launcher.png`,
+      bytes: await png(renderAtSize(spec, legacy, layers, options)),
+    });
+  }
+
+  files.push({
+    name: 'android/res/mipmap-anydpi-v26/ic_launcher.xml',
+    bytes: new TextEncoder().encode(adaptiveIconXml()),
+  });
+  files.push({
+    name: 'android/play-store-512.png',
+    bytes: await png(renderAtSize(spec, 512, layers, options)),
+  });
+  files.push({
+    name: 'android/README.txt',
+    bytes: new TextEncoder().encode(ANDROID_README),
+  });
+  return files;
+}
+
+const ANDROID_README = `Android icon resources
+======================
+
+Copy the contents of res/ into your module's src/main/res/, then point the
+manifest at it:
+
+    <application android:icon="@mipmap/ic_launcher" ... >
+
+mipmap-anydpi-v26/ic_launcher.xml declares the three adaptive layers. Devices
+on API 26 and above use those; anything older falls back to the flattened
+ic_launcher.png in the density folders.
+
+The layers
+----------
+  ic_launcher_background   the container fill, edge to edge
+  ic_launcher_foreground   the symbol, inside the ${ADAPTIVE_DP}dp canvas's safe zone
+  ic_launcher_monochrome   the same silhouette in one colour, for themed icons
+
+Adaptive layers are ${ADAPTIVE_DP}dp square and the launcher shows the middle 72dp of
+them, so the artwork is placed inside the 66dp that is safe under every mask
+shape. Do not crop these files: the margin is what lets the launcher animate
+and re-shape the icon.
+
+play-store-512.png is the Play Console listing icon. It is uploaded there, not
+bundled in the APK.
+`;
+
+/**
+ * The whole `AppIcon.appiconset` folder — every role rendered at its native
+ * size, all of them alpha-free, and the `Contents.json` that names them.
+ */
+export function buildIosAppIconSet(
+  spec: ContainerSpec,
+  layers: ComposeLayers,
+  options: ComposeOptions,
+): Array<{ name: string; bytes: Uint8Array<ArrayBuffer> }> {
+  const dir = 'ios/AppIcon.appiconset';
+  const files = IOS_ROLES.map((role) => ({
+    name: `${dir}/${role.name}.png`,
+    bytes: iosPng(spec, role.size, layers, options),
+  }));
+  files.push({
+    name: `${dir}/Contents.json`,
+    bytes: new TextEncoder().encode(appIconContentsJson()),
+  });
+  files.push({ name: 'ios/README.txt', bytes: new TextEncoder().encode(IOS_README) });
+  return files;
+}
+
+const IOS_README = `iOS app icon
+============
+
+Drag AppIcon.appiconset into your target's Assets.xcassets, replacing the
+existing AppIcon set.
+
+Two things about these files are deliberate and are what Apple's validation
+actually checks:
+
+  No alpha channel. App Store Connect rejects an app icon for carrying the
+  channel at all, not only for containing transparent pixels, so these are
+  encoded as truecolour RGB rather than the RGBA a canvas would produce. The
+  1024px file is larger than a compressed PNG would be; Xcode re-encodes
+  everything into Assets.car at build time, so nothing ships that size.
+
+  Full bleed. iOS applies its own superellipse mask. An icon that arrives
+  already inset gets masked a second time and ends up floating inside a
+  visible margin, so the container is rendered edge to edge and the corners
+  are filled with the base colour for the system to cut away.
+`;

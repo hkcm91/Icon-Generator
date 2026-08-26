@@ -10,13 +10,15 @@ import { useGeneration } from '../state/useGeneration';
 import IconGrid from './IconGrid';
 import type { IconItem } from '../core/library';
 import {
-  PLATFORM_TARGETS,
   blobBytes,
+  buildAndroidResources,
   buildIco,
+  buildIosAppIconSet,
   buildZip,
   canvasToBlob,
   download,
   ICO_SIZES,
+  PLATFORM_TARGETS,
   renderAtSize,
   svgMask,
 } from '../core/export';
@@ -194,6 +196,10 @@ export default function SimpleStudio(props: Props) {
           bytes: await blobBytes(await canvasToBlob(canvas)),
         });
       }
+      // The guided view exports everything; the two platforms with real
+      // packaging rules get their proper trees rather than loose PNGs.
+      files.push(...buildIosAppIconSet(props.spec, props.layers, props.compose));
+      files.push(...(await buildAndroidResources(props.spec, props.layers, props.compose)));
       const ico = [];
       for (const size of ICO_SIZES) {
         const canvas = renderAtSize(props.spec, size, props.layers, props.compose);

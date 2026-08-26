@@ -13,7 +13,7 @@
  */
 
 import { containerPath, glyphSafePath, innerBox } from './geometry';
-import type { ContainerSpec } from './spec';
+import { normalizeSpec, type ContainerSpec } from './spec';
 
 export interface ComposeLayers {
   /** Full-bleed surface texture. Cropped to fill, then clipped to the path. */
@@ -64,7 +64,7 @@ function context2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
  * `object-fit: cover` uses. Never letterboxes, so the material can't introduce
  * transparent bands that would read as a change in silhouette.
  */
-function drawCover(
+export function drawCover(
   ctx: CanvasRenderingContext2D,
   image: CanvasImageSource,
   x: number,
@@ -94,7 +94,7 @@ function drawCover(
 }
 
 /** Draw an image scaled to fit entirely inside the box, centred. */
-function drawContain(
+export function drawContain(
   ctx: CanvasRenderingContext2D,
   image: CanvasImageSource,
   x: number,
@@ -333,4 +333,125 @@ export function hasNativeAlpha(image: CanvasImageSource, size = 64): boolean {
   const data = ctx.getImageData(0, 0, size, size).data;
   const corners = [0, (size - 1) * 4, (size - 1) * size * 4, ((size - 1) * size + size - 1) * 4];
   return corners.every((index) => data[index + 3] < 8);
+}
+
+// ---------------------------------------------------------------------------
+// Platform compositions
+//
+// Two platforms do not want the icon the preview shows. iOS applies its own
+// superellipse and forbids an alpha channel; Android wants the icon delivered
+// as separate layers it can mask and animate independently. Both are served
+// here rather than in the exporter, because both are questions about how
+// pixels are drawn.
+// ---------------------------------------------------------------------------
+
+/**
+ * The iOS composition: edge to edge, and opaque.
+ *
+ * Padding is dropped because iOS masks the icon itself — an icon that arrives
+ * already inset ends up floating inside the system's squircle with a visible
+ * margin. The contact shadow goes for the same reason: full bleed leaves
+ * nowhere for it to fall, so it reads as a dark rim.
+ *
+ * Whatever remains outside the container — the slivers a squircle leaves in
+ * the corners, or the whole corner region of a circle — is filled with the
+ * base colour, so the frame is opaque before the encoder ever sees it.
+ */
+export function composeForIos(
+  spec: ContainerSpec,
+  size: number,
+  layers: ComposeLayers,
+  options: ComposeOptions,
+): HTMLCanvasElement {
+  const bleed = normalizeSpec({ ...spec, size, padding: 0 });
+  const scale = size / spec.size;
+  const icon = composeIcon(bleed, layers, {
+    ...options,
+    rimWidth: options.rimWidth * scale,
+    shadowBlur: 0,
+    shadowOffsetY: 0,
+  });
+
+  const canvas = createCanvas(size);
+  const ctx = context2d(canvas);
+  ctx.fillStyle = options.baseColor;
+  ctx.fillRect(0, 0, size, size);
+  ctx.drawImage(icon, 0, 0);
+  return canvas;
+}
+
+/**
+ * Android adaptive icons are authored on a 108dp canvas of which the launcher
+ * shows the middle 72dp, and only the middle 66dp is safe under every mask
+ * shape a device might apply. Content is placed against those numbers rather
+ * than against the container's own inset, because the crop belongs to Android.
+ */
+export const ADAPTIVE_DP = 108;
+export const ADAPTIVE_SAFE_DP = 66;
+
+/** Where the safe zone sits on a layer of a given pixel size. */
+function safeBox(size: number) {
+  const edge = (size * ADAPTIVE_SAFE_DP) / ADAPTIVE_DP;
+  return { at: (size - edge) / 2, edge };
+}
+
+/**
+ * The background layer: the container's fill, edge to edge.
+ *
+ * No contour is drawn. The launcher supplies the silhouette, and a layer that
+ * carried its own would be masked twice — the app's shape clipped by the
+ * device's, leaving whatever the intersection happens to be.
+ */
+export function composeAdaptiveBackground(
+  size: number,
+  layers: ComposeLayers,
+  options: ComposeOptions,
+): HTMLCanvasElement {
+  const canvas = createCanvas(size);
+  const ctx = context2d(canvas);
+  ctx.fillStyle = options.baseColor;
+  ctx.fillRect(0, 0, size, size);
+  if (layers.material) drawCover(ctx, layers.material, 0, 0, size, size);
+  return canvas;
+}
+
+/** The foreground layer: the glyph alone, inside the safe zone, on transparency. */
+export function composeAdaptiveForeground(
+  size: number,
+  layers: ComposeLayers,
+): HTMLCanvasElement {
+  const canvas = createCanvas(size);
+  if (!layers.glyph) return canvas;
+  const ctx = context2d(canvas);
+  const { at, edge } = safeBox(size);
+  drawContain(ctx, layers.glyph, at, at, edge, edge);
+  return canvas;
+}
+
+/**
+ * The monochrome layer, for themed icons: the foreground's silhouette in a
+ * single colour, which Android re-tints to the wallpaper.
+ *
+ * A plain tile has no glyph to take a silhouette from, and an empty monochrome
+ * layer would leave the icon invisible on a themed home screen — worse than
+ * having no layer at all. The container contour stands in for it.
+ */
+export function composeAdaptiveMonochrome(
+  spec: ContainerSpec,
+  size: number,
+  layers: ComposeLayers,
+  color = '#000000',
+): HTMLCanvasElement {
+  const canvas = createCanvas(size);
+  const ctx = context2d(canvas);
+  const { at, edge } = safeBox(size);
+
+  if (layers.glyph) drawContain(ctx, layers.glyph, at, at, edge, edge);
+  else drawContain(ctx, renderMask(spec), at, at, edge, edge);
+
+  // Keep the shape, discard the colour: the layer is a stencil.
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, size, size);
+  return canvas;
 }

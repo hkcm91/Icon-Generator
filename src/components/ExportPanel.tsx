@@ -2,13 +2,15 @@ import { useState } from 'react';
 import type { ComposeLayers, ComposeOptions } from '../core/compose';
 import { renderMask } from '../core/compose';
 import {
-  ICO_SIZES,
-  PLATFORM_TARGETS,
   blobBytes,
+  buildAndroidResources,
   buildIco,
+  buildIosAppIconSet,
   buildZip,
   canvasToBlob,
   download,
+  ICO_SIZES,
+  PLATFORM_TARGETS,
   renderAtSize,
   svgMask,
 } from '../core/export';
@@ -20,7 +22,9 @@ interface Props {
   layers: ComposeLayers;
 }
 
-const PLATFORMS = [...new Set(PLATFORM_TARGETS.map((target) => target.platform))];
+// ios and android are not in PLATFORM_TARGETS: each needs a resource tree
+// rather than a flat list of sizes, so each has its own builder.
+const PLATFORMS = ['ios', 'android', ...new Set(PLATFORM_TARGETS.map((t) => t.platform))];
 
 export default function ExportPanel({ spec, compose, layers }: Props) {
   const [selected, setSelected] = useState<string[]>(PLATFORMS);
@@ -47,6 +51,14 @@ export default function ExportPanel({ spec, compose, layers }: Props) {
           name: `${target.platform}/${target.name}.png`,
           bytes: await blobBytes(await canvasToBlob(canvas)),
         });
+      }
+
+      if (selected.includes('ios')) {
+        files.push(...buildIosAppIconSet(spec, layers, compose));
+      }
+
+      if (selected.includes('android')) {
+        files.push(...(await buildAndroidResources(spec, layers, compose)));
       }
 
       if (selected.includes('windows')) {

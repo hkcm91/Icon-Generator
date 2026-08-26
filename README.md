@@ -189,7 +189,23 @@ flagged as `keyed` in the table.
 Every size is a **fresh render from the path**, not a downscale of one master —
 so a 16px corner is antialiased for 16px instead of resampled from 1024px.
 
-- iOS, Android (mdpi→xxxhdpi), macOS, Windows, web/PWA PNG sets
+- **iOS** — a complete `AppIcon.appiconset`: all 18 role slots with the
+  `Contents.json` that names them, ready to drag into an asset catalogue.
+  Written as truecolour PNG with **no alpha channel**, because App Store
+  Connect rejects an app icon for carrying the channel at all rather than only
+  for containing transparent pixels, and composed **full bleed**, because iOS
+  applies its own superellipse and an already-inset icon gets masked twice.
+- **Android** — a real `res/` tree: `ic_launcher_background`,
+  `ic_launcher_foreground` and `ic_launcher_monochrome` at all five densities,
+  the `mipmap-anydpi-v26/ic_launcher.xml` that binds them into an adaptive
+  icon, a flattened `ic_launcher.png` for pre-26 launchers, and the 512px Play
+  listing icon. Layers are authored on the 108dp canvas with the artwork inside
+  the 66dp that survives every launcher mask.
+
+  Emitting genuine layers is nearly free here and is not, generally: the
+  material and the glyph were never flattened together, so there is nothing to
+  segment back apart.
+- macOS, Windows and web/PWA PNG sets
 - Windows `.ico` (PNG-in-ICO, 16–256px)
 - `container-mask.svg` and `container-mask.png` — usable as an Android adaptive mask
 - `container-spec.json` — check it into your repo; icon geometry becomes reviewable in a PR
@@ -198,12 +214,12 @@ so a 16px corner is antialiased for 16px instead of resampled from 1024px.
 ## Layout
 
 ```
-src/core/       spec, geometry, compose, replicate, export, hash, tutorial  (no React)
+src/core/       spec, geometry, compose, replicate, export, png, hash, tutorial  (no React)
 src/components/ SimpleStudio, Tutorial, SpecPanel, Preview, GeneratePanel,
                 DeterminismPanel, ExportPanel, DriftLab
 src/state/      useProject (autosaves to localStorage)
 server/         Replicate proxy — holds the token, re-serves images same-origin
-test/           geometry, determinism, walkthrough script
+test/           geometry, determinism, PNG encoding, platform rules, walkthrough
 docs/           the diagnosis, the market research
 ```
 
