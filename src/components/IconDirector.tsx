@@ -57,13 +57,13 @@ export default function IconDirector(props: Props) {
           <strong>Icon Director</strong>
           <small>One conversation for this set · directions go straight to the selected image model</small>
         </div>
-        <span className="director-cost-note">No planning-model charge · generation waits for approval</span>
+        <span className="director-cost-note">No planning-model charge · ask here to generate selected cards</span>
       </div>
 
       <div className="director-log" ref={log} aria-live="polite">
         {props.messages.length === 0 && (
           <div className="director-message director-assistant">
-            Upload a reference, then tell me what the family should look like in normal language. I’ll stage the direction and select the cards that need work; you decide when to spend on generation.
+            Upload a reference, then describe the family in normal language. I’ll keep the direction, target the right cards, and generate the selected cards when you ask. Your batch limit still applies.
           </div>
         )}
         {props.messages.map((message) => (
@@ -71,7 +71,7 @@ export default function IconDirector(props: Props) {
             className={`director-message director-${message.role}`}
             key={message.id}
           >
-            <span>{message.role === 'user' ? 'You' : 'Director'}</span>
+            <strong>{message.role === 'user' ? 'You:' : 'Director:'}</strong>{' '}
             {message.text}
           </div>
         ))}
@@ -102,7 +102,7 @@ export default function IconDirector(props: Props) {
           }}
         />
         <button type="button" disabled={!props.master || !draft.trim()} onClick={() => send()}>
-          Apply direction
+          Send
         </button>
       </div>
       {!props.master && <p className="hint director-hint">The chat activates after you upload the set’s visual reference in Step 1.</p>}

@@ -52,6 +52,7 @@ export interface DirectorResult {
   reply: string;
   memory: string;
   patch: DirectorPatch;
+  action?: 'generate-selected';
 }
 
 const text = (value: unknown, limit: number): string | undefined => {
@@ -217,6 +218,7 @@ export function stageDirectorInstruction(
     ? context.cards.filter((card) => card.selected)
     : [];
   const targets = namedCards.length ? namedCards : failedCards.length ? failedCards : selectedCards;
+  const wantsGeneration = /\b(?:generate|regenerate|render)\b|\bredo\b|\btest\b[^.]{0,80}\bselected\b/i.test(cleaned);
   const nextMemory = appendMemory(memory, context.familyPrompt, cleaned);
   const generationDirection = [
     'ICON DIRECTOR CONVERSATION: Follow every compatible instruction below.',
@@ -243,11 +245,22 @@ export function stageDirectorInstruction(
   else if (/\bfilled (?:glass )?(?:tile|container|frame)\b|\bcontainer plus (?:symbol|glyph)\b/i.test(cleaned)) patch.containerMode = 'filled';
 
   const names = targets.map((card) => card.name);
+  const selectedAfterPatch = patch.selection?.mode === 'all'
+    ? context.cards.length
+    : patch.selection?.mode === 'named'
+      ? patch.selection.names.length
+      : context.cards.filter((card) => card.selected).length;
+  const action = wantsGeneration && selectedAfterPatch > 0 ? 'generate-selected' as const : undefined;
   return {
-    reply: names.length
-      ? `Direction saved for ${names.join(', ')}. Those cards are selected; generate when ready.`
-      : 'Family direction saved. It will go directly to the selected image model when you generate.',
+    reply: action
+      ? `Starting ${selectedAfterPatch} selected card${selectedAfterPatch === 1 ? '' : 's'} now. The normal batch cost limit and generation checks still apply.`
+      : wantsGeneration
+        ? 'I can generate here, but no cards are selected. Select the cards you want and ask me to generate again.'
+        : names.length
+          ? `Direction saved for ${names.join(', ')}. Those cards are selected; generate when ready.`
+          : 'Family direction saved. It will go directly to the selected image model when you generate.',
     memory: nextMemory,
     patch,
+    action,
   };
 }

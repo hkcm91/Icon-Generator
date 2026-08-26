@@ -102,6 +102,42 @@ describe('Icon Director response safety', () => {
     expect(result.patch.familyPrompt).toContain('newest instruction overrides');
     expect(result.patch.selection).toEqual({ mode: 'all', names: [] });
   });
+
+  it('starts the currently selected cards when asked to generate from chat', () => {
+    const selectedContext: DirectorContext = {
+      ...context,
+      cards: ['Home', 'Menu', 'Search'].map((name) => ({
+        name,
+        concept: name,
+        status: 'draft' as const,
+        selected: true,
+      })),
+    };
+    const result = stageDirectorInstruction('Can you generate from here?', selectedContext, 'Keep the thick glass frame.');
+    expect(result.action).toBe('generate-selected');
+    expect(result.reply).toContain('Starting 3 selected cards now');
+    expect(result.patch.familyPrompt).toContain('Keep the thick glass frame.');
+  });
+
+  it('treats testing selected icons as an explicit generation request', () => {
+    const selectedContext: DirectorContext = {
+      ...context,
+      cards: ['Home', 'Menu', 'Search'].map((name) => ({
+        name,
+        concept: name,
+        status: 'draft' as const,
+        selected: true,
+      })),
+    };
+    const result = stageDirectorInstruction(
+      'Keep the materials and container shape, use a Halloween/fall theme, and test the three selected.',
+      selectedContext,
+      '',
+    );
+    expect(result.action).toBe('generate-selected');
+    expect(result.patch.selection).toEqual({ mode: 'named', names: ['Home', 'Menu', 'Search'] });
+    expect(result.patch.cardInstructions).toHaveLength(3);
+  });
 });
 
 describe('Icon Director project persistence', () => {
