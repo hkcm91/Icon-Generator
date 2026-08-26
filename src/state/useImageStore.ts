@@ -14,11 +14,13 @@ import {
 const MATERIAL_KEY = 'material';
 const SINGLE_GLYPH_KEY = 'glyph';
 const FRAME_PREFIX = 'frame:';
+const CONTAINER_OVERLAY_KEY = 'container-overlay';
 
 export interface ImageBundle {
   material: string | null;
   glyph: string | null;
   glyphs: Record<string, string>;
+  containerOverlay?: string | null;
   revisions?: Record<string, string>;
   frames?: Record<string, string>;
 }
@@ -67,6 +69,7 @@ export function useImageStore() {
   const [glyphs, setGlyphs] = useState<Map<string, CanvasImageSource>>(new Map());
   const [material, setMaterialState] = useState<CanvasImageSource | null>(null);
   const [glyph, setGlyphState] = useState<CanvasImageSource | null>(null);
+  const [containerOverlay, setContainerOverlayState] = useState<CanvasImageSource | null>(null);
   const [frames, setFrames] = useState<Map<string, CanvasImageSource>>(new Map());
   const urls = useRef(new Map<string, string>());
 
@@ -95,6 +98,7 @@ export function useImageStore() {
 
       const materialBlob = await getBlob(LAYERS, MATERIAL_KEY);
       const singleBlob = await getBlob(LAYERS, SINGLE_GLYPH_KEY);
+      const containerOverlayBlob = await getBlob(LAYERS, CONTAINER_OVERLAY_KEY);
       const restoredFrames = new Map<string, CanvasImageSource>();
       for (const key of await allKeys(LAYERS)) {
         if (!key.startsWith(FRAME_PREFIX)) continue;
@@ -118,6 +122,11 @@ export function useImageStore() {
         const image = await blobToImage(singleBlob);
         trackUrl(`layer:${SINGLE_GLYPH_KEY}`, image);
         if (live) setGlyphState(image);
+      }
+      if (containerOverlayBlob) {
+        const image = await blobToImage(containerOverlayBlob);
+        trackUrl(`layer:${CONTAINER_OVERLAY_KEY}`, image);
+        if (live) setContainerOverlayState(image);
       }
       setFrames(restoredFrames);
       if (live) setLoaded(true);
@@ -157,6 +166,14 @@ export function useImageStore() {
     (image: CanvasImageSource | null) => {
       setGlyphState(image);
       void persist(LAYERS, SINGLE_GLYPH_KEY, image);
+    },
+    [persist],
+  );
+
+  const setContainerOverlay = useCallback(
+    (image: CanvasImageSource | null) => {
+      setContainerOverlayState(image);
+      void persist(LAYERS, CONTAINER_OVERLAY_KEY, image);
     },
     [persist],
   );
@@ -237,6 +254,7 @@ export function useImageStore() {
     setGlyphs(new Map());
     setMaterialState(null);
     setGlyphState(null);
+    setContainerOverlayState(null);
     setFrames(new Map());
     void clearStore(GLYPHS);
     void clearStore(LAYERS);
@@ -263,10 +281,11 @@ export function useImageStore() {
       material: imageDataUrl(material),
       glyph: imageDataUrl(glyph),
       glyphs: encoded,
+      containerOverlay: imageDataUrl(containerOverlay),
       revisions,
       frames: encodedFrames,
     };
-  }, [glyphs, material, glyph, frames]);
+  }, [glyphs, material, glyph, containerOverlay, frames]);
 
   const importImages = useCallback(async (bundle: ImageBundle) => {
     await clearStore(GLYPHS);
@@ -283,6 +302,7 @@ export function useImageStore() {
     }
     const nextMaterial = bundle.material ? await dataUrlImage(bundle.material) : null;
     const nextGlyph = bundle.glyph ? await dataUrlImage(bundle.glyph) : null;
+    const nextContainerOverlay = bundle.containerOverlay ? await dataUrlImage(bundle.containerOverlay) : null;
     const nextFrames = new Map<string, CanvasImageSource>();
     for (const [id, source] of Object.entries(bundle.frames ?? {})) {
       const image = await dataUrlImage(source);
@@ -292,9 +312,11 @@ export function useImageStore() {
     setGlyphs(restored);
     setMaterialState(nextMaterial);
     setGlyphState(nextGlyph);
+    setContainerOverlayState(nextContainerOverlay);
     setFrames(nextFrames);
     await persist(LAYERS, MATERIAL_KEY, nextMaterial);
     await persist(LAYERS, SINGLE_GLYPH_KEY, nextGlyph);
+    await persist(LAYERS, CONTAINER_OVERLAY_KEY, nextContainerOverlay);
   }, [persist]);
 
   return {
@@ -302,9 +324,11 @@ export function useImageStore() {
     glyphs,
     material,
     glyph,
+    containerOverlay,
     frames,
     setMaterial,
     setGlyph,
+    setContainerOverlay,
     setFrameVariant,
     clearFrameVariants,
     setItemGlyph,

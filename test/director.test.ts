@@ -171,6 +171,40 @@ describe('Icon Director response safety', () => {
     expect(result.action).toBe('generate-selected');
   });
 
+  it('recreates named cards from unambiguous shorthand and acronyms', () => {
+    const mobileContext: DirectorContext = {
+      ...context,
+      cards: [
+        { name: 'Computer Mouse', concept: 'computer mouse', status: 'ready', selected: false },
+        { name: 'Compact Disc', concept: 'optical disc', status: 'ready', selected: false },
+        { name: 'Arrow Back', concept: 'back arrow', status: 'ready', selected: true },
+        { name: 'Arrow Forward', concept: 'forward arrow', status: 'ready', selected: true },
+      ],
+    };
+    const result = stageDirectorInstruction(
+      'recreate mouse and CD. the subjects are wrong. just make it on theme',
+      mobileContext,
+      'Keep the family restrained.',
+    );
+    expect(result.patch.selection).toEqual({ mode: 'named', names: ['Computer Mouse', 'Compact Disc'] });
+    expect(result.patch.cardInstructions).toHaveLength(2);
+    expect(result.patch.cardInstructions?.every((entry) => entry.instruction.includes('subjects are wrong'))).toBe(true);
+    expect(result.action).toBe('generate-selected');
+  });
+
+  it('does not guess when a shorthand word belongs to more than one card', () => {
+    const arrowContext: DirectorContext = {
+      ...context,
+      cards: [
+        { name: 'Arrow Back', concept: 'back arrow', status: 'ready', selected: false },
+        { name: 'Arrow Forward', concept: 'forward arrow', status: 'ready', selected: false },
+      ],
+    };
+    const result = stageDirectorInstruction('recreate arrow', arrowContext, '');
+    expect(result.patch.selection).toBeUndefined();
+    expect(result.action).toBeUndefined();
+  });
+
   it('treats a short follow-up confirmation as generation, not new family direction', () => {
     const crystalContext: DirectorContext = {
       ...context,

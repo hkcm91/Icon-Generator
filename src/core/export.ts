@@ -7,7 +7,7 @@
  * one, antialiased for 32px — not a smeared resample of a big corner.
  */
 
-import { composeCompleteIcon, composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from './compose';
+import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from './compose';
 import { containerPath, toSvgDocument } from './geometry';
 import type { ContainerSpec } from './spec';
 
@@ -92,6 +92,16 @@ export function renderOpenFrameAtSize(
   options: ComposeOptions,
 ): HTMLCanvasElement {
   return composeOpenFrame({ ...spec, size }, layers, options);
+}
+
+/** Render an imported transparent container over a previously isolated subject. */
+export function renderContainerOverlayAtSize(
+  spec: ContainerSpec,
+  size: number,
+  layers: ComposeLayers,
+  options: ComposeOptions,
+): HTMLCanvasElement {
+  return composeContainerOverlay({ ...spec, size }, layers, options);
 }
 
 /** Render a self-contained complete tile while retaining its translucent rim. */

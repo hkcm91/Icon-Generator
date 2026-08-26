@@ -5,9 +5,11 @@ import {
   makeItem,
   modelGlyphReferenceSource,
   parseLibrary,
+  repairedTransparentOutputMode,
   repairLegacyBuiltinGlyphModes,
   resetBuiltinGlyphModelResults,
   resetIdCounter,
+  resolveIconOutputMode,
 } from '../src/core/library';
 import { runPool } from '../src/core/queue';
 
@@ -194,6 +196,24 @@ describe('built-in glyph generation mode', () => {
     });
     expect(repair.items[0].outputMode).toBeUndefined();
     expect(repair.items[1]).toBe(brand);
+  });
+});
+
+describe('BYOC output mode', () => {
+  it('keeps a finished glass overlay when the global container choice changes', () => {
+    const item = makeItem('Search', { status: 'ready', outputMode: 'overlay' });
+    expect(resolveIconOutputMode(item, true, 'isolated')).toBe('overlay');
+    expect(resolveIconOutputMode(item, false, 'filled')).toBe('overlay');
+    expect(resolveIconOutputMode(item, true, 'open-frame')).toBe('overlay');
+  });
+
+  it('does not strip an explicit glass overlay during legacy alpha repair', () => {
+    const item = makeItem('Search', {
+      sourceMode: 'styled',
+      status: 'ready',
+      outputMode: 'overlay',
+    });
+    expect(repairedTransparentOutputMode(item, true)).toBe('overlay');
   });
 });
 
