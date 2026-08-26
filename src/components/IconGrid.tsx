@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { composeCompleteIcon, composeIcon, composeOpenFrame, preserveMasterContainerRim, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { composeCompleteIcon, composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
   containerGenerationUsesAlpha,
@@ -7,7 +7,6 @@ import {
   parseLibrary,
   resolveIconOutputMode,
   shouldMaskGeneratedCatalogSubject,
-  shouldPreserveMasterContainerRim,
   frameVariantTarget,
   stableFrameIndex,
   type IconItem,
@@ -17,7 +16,7 @@ import LibraryPicker from './LibraryPicker';
 import { runPool, type PoolProgress } from '../core/queue';
 import type { ContainerSpec } from '../core/spec';
 import type { GenerationOptions } from '../state/useGeneration';
-import { exactGlyph, fileDataUrl, imageFromUrl, imageSourceDataUrl, maskGeneratedGlyph, sourceReference } from '../core/images';
+import { exactGlyph, fileDataUrl, imageSourceDataUrl, maskGeneratedGlyph, sourceReference } from '../core/images';
 import { makeItem } from '../core/library';
 import { estimateGlyphBatch, needsPaidGeneration } from '../core/cost';
 import { cancelActiveGenerations } from '../core/replicate';
@@ -186,22 +185,6 @@ export default function IconGrid(props: Props) {
       setMessage(`Blocked: this click is estimated at $${estimate.cost.toFixed(2)}, above the $${props.maxBatchCost.toFixed(2)} batch limit.`);
       return;
     }
-    // `props.material` is mutable working state and is overwritten by the
-    // single-icon Generate action. Decode the persisted upload itself once for
-    // this batch so a prior borderless result can never become the rim source.
-    let uploadedMasterRim: CanvasImageSource | null = null;
-    if (
-      hasPaidGeneration &&
-      shouldPreserveMasterContainerRim(requestedContainerMode, Boolean(props.options.master)) &&
-      props.options.master
-    ) {
-      try {
-        uploadedMasterRim = await imageFromUrl(props.options.master);
-      } catch {
-        setMessage('Could not decode the original uploaded master needed to preserve its glass rim. Re-upload the master and try again.');
-        return;
-      }
-    }
     stopped.current = false;
     setRunning(true);
     setMessage('');
@@ -246,6 +229,7 @@ export default function IconGrid(props: Props) {
                   wantAlpha: requestedWantAlpha,
                   glyphSubject: subject,
                   themeTreatment: item.themeTreatment,
+                  directorInstruction: item.directorInstruction,
                   // A stable key per revision keeps network retries/cache hits
                   // safe while making every icon and Redo use a new layout.
                   variationKey: hashString(`${item.id}:v${item.revision + 1}`),
@@ -263,12 +247,6 @@ export default function IconGrid(props: Props) {
           ) {
             const exactMask = await exactGlyph(item.sourceUrl!, '#ffffff');
             layer = maskGeneratedGlyph(layer, exactMask, props.spec.size);
-          }
-          if (
-            uploadedMasterRim &&
-            needsPaidGeneration(item)
-          ) {
-            layer = preserveMasterContainerRim(props.spec, layer, uploadedMasterRim);
           }
           const nextRevision = item.revision + 1;
           const outputMode = requestedContainerMode === 'open-frame'
@@ -524,6 +502,14 @@ export default function IconGrid(props: Props) {
                   placeholder="Theme treatment — optional; auto if blank"
                   onChange={(event) => patch(item.id, { themeTreatment: event.target.value })}
                 />
+                {item.directorInstruction && (
+                  <textarea
+                    className="card-concept"
+                    aria-label={`${item.name} director correction`}
+                    value={item.directorInstruction}
+                    onChange={(event) => patch(item.id, { directorInstruction: event.target.value })}
+                  />
+                )}
                 {item.sourceUrl && isAiGuidedCatalogSource(item.sourceUrl) && (
                   <span className="badge source-mode">Subject reference only</span>
                 )}

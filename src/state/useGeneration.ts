@@ -58,6 +58,8 @@ export interface GenerationOptions {
   theme?: string;
   /** Per-card semantic interpretation; separate from its export/name slot. */
   themeTreatment?: string;
+  /** Per-card natural-language correction staged by Icon Director. */
+  directorInstruction?: string;
   familyPrompt?: string;
   negativePrompt?: string;
   quality?: 'low' | 'medium' | 'high';
@@ -91,7 +93,11 @@ export function recipePrompt(prompt: string, options: GenerationOptions): string
       ? 'MULTI-MASTER RULE: Infer the family invariants shared by the supplied glyph masters—material roles, lighting, camera, edge finish and opacity behavior. Treat their different subjects, silhouettes, accent counts and detail placement as examples of allowed variation. Never average distinct glyph and frame materials together and never copy any one master subject.'
       : '',
     `REFERENCE CONTROL — style match ${Math.round(fidelity)}%, decorative variation ${Math.round(variation)}%. ${fidelityRule} ${variationRule} Style fidelity and composition variation are independent: variation must not weaken the locked style.`,
-    options.familyPrompt?.trim(), options.variationKey
+    options.familyPrompt?.trim(),
+    options.directorInstruction?.trim()
+      ? `CURRENT CARD CORRECTION — HIGHEST PRIORITY: ${options.directorInstruction.trim()} Apply this correction while retaining every approved family trait it does not explicitly change.`
+      : '',
+    options.variationKey
     ? `Internal composition variation ${options.variationKey}: choose a distinct arrangement of decorative microdetails for this icon. Do not display or spell this key.`
     : '', options.negativePrompt?.trim()
     ? `Avoid: ${options.negativePrompt.trim()}` : ''].filter(Boolean).join('\n');
@@ -240,13 +246,14 @@ export function useGeneration() {
           options.referenceSubject,
           options.theme,
           options.themeTreatment,
+          options.frameStyleProfile,
         ),
         options,
       ),
       options.spec.size,
       references,
       undefined,
-      false,
+      modelSupportsAlpha(options.model),
       options.quality,
     );
     const key = await cacheKey('complete-icon', options.model, input);

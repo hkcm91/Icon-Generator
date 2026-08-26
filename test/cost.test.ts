@@ -7,7 +7,6 @@ import {
   repairedTransparentOutputMode,
   resolveIconOutputMode,
   shouldMaskGeneratedCatalogSubject,
-  shouldPreserveMasterContainerRim,
   stableFrameIndex,
 } from '../src/core/library';
 import { hydrateProject } from '../src/state/useProject';
@@ -23,13 +22,6 @@ describe('generation cost controls', () => {
     expect(shouldMaskGeneratedCatalogSubject('filled')).toBe(false);
     expect(shouldMaskGeneratedCatalogSubject('open-frame')).toBe(true);
     expect(shouldMaskGeneratedCatalogSubject('isolated')).toBe(true);
-  });
-
-  it('locks the uploaded master rim only onto filled-tile generations', () => {
-    expect(shouldPreserveMasterContainerRim('filled', true)).toBe(true);
-    expect(shouldPreserveMasterContainerRim('filled', false)).toBe(false);
-    expect(shouldPreserveMasterContainerRim('open-frame', true)).toBe(false);
-    expect(shouldPreserveMasterContainerRim('isolated', true)).toBe(false);
   });
 
   it('bounds decorative frame pools from one to six reusable variants', () => {

@@ -5,6 +5,7 @@ import { DEFAULT_VISION_MODEL } from '../core/vision';
 import type { ContainerMode, IconItem } from '../core/library';
 import type { ThemeSuggestion } from '../core/vision';
 import { normalizeMaterialPalette, type MaterialPalette } from '../core/materialPalette';
+import type { DirectorMessage } from '../core/director';
 
 const STORAGE_KEY = 'icon-generator-project-v1';
 
@@ -49,6 +50,10 @@ export interface Project {
   /** Optional set direction explicitly chosen by the user. */
   theme: string;
   themeSuggestions: ThemeSuggestion[];
+  /** Set-level natural-language art direction, persisted with saved sets. */
+  directorMessages: DirectorMessage[];
+  /** Compact cumulative decisions so long conversations remain inexpensive. */
+  directorMemory: string;
   /** The approved master: every generation references it. */
   master: { name: string; dataUrl: string } | null;
   /** Reuse the approved container pixels instead of repainting the material. */
@@ -103,6 +108,8 @@ const DEFAULT_PROJECT: Project = {
   detailVariation: 70,
   theme: '',
   themeSuggestions: [],
+  directorMessages: [],
+  directorMemory: '',
   master: null,
   lockedContainer: false,
   glyphTransparency: true,
@@ -119,6 +126,23 @@ const DEFAULT_PROJECT: Project = {
 function percentage(value: unknown, fallback: number): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : fallback;
+}
+
+function directorMessages(value: unknown): DirectorMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const message = entry as Partial<DirectorMessage>;
+    if ((message.role !== 'user' && message.role !== 'assistant') || typeof message.text !== 'string') return [];
+    const cleaned = message.text.trim().slice(0, 1600);
+    if (!cleaned) return [];
+    return [{
+      id: typeof message.id === 'string' && message.id ? message.id : `restored-${index}`,
+      role: message.role,
+      text: cleaned,
+      createdAt: Number.isFinite(Number(message.createdAt)) ? Number(message.createdAt) : index,
+    }];
+  }).slice(-40);
 }
 
 export function hydrateProject(parsed: Partial<Project>): Project {
@@ -148,6 +172,8 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     materialPalette: normalizeMaterialPalette(parsed.materialPalette),
     styleFidelity: percentage(parsed.styleFidelity, 90),
     detailVariation: percentage(parsed.detailVariation, 70),
+    directorMessages: directorMessages(parsed.directorMessages),
+    directorMemory: typeof parsed.directorMemory === 'string' ? parsed.directorMemory.trim().slice(0, 2400) : '',
     spec: normalizeSpec(parsed.spec),
     // Older project/template JSON could silently carry a dark analytic rim.
     // Clear it once; rims intentionally selected after this migration persist.

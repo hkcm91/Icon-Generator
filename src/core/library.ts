@@ -28,11 +28,6 @@ export function shouldMaskGeneratedCatalogSubject(mode: ContainerMode): boolean 
   return mode !== 'filled';
 }
 
-/** Filled master-driven families preserve the approved perimeter in pixels. */
-export function shouldPreserveMasterContainerRim(mode: ContainerMode, hasMaster: boolean): boolean {
-  return mode === 'filled' && hasMaster;
-}
-
 /** 0% reuses one frame; 100% spreads the family across six approved frames. */
 export function frameVariantTarget(detailVariation: number): number {
   const value = Math.max(0, Math.min(100, Number(detailVariation) || 0));
@@ -56,6 +51,8 @@ export interface IconItem {
   concept: string;
   /** Optional semantic adaptation of the concept for the selected set theme. */
   themeTreatment?: string;
+  /** Natural-language correction staged by Icon Director for this card. */
+  directorInstruction?: string;
   category?: string;
   keywords?: string[];
   notes?: string;
