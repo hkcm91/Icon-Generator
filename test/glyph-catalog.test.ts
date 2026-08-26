@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import materialCatalog from '../public/libraries/material-symbols.json';
+import brandCatalog from '../public/libraries/simple-icons.json';
 import {
+  BRAND_PRIORITY,
+  BRAND_COMMERCE_PRIORITY,
+  BRAND_ENTERTAINMENT_PRIORITY,
+  BRAND_SOCIAL_PRIORITY,
+  BRAND_TRAVEL_PRIORITY,
+  BRAND_WORK_PRIORITY,
   MATERIAL_ESSENTIALS,
   MOBILE_ICON_GROUPS,
   humanizeGlyphName,
@@ -51,5 +58,35 @@ describe('organized glyph catalog', () => {
   it('turns source slugs into card-ready names', () => {
     expect(humanizeGlyphName('calendar_month', 'material')).toBe('Calendar Month');
     expect(humanizeGlyphName('YouTube', 'brands')).toBe('YouTube');
+  });
+
+  it('ships only available, unique brands in the ranked mobile lists', () => {
+    const available = new Set(brandCatalog.map((entry) => entry.slug));
+    const rankedSections = [
+      BRAND_PRIORITY,
+      BRAND_SOCIAL_PRIORITY,
+      BRAND_ENTERTAINMENT_PRIORITY,
+      BRAND_COMMERCE_PRIORITY,
+      BRAND_TRAVEL_PRIORITY,
+      BRAND_WORK_PRIORITY,
+    ];
+    expect(BRAND_PRIORITY).toHaveLength(75);
+    expect(rankedSections.map((section) => section.length)).toEqual([75, 32, 27, 29, 25, 34]);
+    for (const section of rankedSections) {
+      expect(new Set(section).size).toBe(section.length);
+      expect(section.filter((slug) => !available.has(slug))).toEqual([]);
+    }
+  });
+
+  it('orders social and all-brand views by mobile demand rather than alphabetically', () => {
+    const social = organizeGlyphEntries(brandCatalog, 'brands', 'social', '');
+    expect(social.slice(0, 10).map((entry) => entry.slug)).toEqual([
+      'youtube', 'facebook', 'instagram', 'whatsapp', 'tiktok',
+      'messenger', 'telegram', 'snapchat', 'reddit', 'pinterest',
+    ]);
+    const allBrands = organizeGlyphEntries(brandCatalog, 'brands', 'all', '');
+    expect(allBrands.slice(0, 5).map((entry) => entry.slug)).toEqual([
+      'youtube', 'facebook', 'instagram', 'whatsapp', 'tiktok',
+    ]);
   });
 });
