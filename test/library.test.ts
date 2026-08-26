@@ -9,11 +9,21 @@ import {
   repairLegacyBuiltinGlyphModes,
   resetBuiltinGlyphModelResults,
   resetIdCounter,
+  resolveGenerationContainerMode,
   resolveIconOutputMode,
 } from '../src/core/library';
 import { runPool } from '../src/core/queue';
 
 beforeEach(() => resetIdCounter());
+
+describe('optional open-frame preparation', () => {
+  it('falls back to one-pass complete icons until a reusable frame exists', () => {
+    expect(resolveGenerationContainerMode('open-frame', false)).toBe('filled');
+    expect(resolveGenerationContainerMode('open-frame', true)).toBe('open-frame');
+    expect(resolveGenerationContainerMode('isolated', false)).toBe('isolated');
+    expect(resolveGenerationContainerMode('filled', false)).toBe('filled');
+  });
+});
 
 describe('parsing an icon list', () => {
   it('reads one name per line', () => {
@@ -214,6 +224,15 @@ describe('BYOC output mode', () => {
       outputMode: 'overlay',
     });
     expect(repairedTransparentOutputMode(item, true)).toBe('overlay');
+  });
+
+  it('does not reclassify a complete transparent tile as an isolated subject', () => {
+    const item = makeItem('Disc', {
+      sourceMode: 'styled',
+      status: 'ready',
+      outputMode: 'complete',
+    });
+    expect(repairedTransparentOutputMode(item, true)).toBe('complete');
   });
 });
 

@@ -10,7 +10,7 @@ import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
 import IconDirector from './IconDirector';
 import type { DirectorMessage, DirectorResult } from '../core/director';
-import { containerGenerationUsesAlpha, frameVariantTarget, makeItem, repairedTransparentOutputMode, resolveIconOutputMode, stableFrameIndex, type ContainerMode, type IconItem } from '../core/library';
+import { containerGenerationUsesAlpha, frameVariantTarget, makeItem, repairedTransparentOutputMode, resolveGenerationContainerMode, resolveIconOutputMode, stableFrameIndex, type ContainerMode, type IconItem } from '../core/library';
 import {
   PLATFORM_TARGETS,
   blobBytes,
@@ -248,6 +248,7 @@ export default function SimpleStudio(props: Props) {
   const premiumMessage = premiumBlocked
     ? `Premium generation is locked: this setting is about $${cost.toFixed(3)} per output.`
     : undefined;
+  const generationContainerMode = resolveGenerationContainerMode(props.containerMode, props.frameReady);
 
   // The full-resolution layer lives in IndexedDB, while the compact master is
   // persisted with the project. Restore that saved upload after a refresh so
@@ -279,7 +280,7 @@ export default function SimpleStudio(props: Props) {
       props.onClearFrameVariants();
       setStatus({
         kind: 'error',
-        message: 'Part of the source subject extends into the decorative frame. Extract a clean frame before generating the family.',
+        message: 'The saved reusable frame was marked unready. You can still generate complete icons directly from the uploaded master, or optionally extract the frame again.',
       });
     }
   }, [props.imageStoreLoaded, props.containerMode, props.frameReady, props.materialLayer, props.extractedSubject, props.spec, props.onFrameReady, props.onClearFrameVariants, setStatus]);
@@ -414,13 +415,9 @@ export default function SimpleStudio(props: Props) {
       setStatus({ kind: 'error', message: premiumMessage });
       return;
     }
-    if (props.containerMode === 'open-frame' && !props.frameReady) {
-      setStatus({ kind: 'error', message: 'Extract or approve a subject-free transparent frame before generating icons.' });
-      return;
-    }
     // Construction is authoritative. A stale legacy transparency preference
     // must never turn a selected Filled tile into a glyph-only request.
-    const layeredOutput = containerGenerationUsesAlpha(props.containerMode);
+    const layeredOutput = containerGenerationUsesAlpha(generationContainerMode);
     const options: GenerationOptions = {
         spec: props.spec,
         model: props.model,
@@ -437,7 +434,7 @@ export default function SimpleStudio(props: Props) {
         // Open-frame glyphs still need the original finished sample so they can
         // copy the central subject's treatment. The cleaned frame lives in the
         // material layer and is never substituted for that style evidence.
-        master: props.containerMode === 'open-frame'
+        master: generationContainerMode === 'open-frame'
           ? (props.master?.dataUrl ?? null)
           : layeredOutput && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
         references: props.references.map((reference) => reference.dataUrl),
@@ -445,7 +442,7 @@ export default function SimpleStudio(props: Props) {
         styleProfile: props.styleProfile,
         subjectStyleProfile: props.subjectStyleProfile,
         frameStyleProfile: props.frameStyleProfile,
-        referenceHasSeparateFrame: props.containerMode === 'open-frame',
+        referenceHasSeparateFrame: generationContainerMode === 'open-frame',
         styleFidelity: props.styleFidelity,
         detailVariation: props.detailVariation,
         materialPalette: props.materialPalette,
@@ -844,16 +841,8 @@ export default function SimpleStudio(props: Props) {
         setStatus({ kind: 'error', message });
         return message;
       }
-      const effectiveMode = patch.containerMode ?? props.containerMode;
-      if (effectiveMode === 'open-frame' && !props.frameReady) {
-        const inspection = props.materialLayer ? inspectOpenFrame(props.materialLayer, props.spec.size) : null;
-        const coverage = inspection?.subjectLikely
-          ? ` The current artwork occupies ${Math.round(inspection.centralCoverage * 100)}% of the central safe area.`
-          : '';
-        const message = `Generation blocked: Open frame requires a subject-free reusable frame.${coverage} Extract the frame first, or ask the Director to keep the complete container and replace its subject.`;
-        setStatus({ kind: 'error', message });
-        return message;
-      }
+      const requestedMode = patch.containerMode ?? props.containerMode;
+      const effectiveMode = resolveGenerationContainerMode(requestedMode, props.frameReady);
       const estimate = estimateGlyphBatch(targets, props.model, props.quality);
       if (estimate.cost !== null && estimate.cost > props.maxBatchCost) {
         const message = `Generation blocked: this batch is estimated at $${estimate.cost.toFixed(2)}, above the $${props.maxBatchCost.toFixed(2)} limit.`;
@@ -864,8 +853,10 @@ export default function SimpleStudio(props: Props) {
         id: globalThis.crypto?.randomUUID?.() ?? `director-generate-${Date.now()}-${Math.random()}`,
         targetIds: targets.map((item) => item.id),
       });
-      const construction = effectiveMode === 'filled'
-        ? `complete icon${targets.length === 1 ? '' : 's'}`
+      const construction = requestedMode === 'open-frame' && effectiveMode === 'filled'
+        ? `complete icon${targets.length === 1 ? '' : 's'} directly from the uploaded master`
+        : effectiveMode === 'filled'
+          ? `complete icon${targets.length === 1 ? '' : 's'}`
         : effectiveMode === 'open-frame'
           ? `open-frame icon${targets.length === 1 ? '' : 's'}`
           : `isolated subject${targets.length === 1 ? '' : 's'}`;
@@ -999,11 +990,11 @@ export default function SimpleStudio(props: Props) {
             onApply={applyDirectorResult}
           />
           {props.containerMode === 'open-frame' && (
-            <div className={props.frameReady ? 'frame-gate frame-gate-ready' : 'frame-gate'}>
-              <strong>{props.frameReady ? 'Subject-removed master ready' : 'Create a subject-removed master'}</strong>
+            <details className={props.frameReady ? 'frame-gate frame-gate-ready' : 'frame-gate'}>
+              <summary><strong>{props.frameReady ? 'Optional reusable frame ready' : 'Optional: create a reusable subject-free frame'}</strong></summary>
               <p>{props.frameReady
                 ? 'The original upload remains unchanged. The cleaned version removes only the subject and preserves inward frame details.'
-                : `Remove ${props.referenceSubject || 'the reference subject'} without applying a second center cut. You can compare both versions here before generating the family.`}</p>
+                : `Skip this and generate complete icons directly from the uploaded master, or remove ${props.referenceSubject || 'the reference subject'} once to reuse the same frame locally across the family.`}</p>
               {props.master && (
                 <div className="frame-master-compare" aria-label="Original, extracted subject, and subject-removed master comparison">
                   <figure>
@@ -1045,7 +1036,7 @@ export default function SimpleStudio(props: Props) {
                   </button>
                 </div>
               )}
-            </div>
+            </details>
           )}
           <details className="director-manual">
             <summary>Manual controls</summary>
@@ -1223,8 +1214,10 @@ export default function SimpleStudio(props: Props) {
           </label>
           {cost !== null && <p className={cost > 0.05 ? 'status status-error' : 'status status-ok'}>
             Estimated Replicate charge: about ${cost.toFixed(3)} per generated output.
-            {' '}{props.containerMode === 'filled'
-              ? 'Each result is generated as one complete tile containing both its container and symbol.'
+            {' '}{generationContainerMode === 'filled'
+              ? props.containerMode === 'open-frame'
+                ? 'Frame extraction is optional; each result will be generated as one complete icon directly from the uploaded master.'
+                : 'Each result is generated as one complete tile containing both its container and symbol.'
               : props.materialLayer
                 ? 'Your prepared frame is reused, so only the requested subject is generated.'
                 : 'A new material plus an AI subject uses two outputs; exact library artwork uses none.'}
@@ -1311,7 +1304,7 @@ export default function SimpleStudio(props: Props) {
           </h3>
           <div className="row">
             <button type="button" className="primary" onClick={run}
-              disabled={busy || premiumBlocked || (props.containerMode === 'open-frame' && !props.frameReady)}>
+              disabled={busy || premiumBlocked}>
               {busy ? 'Working…' : `${props.containerMode === 'isolated' ? 'Generate subject' : 'Generate icon'}${cost !== null ? ` · ~${(cost * (props.containerMode === 'filled' || !props.glyph.trim() || props.materialLayer ? 1 : 2)).toFixed(3)}` : ''}`}
             </button>
             <button
@@ -1380,10 +1373,10 @@ export default function SimpleStudio(props: Props) {
               material: props.material,
               glyphStyle: '',
               conditioning: 'auto',
-              wantAlpha: containerGenerationUsesAlpha(props.containerMode),
-              master: props.containerMode === 'open-frame'
+              wantAlpha: containerGenerationUsesAlpha(generationContainerMode),
+              master: generationContainerMode === 'open-frame'
                 ? (props.master?.dataUrl ?? null)
-                : containerGenerationUsesAlpha(props.containerMode) && props.lockedContainer
+                : containerGenerationUsesAlpha(generationContainerMode) && props.lockedContainer
                   ? null
                   : (props.master?.dataUrl ?? null),
               references: props.references.map((reference) => reference.dataUrl),
@@ -1391,7 +1384,7 @@ export default function SimpleStudio(props: Props) {
               styleProfile: props.styleProfile,
               subjectStyleProfile: props.subjectStyleProfile,
               frameStyleProfile: props.frameStyleProfile,
-              referenceHasSeparateFrame: props.containerMode === 'open-frame',
+              referenceHasSeparateFrame: generationContainerMode === 'open-frame',
               styleFidelity: props.styleFidelity,
               detailVariation: props.detailVariation,
               materialPalette: props.materialPalette,
@@ -1401,10 +1394,8 @@ export default function SimpleStudio(props: Props) {
               quality: props.quality,
             }}
             maxBatchCost={props.maxBatchCost}
-            containerMode={props.containerMode}
-            generationBlocked={props.containerMode === 'open-frame' && !props.frameReady
-              ? 'Extract or approve a subject-free transparent frame before generating the family.'
-              : premiumMessage}
+            containerMode={generationContainerMode}
+            generationBlocked={premiumMessage}
             generationRequest={directorGenerationRequest}
           />
         </li>

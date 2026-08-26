@@ -873,6 +873,7 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 }
 
 .frame-gate-ready { border-color: var(--ok); background: rgba(52, 211, 153, 0.08); }
+.frame-gate > summary { cursor: pointer; }
 .frame-gate p { margin: 4px 0 10px; color: var(--muted); font-size: 12.5px; }
 
 .frame-master-compare {
