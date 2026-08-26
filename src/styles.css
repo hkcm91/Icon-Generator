@@ -781,7 +781,7 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 
 .frame-master-compare {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin: 10px 0;
 }

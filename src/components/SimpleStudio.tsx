@@ -79,6 +79,9 @@ interface Props {
   onDirectorMemory: (value: string) => void;
   onMaterialLayer: (image: CanvasImageSource | null) => void;
   onGlyphLayer: (image: CanvasImageSource | null) => void;
+  imageStoreLoaded: boolean;
+  extractedSubject: CanvasImageSource | null;
+  onExtractedSubject: (image: CanvasImageSource | null) => void;
   master: { name: string; dataUrl: string } | null;
   onMaster: (master: { name: string; dataUrl: string } | null) => void;
   items: IconItem[];
@@ -250,7 +253,7 @@ export default function SimpleStudio(props: Props) {
   // persisted with the project. Restore that saved upload after a refresh so
   // the simple flow never repaints it merely because the page was reopened.
   useEffect(() => {
-    if (!props.master || props.materialLayer) return;
+    if (!props.imageStoreLoaded || !props.master || props.materialLayer) return;
     let cancelled = false;
     const image = new Image();
     image.onload = () => {
@@ -258,10 +261,14 @@ export default function SimpleStudio(props: Props) {
     };
     image.src = props.master.dataUrl;
     return () => { cancelled = true; };
-  }, [props.master, props.materialLayer, props.onMaterialLayer]);
+  }, [props.imageStoreLoaded, props.master, props.materialLayer, props.onMaterialLayer]);
 
   useEffect(() => {
-    if (props.containerMode !== 'open-frame' || !props.materialLayer) return;
+    if (!props.imageStoreLoaded || props.containerMode !== 'open-frame' || !props.materialLayer) return;
+    // A persisted extracted subject proves this frame came from the validated
+    // two-layer separation flow. Decorative flourishes may legitimately enter
+    // the centre, so the older coverage-only heuristic must not erase it.
+    if (props.extractedSubject) return;
     const inspection = inspectOpenFrame(props.materialLayer, props.spec.size);
     // Never auto-approve a transparent-looking layer. Older releases carved a
     // large hole and would otherwise immediately approve that damaged result
@@ -275,7 +282,7 @@ export default function SimpleStudio(props: Props) {
         message: 'Part of the source subject extends into the decorative frame. Extract a clean frame before generating the family.',
       });
     }
-  }, [props.containerMode, props.frameReady, props.materialLayer, props.spec, props.onFrameReady, props.onClearFrameVariants, setStatus]);
+  }, [props.imageStoreLoaded, props.containerMode, props.frameReady, props.materialLayer, props.extractedSubject, props.spec, props.onFrameReady, props.onClearFrameVariants, setStatus]);
 
   // Older versions could save a transparent AI layer but mark its card for
   // container composition. Once IndexedDB restores those pixels, repair only
@@ -326,6 +333,7 @@ export default function SimpleStudio(props: Props) {
       props.onThemeSuggestions([]);
       props.onFrameReady(false);
       props.onClearFrameVariants();
+      props.onExtractedSubject(null);
       // The upload is already the approved master. Reuse its pixels instead of
       // paying for a second model call to repaint a surface the user supplied.
       props.onMaterialLayer(master.layer);
@@ -470,7 +478,6 @@ export default function SimpleStudio(props: Props) {
       setStatus({ kind: 'error', message: 'Upload a finished reference before extracting an open frame.' });
       return;
     }
-    props.onFrameReady(false);
     const success = await generateOpenFrame({
       spec: props.spec,
       model: props.model,
@@ -492,7 +499,7 @@ export default function SimpleStudio(props: Props) {
       familyPrompt: props.familyPrompt,
       negativePrompt: props.negativePrompt,
       quality: props.quality,
-    }, props.onMaterialLayer);
+    }, props.onMaterialLayer, props.onExtractedSubject);
     if (success) {
       props.onFrameReady(true);
       props.onClearFrameVariants();
@@ -511,6 +518,7 @@ export default function SimpleStudio(props: Props) {
       return;
     }
     props.onFrameReady(true);
+    props.onExtractedSubject(null);
     setStatus({ kind: 'ok', message: 'The existing artwork passed the empty-center check.' });
   };
 
@@ -997,7 +1005,7 @@ export default function SimpleStudio(props: Props) {
                 ? 'The original upload remains unchanged. The cleaned version removes only the subject and preserves inward frame details.'
                 : `Remove ${props.referenceSubject || 'the reference subject'} without applying a second center cut. You can compare both versions here before generating the family.`}</p>
               {props.master && (
-                <div className="frame-master-compare" aria-label="Original and subject-removed master comparison">
+                <div className="frame-master-compare" aria-label="Original, extracted subject, and subject-removed master comparison">
                   <figure>
                     <div className="frame-compare-art">
                       <img src={props.master.dataUrl} alt="Original uploaded master icon" />
@@ -1005,10 +1013,16 @@ export default function SimpleStudio(props: Props) {
                     <figcaption><strong>Original master upload</strong><small>Kept unchanged</small></figcaption>
                   </figure>
                   <figure>
+                    {props.extractedSubject
+                      ? <LayerThumbnail image={props.extractedSubject} />
+                      : <div className="frame-compare-art frame-compare-empty">Extracted subject appears here</div>}
+                    <figcaption><strong>Extracted subject</strong><small>{props.extractedSubject ? 'Original pixels · saved separately' : 'Not created yet'}</small></figcaption>
+                  </figure>
+                  <figure>
                     {props.frameReady && props.materialLayer
                       ? <LayerThumbnail image={props.materialLayer} />
                       : <div className="frame-compare-art frame-compare-empty">Subject-removed version appears here</div>}
-                    <figcaption><strong>Subject-removed master</strong><small>{props.frameReady ? 'Used as the family frame · size matched' : 'Not created yet'}</small></figcaption>
+                    <figcaption><strong>Subject-removed frame</strong><small>{props.frameReady ? 'Saved separately · size matched' : 'Not created yet'}</small></figcaption>
                   </figure>
                 </div>
               )}

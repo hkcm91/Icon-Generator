@@ -357,6 +357,9 @@ export default function App() {
           onDirectorMemory={(value) => setField('directorMemory', value)}
           onMaterialLayer={store.setMaterial}
           onGlyphLayer={store.setGlyph}
+          imageStoreLoaded={store.loaded}
+          extractedSubject={store.extractedSubject}
+          onExtractedSubject={store.setExtractedSubject}
           materialLayer={material}
           glyphs={store.glyphs}
           onItemGlyph={store.setItemGlyph}
