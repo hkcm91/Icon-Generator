@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { composeCompleteIcon, composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, hasNativeAlpha, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
   containerGenerationUsesAlpha,
@@ -16,7 +16,7 @@ import LibraryPicker from './LibraryPicker';
 import { runPool, type PoolProgress } from '../core/queue';
 import type { ContainerSpec } from '../core/spec';
 import type { GenerationOptions } from '../state/useGeneration';
-import { exactGlyph, fileDataUrl, imageSourceDataUrl, maskGeneratedGlyph, sourceReference } from '../core/images';
+import { exactGlyph, fileDataUrl, imageFromUrl, imageSourceDataUrl, maskGeneratedGlyph, sourceReference } from '../core/images';
 import { makeItem } from '../core/library';
 import { estimateGlyphBatch, needsPaidGeneration } from '../core/cost';
 import { cancelActiveGenerations } from '../core/replicate';
@@ -28,6 +28,8 @@ interface Props {
   compose: ComposeOptions;
   material: CanvasImageSource | null;
   frameVariants: Map<string, CanvasImageSource>;
+  containerOverlay: CanvasImageSource | null;
+  onContainerOverlay: (image: CanvasImageSource | null) => void;
   glyphColor: string;
   items: IconItem[];
   concurrency: number;
@@ -61,12 +63,14 @@ function Thumb({
   /** Complete-icon drafts stay genuinely empty until their paid result exists. */
   empty?: boolean;
   /** Draw the stored asset directly; never synthesize a container behind it. */
-  mode?: 'transparent' | 'framed' | 'composed' | 'complete';
+  mode?: 'transparent' | 'framed' | 'overlay' | 'composed' | 'complete';
 }) {
   const src = useMemo(() => {
     const canvas = empty ? document.createElement('canvas')
       : mode === 'transparent'
         ? renderTransparentLayer({ ...spec, size: 128 }, layers.glyph, compose)
+        : mode === 'overlay'
+          ? composeContainerOverlay({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 })
         : mode === 'framed'
           ? composeOpenFrame({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 })
           : mode === 'complete'
@@ -98,9 +102,16 @@ export default function IconGrid(props: Props) {
   const handledGenerationRequest = useRef('');
   const input = useRef<HTMLInputElement>(null);
   const artworkInput = useRef<HTMLInputElement>(null);
+  const containerInput = useRef<HTMLInputElement>(null);
 
   const selectedCount = props.items.filter((item) => item.selected).length;
   const selectedItems = props.items.filter((item) => item.selected);
+  const selectedOverlayItems = selectedItems.filter((item) => item.status === 'ready' && item.outputMode === 'overlay');
+  const selectedIsolatedItems = selectedItems.filter((item) =>
+    item.status === 'ready' &&
+    props.glyphs.has(item.id) &&
+    resolveIconOutputMode(item, containerGenerationUsesAlpha(props.containerMode), props.containerMode) === 'transparent',
+  );
   const nextEstimate = estimateGlyphBatch(selectedItems, props.options.model, props.options.quality);
   const budgetBlocked = nextEstimate.cost !== null && nextEstimate.cost > props.maxBatchCost;
   const constructionPlural = props.containerMode === 'filled'
@@ -161,6 +172,40 @@ export default function IconGrid(props: Props) {
     }
     props.onItems([...props.items, ...added]);
     setMessage(`Added ${added.length} custom glyph${added.length === 1 ? '' : 's'} with exact artwork.`);
+  };
+
+  const applyContainerToSelected = (overlay = props.containerOverlay) => {
+    if (!overlay) {
+      setMessage('Upload a transparent glass container first.');
+      return 0;
+    }
+    const ids = new Set(selectedIsolatedItems.map((item) => item.id));
+    if (!ids.size) {
+      setMessage('Select at least one finished No container icon before applying the glass container.');
+      return 0;
+    }
+    props.onItems(props.items.map((item) => ids.has(item.id)
+      ? { ...item, outputMode: 'overlay' as const, approved: false }
+      : item));
+    return ids.size;
+  };
+
+  const importContainer = async (file?: File) => {
+    if (!file) return;
+    try {
+      const image = await imageFromUrl(await fileDataUrl(file));
+      if (!hasNativeAlpha(image)) {
+        setMessage('That container has no transparent exterior. Upload a transparent PNG or WebP so it does not cover the subject.');
+        return;
+      }
+      props.onContainerOverlay(image);
+      const applied = applyContainerToSelected(image);
+      setMessage(applied
+        ? `Loaded ${file.name} and placed it over ${applied} selected isolated icon${applied === 1 ? '' : 's'}. No generation charge.`
+        : `Loaded ${file.name}. Select finished No container icons, then choose Apply glass.`);
+    } catch (error) {
+      setMessage(`Could not load that container: ${(error as Error).message}`);
+    }
   };
 
   const runBatch = async (targets: IconItem[]) => {
@@ -323,6 +368,9 @@ export default function IconGrid(props: Props) {
         <button type="button" className="ghost" onClick={() => artworkInput.current?.click()}>
           Add artwork
         </button>
+        <button type="button" className="ghost" onClick={() => containerInput.current?.click()} disabled={running}>
+          Bring glass container
+        </button>
         <button type="button" className="ghost" onClick={() => setAll(true)} disabled={!props.items.length}>
           Select all
         </button>
@@ -373,7 +421,55 @@ export default function IconGrid(props: Props) {
           hidden
           onChange={(event) => void importArtwork(event.target.files)}
         />
+        <input
+          ref={containerInput}
+          type="file"
+          accept="image/png,image/webp"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            void importContainer(file);
+          }}
+        />
       </div>
+
+      {props.containerOverlay && (
+        <div className="byoc-container row row-tight" aria-label="Bring your own glass container controls">
+          <span className="badge badge-ready">Glass overlay ready · local/$0</span>
+          <button type="button" className="ghost tiny" disabled={running || !selectedIsolatedItems.length}
+            onClick={() => {
+              const applied = applyContainerToSelected();
+              if (applied) setMessage(`Placed the glass container over ${applied} selected icon${applied === 1 ? '' : 's'}. No generation charge.`);
+            }}>
+            Apply glass
+          </button>
+          <button type="button" className="ghost tiny" disabled={running || !selectedOverlayItems.length}
+            onClick={() => {
+              const ids = new Set(selectedOverlayItems.map((item) => item.id));
+              props.onItems(props.items.map((item) => ids.has(item.id)
+                ? { ...item, outputMode: 'transparent' as const, approved: false }
+                : item));
+              setMessage(`Removed the glass container from ${ids.size} selected icon${ids.size === 1 ? '' : 's'}; subject pixels were kept.`);
+            }}>
+            Remove glass
+          </button>
+          <button type="button" className="ghost tiny" disabled={running}
+            onClick={() => containerInput.current?.click()}>
+            Replace glass
+          </button>
+          <button type="button" className="ghost tiny" disabled={running}
+            onClick={() => {
+              props.onItems(props.items.map((item) => item.outputMode === 'overlay'
+                ? { ...item, outputMode: 'transparent' as const, approved: false }
+                : item));
+              props.onContainerOverlay(null);
+              setMessage('Cleared the BYOC container. All affected subjects remain unchanged.');
+            }}>
+            Clear glass
+          </button>
+        </div>
+      )}
 
       {adding && (
         <form className="add-icon-form" onSubmit={(event) => {
@@ -492,6 +588,8 @@ export default function IconGrid(props: Props) {
                 mode={outputMode}
                 layers={outputMode === 'transparent'
                   ? { material: null, glyph: props.glyphs.get(item.id) ?? null }
+                  : outputMode === 'overlay'
+                    ? { material: props.containerOverlay, glyph: props.glyphs.get(item.id) ?? null }
                   : outputMode === 'composed' || outputMode === 'framed'
                     ? { material: outputMode === 'framed' ? frameFor(item) : props.material, glyph: props.glyphs.get(item.id) ?? null }
                   : { material: props.glyphs.get(item.id) ?? null, glyph: null }}
@@ -608,7 +706,7 @@ export default function IconGrid(props: Props) {
                   <span className="badge" title="The output mode saved with this revision">
                     {outputMode === 'transparent'
                       ? 'isolated subject'
-                      : outputMode === 'framed' ? 'open frame' : 'filled tile'}
+                      : outputMode === 'framed' ? 'open frame' : outputMode === 'overlay' ? 'BYOC glass' : 'filled tile'}
                   </span>
                 )}
                 {item.status === 'ready' && (

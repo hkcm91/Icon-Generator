@@ -214,6 +214,46 @@ export function composeOpenFrame(
   return canvas;
 }
 
+/**
+ * Place an imported transparent glass container over an existing isolated
+ * subject. Unlike the AI open-frame compositor, the user-supplied container
+ * is deliberately the top layer so translucent glass can tint and refract the
+ * subject without changing its saved pixels.
+ */
+export function composeContainerOverlay(
+  spec: ContainerSpec,
+  layers: ComposeLayers,
+  options: ComposeOptions = DEFAULT_COMPOSE,
+): HTMLCanvasElement {
+  const canvas = createCanvas(spec.size);
+  const ctx = context2d(canvas);
+  const box = innerBox(spec);
+  const outline = new Path2D(containerPath(spec));
+
+  ctx.save();
+  ctx.clip(outline, 'evenodd');
+  if (layers.glyph) {
+    ctx.save();
+    ctx.clip(new Path2D(glyphSafePath(spec)), 'evenodd');
+    const safeEdge = box.edge * (1 - spec.glyphInset / 100) * options.glyphScale;
+    drawContain(
+      ctx,
+      layers.glyph,
+      box.cx - safeEdge / 2 + box.edge * options.glyphOffsetX / 100,
+      box.cy - safeEdge / 2 + box.edge * options.glyphOffsetY / 100,
+      safeEdge,
+      safeEdge,
+    );
+    ctx.restore();
+  }
+  if (layers.material) {
+    const alignedOverlay = alignLayerToContainerBounds(layers.material, spec);
+    drawCover(ctx, alignedOverlay, 0, 0, spec.size, spec.size);
+  }
+  ctx.restore();
+  return canvas;
+}
+
 /** Copy an RGBA model result without flattening intentional translucent gel. */
 export function preserveAlphaLayer(
   image: CanvasImageSource,

@@ -12,7 +12,7 @@
  */
 
 export type ItemStatus = 'draft' | 'queued' | 'generating' | 'ready' | 'failed';
-export type IconOutputMode = 'transparent' | 'framed' | 'composed' | 'complete';
+export type IconOutputMode = 'transparent' | 'framed' | 'overlay' | 'composed' | 'complete';
 export type ContainerMode = 'isolated' | 'open-frame' | 'filled';
 
 /** The construction picker is authoritative over legacy alpha preferences. */
@@ -188,7 +188,7 @@ export function repairedTransparentOutputMode(
   item: IconItem,
   hasRealAlpha: boolean,
 ): IconOutputMode | undefined {
-  if (item.outputMode === 'framed') return 'framed';
+  if (item.outputMode === 'framed' || item.outputMode === 'overlay') return item.outputMode;
   const generated = usesAiGeneration(item);
   return generated && hasRealAlpha
     ? 'transparent'

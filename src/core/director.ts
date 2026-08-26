@@ -181,6 +181,35 @@ export function directorPrompt(
 
 const normalizeName = (value: string) => value.trim().toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ');
 
+/**
+ * Resolve natural shorthand against the roster without guessing between two
+ * cards. This lets "mouse and CD" address "Computer Mouse" and
+ * "Compact Disc", while a shared word such as "arrow" selects nothing.
+ */
+function mentionedCards(instruction: string, cards: DirectorContext['cards']): DirectorContext['cards'] {
+  const normalizedInstruction = ` ${normalizeName(instruction)} `;
+  const instructionWords = new Set(normalizeName(instruction).split(' ').filter(Boolean));
+  const aliasOwners = new Map<string, number>();
+  const aliasesByCard = cards.map((card) => {
+    const words = normalizeName(card.name).split(' ').filter((word) => word.length > 1 && word !== 'icon');
+    const aliases = new Set<string>();
+    for (const word of words) {
+      if (word.length >= 3) aliases.add(word);
+    }
+    if (words.length > 1) aliases.add(words.map((word) => word[0]).join(''));
+    for (const alias of aliases) aliasOwners.set(alias, (aliasOwners.get(alias) ?? 0) + 1);
+    return aliases;
+  });
+
+  return cards.filter((card, index) => {
+    const fullName = normalizeName(card.name);
+    if (fullName.length > 1 && normalizedInstruction.includes(` ${fullName} `)) return true;
+    return [...aliasesByCard[index]].some((alias) =>
+      aliasOwners.get(alias) === 1 && instructionWords.has(alias),
+    );
+  });
+}
+
 function appendMemory(previousMemory: string, familyPrompt: string, instruction: string): string {
   const previous = previousMemory.trim() || familyPrompt.trim();
   const next = `${previous ? `${previous}\n` : ''}LATEST: ${instruction.trim()}`;
@@ -217,13 +246,7 @@ export function stageDirectorInstruction(
   const cleaned = instruction.trim().replace(/\s+/g, ' ').slice(0, 1200);
   if (!cleaned) return { reply: 'Type a direction first.', memory, patch: {} };
 
-  const normalized = ` ${normalizeName(cleaned)} `;
-  const namedCards = [...context.cards]
-    .sort((a, b) => b.name.length - a.name.length)
-    .filter((card) => {
-      const name = normalizeName(card.name);
-      return name.length > 1 && normalized.includes(` ${name} `);
-    });
+  const namedCards = mentionedCards(cleaned, context.cards);
   const failedCards = /\b(failed|errors?|didn'?t work)\b/i.test(cleaned)
     ? context.cards.filter((card) => card.status === 'failed')
     : [];
@@ -232,8 +255,8 @@ export function stageDirectorInstruction(
     : [];
   const targets = namedCards.length ? namedCards : failedCards.length ? failedCards : selectedCards;
   const confirmsGeneration = /^(?:(?:yes|ok(?:ay)?)[,.]?\s*)?(?:please\s+)?(?:now(?:\s+please)?|go ahead(?:\s+now)?|do it(?:\s+now)?|start(?:\s+(?:it|them|those))?(?:\s+now)?|run (?:it|them|those)(?:\s+now)?)(?:\s+please)?[.!]*$/i.test(cleaned);
-  const createsNamedCard = namedCards.length > 0 && /\bcreate\b/i.test(cleaned);
-  const wantsGeneration = /\b(?:generate|regenerate|render)\b|\bredo\b|\btest\b[^.]{0,80}\bselected\b/i.test(cleaned)
+  const createsNamedCard = namedCards.length > 0 && /\b(?:create|recreate|make|remake)\b/i.test(cleaned);
+  const wantsGeneration = /\b(?:generate|regenerate|render|redo|recreate|remake)\b|\b(?:make|try)\s+(?:it|them|those|again)\b|\btest\b[^.]{0,80}\bselected\b/i.test(cleaned)
     || confirmsGeneration
     || createsNamedCard;
   const nextMemory = appendMemory(memory, context.familyPrompt, cleaned);

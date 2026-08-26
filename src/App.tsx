@@ -373,6 +373,8 @@ export default function App() {
           frameVariants={store.frames}
           onFrameVariant={store.setFrameVariant}
           onClearFrameVariants={store.clearFrameVariants}
+          containerOverlay={store.containerOverlay}
+          onContainerOverlay={store.setContainerOverlay}
           references={project.references}
           onReferences={(value) => setField('references', value)}
           exportApprovedOnly={project.exportApprovedOnly}

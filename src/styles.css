@@ -474,6 +474,14 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 
 .icon-library { margin-top: 8px; }
 .icon-library .grid-head h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+.byoc-container {
+  margin: 7px 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(52, 211, 153, 0.28);
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.06);
+}
+.byoc-container .badge { margin-right: auto; width: auto; }
 
 .card {
   position: relative;

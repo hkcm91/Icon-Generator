@@ -21,6 +21,7 @@ import {
   ICO_SIZES,
   renderAtSize,
   renderCompleteAtSize,
+  renderContainerOverlayAtSize,
   renderOpenFrameAtSize,
   renderTransparentAtSize,
   svgMask,
@@ -98,6 +99,8 @@ interface Props {
   frameReady: boolean;
   onFrameReady: (value: boolean) => void;
   frameVariants: Map<string, CanvasImageSource>;
+  containerOverlay: CanvasImageSource | null;
+  onContainerOverlay: (image: CanvasImageSource | null) => void;
   onFrameVariant: (id: string, image: CanvasImageSource) => void;
   onClearFrameVariants: () => void;
   references: Array<{ name: string; dataUrl: string }>;
@@ -280,7 +283,7 @@ export default function SimpleStudio(props: Props) {
   useEffect(() => {
     let changed = false;
     const repaired = props.items.map((item) => {
-      if (item.outputMode === 'transparent' || item.outputMode === 'framed') return item;
+      if (item.outputMode === 'transparent' || item.outputMode === 'framed' || item.outputMode === 'overlay') return item;
       if (item.sourceUrl && item.sourceMode !== 'styled') return item;
       const image = props.glyphs.get(item.id);
       if (!image) return item;
@@ -668,7 +671,9 @@ export default function SimpleStudio(props: Props) {
               : 'composed';
         const layers = outputMode === 'complete'
           ? { material: glyph ?? props.materialLayer, glyph: null }
-          : { material: outputMode === 'framed' ? frameFor(item.id) : props.materialLayer, glyph };
+          : { material: outputMode === 'framed'
+            ? frameFor(item.id)
+            : outputMode === 'overlay' ? props.containerOverlay : props.materialLayer, glyph };
         const itemCompose: ComposeOptions = {
           ...props.compose,
           glyphScale: props.compose.glyphScale * ('opticalScale' in item ? (item.opticalScale ?? 1) : 1),
@@ -677,6 +682,8 @@ export default function SimpleStudio(props: Props) {
         };
         const render = (size: number) => outputMode === 'transparent'
           ? renderTransparentAtSize(props.spec, size, glyph, itemCompose)
+          : outputMode === 'overlay'
+            ? renderContainerOverlayAtSize(props.spec, size, layers, itemCompose)
           : outputMode === 'framed'
             ? renderOpenFrameAtSize(props.spec, size, layers, itemCompose)
             : outputMode === 'complete'
@@ -1340,6 +1347,8 @@ export default function SimpleStudio(props: Props) {
             compose={props.compose}
             material={props.materialLayer}
             frameVariants={props.frameVariants}
+            containerOverlay={props.containerOverlay}
+            onContainerOverlay={props.onContainerOverlay}
             glyphColor={props.glyphColor}
             items={props.items}
             concurrency={props.concurrency}
