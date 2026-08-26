@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { alignLayerToReferenceBounds, cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
+import { alignLayerToContainerBounds, alignLayerToReferenceBounds, cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
 import { buildConditioning, type ConditioningMode } from '../core/condition';
 import {
   conditionedMaterialPrompt,
@@ -18,6 +18,7 @@ import type { ContainerSpec } from '../core/spec';
 import { GENERATION_CACHE, blobToImage, canvasToBlobAsync, getBlob, putBlob } from '../core/store';
 import { deleteBlob } from '../core/store';
 import { inspectOpenFrame } from '../core/frameValidation';
+import { themeRestraintPrompt } from '../core/themeDirection';
 
 export type GenStatus =
   | { kind: 'idle' }
@@ -100,7 +101,9 @@ export function recipePrompt(prompt: string, options: GenerationOptions): string
     options.variationKey
     ? `Internal composition variation ${options.variationKey}: choose a distinct arrangement of decorative microdetails for this icon. Do not display or spell this key.`
     : '', options.negativePrompt?.trim()
-    ? `Avoid: ${options.negativePrompt.trim()}` : ''].filter(Boolean).join('\n');
+    ? `Avoid: ${options.negativePrompt.trim()}` : '',
+    themeRestraintPrompt(options.theme, options.themeTreatment),
+  ].filter(Boolean).join('\n');
 }
 
 function stable(value: unknown): string {
@@ -256,13 +259,16 @@ export function useGeneration() {
       modelSupportsAlpha(options.model),
       options.quality,
     );
-    const key = await cacheKey('complete-icon', options.model, input);
+    const key = await cacheKey('complete-icon-v2-container-aligned', options.model, input);
     const cached = await cachedLayer(key);
     if (cached) return cached;
     const result = await generateImage(options.model, input);
     const image = await loadImage(result.images[0]);
-    await rememberLayer(key, image);
-    return image;
+    const layer = hasNativeAlpha(image)
+      ? alignLayerToContainerBounds(cleanGeneratedAlpha(image, options.spec.size), options.spec)
+      : image;
+    await rememberLayer(key, layer);
+    return layer;
   }, []);
 
   const runOpenFrame = useCallback(async (options: GenerationOptions) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alphaBounds, boundsTransform } from '../src/core/frameAlignment';
+import { alphaBounds, boundsContainTransform, boundsTransform } from '../src/core/frameAlignment';
 
 describe('subject-removed master alignment', () => {
   it('measures the visible alpha envelope', () => {
@@ -22,5 +22,16 @@ describe('subject-removed master alignment', () => {
     expect(source.y * transform.scaleY + transform.translateY).toBeCloseTo(reference.y);
     expect(source.width * transform.scaleX).toBeCloseTo(reference.width);
     expect(source.height * transform.scaleY).toBeCloseTo(reference.height);
+  });
+
+  it('fits generated visible bounds to the family box without stretching', () => {
+    const transform = boundsContainTransform(
+      { x: 20, y: 40, width: 80, height: 40 },
+      { x: 10, y: 10, width: 100, height: 100 },
+    );
+    expect(transform.scaleX).toBe(transform.scaleY);
+    expect(transform.scaleX).toBeCloseTo(1.25);
+    expect(20 * transform.scaleX + transform.translateX).toBeCloseTo(10);
+    expect(40 * transform.scaleY + transform.translateY).toBeCloseTo(35);
   });
 });

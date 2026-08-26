@@ -21,6 +21,7 @@ import { makeItem } from '../core/library';
 import { estimateGlyphBatch, needsPaidGeneration } from '../core/cost';
 import { cancelActiveGenerations } from '../core/replicate';
 import { hashString } from '../core/hash';
+import { automaticThemeTreatment } from '../core/themeDirection';
 
 interface Props {
   spec: ContainerSpec;
@@ -187,6 +188,10 @@ export default function IconGrid(props: Props) {
       setMessage(`Blocked: this click is estimated at $${estimate.cost.toFixed(2)}, above the $${props.maxBatchCost.toFixed(2)} batch limit.`);
       return;
     }
+    const automaticTreatments = new Map(batchTargets.map((item) => {
+      const familyIndex = Math.max(0, props.items.findIndex((candidate) => candidate.id === item.id));
+      return [item.id, automaticThemeTreatment(props.options.theme ?? '', item.id, familyIndex)] as const;
+    }));
     stopped.current = false;
     setRunning(true);
     setMessage('');
@@ -230,7 +235,7 @@ export default function IconGrid(props: Props) {
                   ...props.options,
                   wantAlpha: requestedWantAlpha,
                   glyphSubject: subject,
-                  themeTreatment: item.themeTreatment,
+                  themeTreatment: item.themeTreatment?.trim() || automaticTreatments.get(item.id),
                   directorInstruction: item.directorInstruction,
                   // A stable key per revision keeps network retries/cache hits
                   // safe while making every icon and Redo use a new layout.

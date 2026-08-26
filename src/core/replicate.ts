@@ -307,7 +307,7 @@ export function glyphPrompt(
     style.trim() ? `Style: ${style.trim()}.` : '',
     subjectStyle.trim() ? `REFERENCE SUBJECT TREATMENT: ${subjectStyle.trim()}.` : '',
     theme.trim()
-      ? `THEME TRANSFORMATION: The family theme is ${theme.trim()}. Keep the requested icon function instantly recognizable, but reinterpret its visual concept so it unmistakably belongs to that theme. This is semantic art direction, not merely a color filter. For example, a Halloween cookie can be a clean pumpkin-decorated seasonal sugar cookie, and a Halloween butterfly can use restrained gothic wing or skull-like markings. Use one bold theme cue integrated into the main silhouette; avoid extra clutter.`
+      ? `THEME TRANSFORMATION: The family theme is ${theme.trim()}. Keep the requested icon function instantly recognizable while you reinterpret its visual concept. Use one restrained cue integrated into the main silhouette; the theme is never permission to add a collection of decorative objects.`
       : '',
     themeTreatment.trim()
       ? `APPROVED THEME TREATMENT: ${themeTreatment.trim()}. Follow this treatment while preserving the requested icon's readable identity.`
@@ -354,7 +354,7 @@ export function completeIconPrompt(
     `SUBJECT AUTHORITY: Create one complete finished app icon depicting ${requested}. The requested subject overrides every reference image and theme cue.`,
     material.trim() ? `Material and finish: ${material.trim()}.` : '',
     theme.trim()
-      ? `THEME TRANSFORMATION: The family theme is ${theme.trim()}. Reinterpret ${requested} with one bold, integrated theme-specific cue rather than merely recoloring it. Keep the main subject unmistakable and legible at tiny size.`
+      ? `THEME TRANSFORMATION: The family theme is ${theme.trim()}. Reinterpret ${requested} with one restrained, integrated theme-specific cue. Keep the main subject unmistakable and legible at tiny size.`
       : '',
     themeTreatment.trim() ? `APPROVED THEME TREATMENT: ${themeTreatment.trim()}.` : '',
     hasMaster
@@ -372,10 +372,11 @@ export function completeIconPrompt(
       ? `OUTER FRAME AUTHORITY: Reproduce the master container's visible outer shell as a separate material role${frameStyle.trim() ? `, following this detected treatment: ${frameStyle.trim()}` : ''}. When the master shell is glass, it must remain a distinct, thick, dimensional transparent-glass frame around the filled inner tile—not a thin outline, faint bevel, or edge color change. Do not invent a glass shell when the master has none.`
       : '',
     'The luminous bevel and outer rim are essential parts of the container. Keep them fully visible at the reference thickness; do not crop, thin, flatten, fade, recolor, or omit them.',
+    `SMALL-ICON CLARITY: ${requested} must remain instantly readable at 24px. Use broad clean forms, a clear silhouette, and quiet negative space. The functional subject—not decoration—must receive most of the visual attention.`,
     hasMaster
       ? 'Remove only an unintended black or near-black technical keyline introduced by the upload/template outside the true container edge. This exclusion must never remove or weaken an intentional bright, colored, translucent, pearlescent, glass, gel, beveled, layered, or decorative border from the reference.'
       : 'Do not add a separate black technical outline outside the finished container. Keep the intentional material edge and bevel fully visible.',
-    'Arrange decorative microdetails such as bubbles, sparkles, particles, glints, droplets, and highlights in new positions that suit this subject. Never trace or reuse their coordinates from a reference image or another icon.',
+    'Keep decorative microdetail density at or below the reference. Reposition only the material details needed to avoid an exact copy; never add filler to prove the theme. Never trace or reuse their coordinates from a reference image or another icon. Do not repeat a seasonal motif around the container rim.',
     'No isolated glyph, chroma screen, contact sheet, text, label, watermark, device, or mockup.',
   ].filter(Boolean).join(' ');
 }

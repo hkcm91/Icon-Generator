@@ -92,7 +92,7 @@ describe('Icon Director response safety', () => {
     expect(result.patch.selection).toEqual({ mode: 'named', names: ['Menu'] });
     expect(result.patch.cardInstructions?.[0]).toMatchObject({ name: 'Menu' });
     expect(result.patch.cardInstructions?.[0].instruction).toContain('Restore it.');
-    expect(result.reply).toContain('Direction saved for Menu');
+    expect(result.reply).toBe('');
   });
 
   it('keeps conversation memory and sends general direction to the family prompt', () => {
@@ -156,7 +156,30 @@ describe('Icon Director response safety', () => {
       '',
     );
     expect(result.patch.containerMode).toBe('filled');
+    expect(result.patch.theme).toBe('halloween/fall');
     expect(result.action).toBe('generate-selected');
+  });
+
+  it('generates a named card when the user naturally asks to create it', () => {
+    const crystalContext: DirectorContext = {
+      ...context,
+      cards: [{ name: 'Crystal', concept: 'crystal', status: 'draft', selected: false }],
+    };
+    const result = stageDirectorInstruction('create a spectral mystical crystal', crystalContext, 'Keep the family restrained.');
+    expect(result.patch.selection).toEqual({ mode: 'named', names: ['Crystal'] });
+    expect(result.patch.cardInstructions?.[0].instruction).toContain('spectral mystical crystal');
+    expect(result.action).toBe('generate-selected');
+  });
+
+  it('treats a short follow-up confirmation as generation, not new family direction', () => {
+    const crystalContext: DirectorContext = {
+      ...context,
+      cards: [{ name: 'Crystal', concept: 'crystal', status: 'draft', selected: true,
+        directorInstruction: 'Create a spectral mystical crystal.' }],
+    };
+    const result = stageDirectorInstruction('now please', crystalContext, 'LATEST: create a spectral mystical crystal');
+    expect(result.action).toBe('generate-selected');
+    expect(result.reply).toContain('Generation requested for 1 selected card');
   });
 });
 

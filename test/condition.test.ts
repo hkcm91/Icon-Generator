@@ -129,7 +129,7 @@ describe('glyph isolation prompt', () => {
     expect(prompt).toContain('reference depicts ghost');
     expect(prompt).toContain('Do not draw it unless the requested subject explicitly asks for it');
     expect(prompt).toContain('reinterpret its visual concept');
-    expect(prompt).toContain('Halloween cookie');
+    expect(prompt).toContain('one restrained cue');
   });
 
   it('copies the reference subject treatment instead of the open frame treatment', () => {
@@ -192,6 +192,9 @@ describe('complete icon prompt', () => {
     expect(prompt).toContain('depicting pumpkin');
     expect(prompt).toContain('It depicts ghost');
     expect(prompt).toContain('replace it with pumpkin');
+    expect(prompt).toContain('instantly readable at 24px');
+    expect(prompt).toContain('microdetail density at or below the reference');
+    expect(prompt).toContain('Do not repeat a seasonal motif around the container rim');
   });
 
   it('gives each family revision a non-visible composition variation', () => {
@@ -206,6 +209,17 @@ describe('complete icon prompt', () => {
     expect(prompt).toContain('Very high style fidelity');
     expect(prompt).toContain('Very high decorative variation');
     expect(prompt).toContain('variation must not weaken the locked style');
+  });
+
+  it('makes the restrained one-cue budget final over conversational direction', () => {
+    const prompt = recipePrompt('base', {
+      theme: 'Halloween/Fall',
+      themeTreatment: 'Use Halloween only.',
+      familyPrompt: 'Add seasonal detail.',
+      directorInstruction: 'Make this unmistakably themed.',
+    } as never);
+    expect(prompt.indexOf('THEME RESTRAINT — HIGHEST PRIORITY')).toBeGreaterThan(prompt.indexOf('CURRENT CARD CORRECTION'));
+    expect(prompt).toContain('Use at most one integrated theme cue');
   });
 });
 
