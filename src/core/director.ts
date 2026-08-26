@@ -240,9 +240,14 @@ export function stageDirectorInstruction(
     }
   }
 
+  const replacesSubject = /\b(?:change|replace|swap)\b[^.]{0,120}\bsubject\b|\bsubject\b[^.]{0,120}\b(?:match|follow|use)\b[^.]{0,80}\bglyph\b/i.test(cleaned);
+  const keepsCompleteContainer = /\bkeep\b[^.]{0,140}\b(?:materials?|container|frame|shape)\b|\b(?:materials?|container|frame|shape)\b[^.]{0,80}\b(?:same|unchanged|preserved?)\b/i.test(cleaned);
   if (/\bopen[- ]frame\b|\bhollow (?:glass )?frame\b/i.test(cleaned)) patch.containerMode = 'open-frame';
   else if (/\b(?:no|without) (?:a )?(?:container|tile|frame)\b|\bisolated (?:icon|subject|glyph)\b/i.test(cleaned)) patch.containerMode = 'isolated';
-  else if (/\bfilled (?:glass )?(?:tile|container|frame)\b|\bcontainer plus (?:symbol|glyph)\b/i.test(cleaned)) patch.containerMode = 'filled';
+  else if (
+    /\bfilled (?:glass )?(?:tile|container|frame)\b|\bcontainer plus (?:symbol|glyph)\b/i.test(cleaned) ||
+    (replacesSubject && keepsCompleteContainer)
+  ) patch.containerMode = 'filled';
 
   const names = targets.map((card) => card.name);
   const selectedAfterPatch = patch.selection?.mode === 'all'
@@ -253,7 +258,7 @@ export function stageDirectorInstruction(
   const action = wantsGeneration && selectedAfterPatch > 0 ? 'generate-selected' as const : undefined;
   return {
     reply: action
-      ? `Starting ${selectedAfterPatch} selected card${selectedAfterPatch === 1 ? '' : 's'} now. The normal batch cost limit and generation checks still apply.`
+      ? `Generation requested for ${selectedAfterPatch} selected card${selectedAfterPatch === 1 ? '' : 's'}.`
       : wantsGeneration
         ? 'I can generate here, but no cards are selected. Select the cards you want and ask me to generate again.'
         : names.length

@@ -13,7 +13,7 @@ interface Props {
   context: DirectorContext;
   onMessages: (messages: DirectorMessage[]) => void;
   onMemory: (memory: string) => void;
-  onApply: (result: DirectorResult) => void;
+  onApply: (result: DirectorResult) => string | void;
 }
 
 const QUICK_REQUESTS = [
@@ -45,9 +45,9 @@ export default function IconDirector(props: Props) {
     props.onMessages(nextMessages);
     setDraft('');
     const result = stageDirectorInstruction(instruction, props.context, props.memory);
-    props.onMessages([...nextMessages, newMessage('assistant', result.reply)].slice(-40));
     props.onMemory(result.memory);
-    props.onApply(result);
+    const appliedReply = props.onApply(result) || result.reply;
+    props.onMessages([...nextMessages, newMessage('assistant', appliedReply)].slice(-40));
   };
 
   return (
