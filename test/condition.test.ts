@@ -225,6 +225,10 @@ describe('open frame prompt', () => {
     expect(prompt).toContain('Remove that subject completely');
     expect(prompt).toContain('reference subject is ghost');
     expect(prompt).toContain('OPEN FRAME, not a filled tile');
+    expect(prompt).toContain('Preserve every non-subject frame element');
+    expect(prompt).toContain('Do not enlarge that cleared region beyond the removed subject');
+    expect(prompt).toContain('do not apply a generic circular, square, or percentage-based center cut');
+    expect(prompt).toContain('Decorative frame elements may enter the interior and must remain');
     expect(prompt).toContain('zero alpha');
     expect(prompt).toContain('No replacement subject');
   });

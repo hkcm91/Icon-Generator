@@ -38,4 +38,14 @@ describe('open-frame validation', () => {
     }), size, size);
     expect(result.subjectLikely).toBe(false);
   });
+
+  it('allows decorative frame details to extend inward from the perimeter', () => {
+    const size = 100;
+    const result = inspectOpenFramePixels(pixels(size, (x, y) => {
+      const frame = x < 10 || x > 89 || y < 10 || y > 89;
+      const inwardGlassSweep = x >= 8 && x < 48 && y >= 36 && y < 45;
+      return frame || inwardGlassSweep;
+    }), size, size);
+    expect(result.subjectLikely).toBe(false);
+  });
 });
