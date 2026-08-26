@@ -108,12 +108,34 @@ npm run dev               # web on :5173, proxy on :8787
 Then click **Add API key** in the header and paste your Replicate token. It is
 checked against Replicate before being kept, then attached to each request.
 
+### Local Codex generation (no image API key)
+
+When the app is running through `npm run dev`, expand **Local Codex generation**
+under the icon library and choose **Send selected to Codex**. The local server
+writes a self-contained job under `codex-jobs/` with the shared references,
+family direction, one authoritative prompt per card, and exact output
+filenames. Ask Codex to process that job. Keep the page open: it watches the
+job's `results/` folder every two seconds and imports each finished image into
+the matching card as a new revision. Refreshing the page does not lose either
+the job or an imported result.
+
+The production web build cannot write to a local workspace. There the same
+collapsed control downloads the job JSON, and **Import Codex results** accepts
+all returned PNG, WebP, or JPEG files at once. Exact card ids are used for
+matching so large batches cannot land in the wrong card.
+
+This path makes no Replicate or OpenAI image-API call from the app. Image
+generation performed in Codex can still count against the signed-in ChatGPT or
+Codex plan's normal image-generation allowance.
+
 ## Deploying
 
 The API lives in `api/` as serverless functions, so deploying the repository is
 all that is needed — on Vercel it is detected automatically (`vercel.json` sets
 the Vite build and the SPA rewrite). `npm run dev` mounts those same handlers
-behind Express, so local and deployed run identical code.
+behind Express, so local and deployed image-API generation run identical code.
+The development server additionally exposes the filesystem-backed Local Codex
+bridge described above; that route intentionally does not exist on Vercel.
 
 Two ways to supply the key, and the choice matters:
 

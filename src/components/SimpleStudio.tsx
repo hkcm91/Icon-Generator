@@ -1357,6 +1357,7 @@ export default function SimpleStudio(props: Props) {
             <p className="hint">Exact SVG/custom artwork renders locally for $0. Identical AI requests reuse the saved result.</p>
           </details>
           <IconGrid
+            familyName={props.familyName}
             spec={props.spec}
             compose={props.compose}
             material={props.materialLayer}
@@ -1370,10 +1371,23 @@ export default function SimpleStudio(props: Props) {
             onConcurrency={props.onConcurrency}
             generate={generateForItem}
             glyphs={props.glyphs}
+            imageStoreLoaded={props.imageStoreLoaded}
             onItemGlyph={props.onItemGlyph}
             onRestoreRevision={props.onRestoreRevision}
             onClearGlyphs={props.onClearGlyphs}
             onClearSelectedGlyphs={props.onClearSelectedGlyphs}
+            codexReferences={[
+              ...(props.master ? [{
+                name: props.master.name || 'Uploaded master',
+                role: 'master' as const,
+                dataUrl: props.master.dataUrl,
+              }] : []),
+              ...props.references.map((reference) => ({
+                name: reference.name,
+                role: 'style-reference' as const,
+                dataUrl: reference.dataUrl,
+              })),
+            ]}
             options={{
               spec: props.spec,
               model: props.model,

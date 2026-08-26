@@ -22,8 +22,20 @@ import { estimateGlyphBatch, needsPaidGeneration, planGenerationQueue } from '..
 import { cancelActiveGenerations } from '../core/replicate';
 import { hashString } from '../core/hash';
 import { automaticThemeTreatment } from '../core/themeDirection';
+import {
+  buildCodexJob,
+  codexOutputMode,
+  createLocalCodexJob,
+  localCodexHealth,
+  matchCodexResultFile,
+  readLocalCodexJob,
+  type CodexJobReference,
+  type LocalCodexJobStatus,
+} from '../core/codexLocal';
+import { download } from '../core/export';
 
 interface Props {
+  familyName: string;
   spec: ContainerSpec;
   compose: ComposeOptions;
   material: CanvasImageSource | null;
@@ -34,11 +46,13 @@ interface Props {
   items: IconItem[];
   concurrency: number;
   options: Omit<GenerationOptions, 'glyphSubject'>;
+  codexReferences: CodexJobReference[];
   onItems: (items: IconItem[]) => void;
   onConcurrency: (value: number) => void;
   generate: (options: GenerationOptions, subject: string) => Promise<CanvasImageSource>;
   /** Rendered glyphs, restored from storage and shared with the exporter. */
   glyphs: Map<string, CanvasImageSource>;
+  imageStoreLoaded: boolean;
   onItemGlyph: (id: string, image: CanvasImageSource, revision?: number) => void;
   onRestoreRevision: (id: string, revision: number) => Promise<boolean>;
   generationBlocked?: string;
@@ -48,6 +62,8 @@ interface Props {
   containerMode: ContainerMode;
   generationRequest?: { id: string; targetIds: string[] } | null;
 }
+
+const LOCAL_CODEX_STATE_KEY = 'icon-generator:local-codex-job';
 
 /** One card render at either compact-card or full-screen inspection size. */
 function RenderedIcon({
@@ -106,11 +122,17 @@ export default function IconGrid(props: Props) {
   const [newName, setNewName] = useState('');
   const [newConcept, setNewConcept] = useState('');
   const [fullscreenItemId, setFullscreenItemId] = useState<string | null>(null);
+  const [localBridge, setLocalBridge] = useState<{ available: boolean; jobsDirectory?: string }>({ available: false });
+  const [localJob, setLocalJob] = useState<LocalCodexJobStatus | null>(null);
+  const [localBusy, setLocalBusy] = useState(false);
   const stopped = useRef(false);
   const handledGenerationRequest = useRef('');
+  const importedLocalResults = useRef(new Set<string>());
+  const itemsRef = useRef(props.items);
   const input = useRef<HTMLInputElement>(null);
   const artworkInput = useRef<HTMLInputElement>(null);
   const containerInput = useRef<HTMLInputElement>(null);
+  const codexResultsInput = useRef<HTMLInputElement>(null);
 
   const selectedCount = props.items.filter((item) => item.selected).length;
   const selectedItems = props.items.filter((item) => item.selected);
@@ -179,6 +201,107 @@ export default function IconGrid(props: Props) {
       document.body.style.overflow = previousOverflow;
     };
   }, [fullscreenItemId, fullscreenItem, props.glyphs]);
+
+  useEffect(() => {
+    itemsRef.current = props.items;
+  }, [props.items]);
+
+  useEffect(() => {
+    let live = true;
+    void localCodexHealth().then((health) => {
+      if (!live) return;
+      setLocalBridge(health);
+      if (!health.available) return;
+      try {
+        const saved = JSON.parse(localStorage.getItem(LOCAL_CODEX_STATE_KEY) || 'null') as {
+          id?: string;
+          imported?: string[];
+        } | null;
+        if (!saved?.id) return;
+        importedLocalResults.current = new Set(saved.imported ?? []);
+        void readLocalCodexJob(saved.id).then((job) => {
+          if (live) setLocalJob(job);
+        }).catch(() => {
+          localStorage.removeItem(LOCAL_CODEX_STATE_KEY);
+        });
+      } catch {
+        localStorage.removeItem(LOCAL_CODEX_STATE_KEY);
+      }
+    });
+    return () => { live = false; };
+  }, []);
+
+  const rememberLocalJob = (id: string) => {
+    localStorage.setItem(LOCAL_CODEX_STATE_KEY, JSON.stringify({
+      id,
+      imported: [...importedLocalResults.current],
+    }));
+  };
+
+  useEffect(() => {
+    if (!localJob?.id || !localBridge.available || !props.imageStoreLoaded) return;
+    let live = true;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const status = await readLocalCodexJob(localJob.id);
+        if (!live) return;
+        setLocalJob(status);
+        const pending = status.results.filter((result) => {
+          const item = itemsRef.current.find((candidate) => candidate.id === result.id);
+          return !importedLocalResults.current.has(result.id) || item?.status !== 'ready' || !props.glyphs.has(result.id);
+        });
+        if (pending.length) {
+          let current = itemsRef.current;
+          let imported = 0;
+          for (const result of pending) {
+            const item = current.find((candidate) => candidate.id === result.id);
+            const card = status.cards.find((candidate) => candidate.id === result.id);
+            if (!item || !card) continue;
+            const image = await imageFromUrl(`${result.url}?revision=${card.nextRevision}`);
+            const nextRevision = Math.max(item.revision + 1, card.nextRevision);
+            props.onItemGlyph(item.id, image, nextRevision);
+            current = current.map((candidate) => candidate.id === item.id ? {
+              ...candidate,
+              status: 'ready' as const,
+              revision: nextRevision,
+              activeRevision: nextRevision,
+              outputMode: card.outputMode,
+              selected: false,
+              approved: false,
+              error: undefined,
+            } : candidate);
+            importedLocalResults.current.add(result.id);
+            imported += 1;
+          }
+          if (imported) {
+            itemsRef.current = current;
+            props.onItems(current);
+            rememberLocalJob(status.id);
+            setMessage(`Local Codex imported ${importedLocalResults.current.size}/${status.total} finished card${status.total === 1 ? '' : 's'} automatically.`);
+          }
+        }
+        if (!status.complete || importedLocalResults.current.size < status.total) {
+          timer = window.setTimeout(() => void poll(), 2000);
+        } else {
+          setMessage(`Local Codex job complete: ${status.total} card${status.total === 1 ? '' : 's'} imported with no image API calls.`);
+        }
+      } catch (error) {
+        if (live) {
+          setMessage(`Local Codex watcher paused: ${(error as Error).message}`);
+          timer = window.setTimeout(() => void poll(), 5000);
+        }
+      }
+    };
+    void poll();
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+    // The job id is the polling boundary. Item changes caused by imports must
+    // not restart the watcher or import the same file twice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localJob?.id, localBridge.available, props.imageStoreLoaded]);
 
   const patch = (id: string, change: Partial<IconItem>) =>
     props.onItems(props.items.map((item) => (item.id === id ? { ...item, ...change } : item)));
@@ -253,6 +376,98 @@ export default function IconGrid(props: Props) {
     } catch (error) {
       setMessage(`Could not load that container: ${(error as Error).message}`);
     }
+  };
+
+  const codexManifest = () => {
+    const references: CodexJobReference[] = [...props.codexReferences];
+    if (props.material) {
+      const dataUrl = imageSourceDataUrl(props.material);
+      if (!references.some((reference) => reference.dataUrl === dataUrl)) {
+        references.push({ name: 'Approved family frame', role: 'frame', dataUrl });
+      }
+    }
+    return buildCodexJob(
+      props.familyName,
+      selectedItems,
+      props.containerMode,
+      props.options,
+      references,
+    );
+  };
+
+  const createCodexHandoff = async () => {
+    if (!selectedItems.length || localBusy) return;
+    setLocalBusy(true);
+    try {
+      const manifest = codexManifest();
+      if (!localBridge.available) {
+        download(
+          new Blob([`${JSON.stringify(manifest, null, 2)}\n`], { type: 'application/json' }),
+          `${props.familyName.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'icon-family'}-codex-job.json`,
+        );
+        setMessage('Downloaded the Codex job. Generate its named result files, then use Import Codex results.');
+        return;
+      }
+
+      importedLocalResults.current = new Set();
+      const job = await createLocalCodexJob(manifest);
+      setLocalJob(job);
+      rememberLocalJob(job.id);
+      const ids = new Set(manifest.cards.map((card) => card.id));
+      const queued = props.items.map((item) => ids.has(item.id)
+        // Deselect local work so the adjacent paid API queue cannot be started
+        // accidentally while Codex is producing these same cards.
+        ? { ...item, status: 'queued' as const, selected: false, error: undefined }
+        : item);
+      itemsRef.current = queued;
+      props.onItems(queued);
+      setMessage(`Local Codex job created at ${job.path}. Ask Codex to process job.json; this page will import each result automatically.`);
+    } catch (error) {
+      setMessage(`Could not create the local Codex job: ${(error as Error).message}`);
+    } finally {
+      setLocalBusy(false);
+    }
+  };
+
+  const importCodexResults = async (files: File[] | null) => {
+    if (!files?.length) return;
+    let current = props.items;
+    const importedIds = new Set<string>();
+    const unmatched: string[] = [];
+    for (const file of files) {
+      const item = matchCodexResultFile(file.name, current);
+      if (!item || importedIds.has(item.id)) {
+        unmatched.push(file.name);
+        continue;
+      }
+      try {
+        const image = await imageFromUrl(await fileDataUrl(file));
+        const jobCard = localJob?.cards.find((card) => card.id === item.id);
+        const nextRevision = Math.max(item.revision + 1, jobCard?.nextRevision ?? 0);
+        props.onItemGlyph(item.id, image, nextRevision);
+        current = current.map((candidate) => candidate.id === item.id ? {
+          ...candidate,
+          status: 'ready' as const,
+          revision: nextRevision,
+          activeRevision: nextRevision,
+          outputMode: jobCard?.outputMode ?? codexOutputMode(props.containerMode),
+          selected: false,
+          approved: false,
+          error: undefined,
+        } : candidate);
+        importedIds.add(item.id);
+      } catch {
+        unmatched.push(file.name);
+      }
+    }
+    if (importedIds.size) {
+      itemsRef.current = current;
+      props.onItems(current);
+    }
+    setMessage(
+      `Imported ${importedIds.size} Codex result${importedIds.size === 1 ? '' : 's'} into matching cards` +
+      `${unmatched.length ? `; ${unmatched.length} filename${unmatched.length === 1 ? '' : 's'} did not match a card` : ''}.`,
+    );
   };
 
   const runBatch = async (targets: IconItem[]) => {
@@ -574,6 +789,58 @@ export default function IconGrid(props: Props) {
       )}
 
       <p className="hint">The card name controls export. Visual subject controls what is drawn. The set theme then adapts that subject.</p>
+
+      <details className="codex-local-tools">
+        <summary>
+          Local Codex generation · no image API
+          {localBridge.available ? <span className="badge badge-ready">connected</span> : null}
+        </summary>
+        <p className="hint">
+          {localBridge.available
+            ? 'Creates a job in this project for Codex. Keep the page open: correctly named results are placed into their cards automatically as they arrive.'
+            : 'The localhost bridge is not running here. Download the job for Codex, then import the returned PNG or WebP files in one batch.'}
+        </p>
+        <div className="row row-tight">
+          <button
+            type="button"
+            className="primary"
+            disabled={!selectedCount || running || localBusy}
+            onClick={() => void createCodexHandoff()}
+          >
+            {localBusy
+              ? 'Creating Codex job…'
+              : localBridge.available
+                ? `Send ${selectedCount || ''} selected to Codex`
+                : `Download Codex job${selectedCount ? ` (${selectedCount})` : ''}`}
+          </button>
+          <button type="button" className="ghost" disabled={running} onClick={() => codexResultsInput.current?.click()}>
+            Import Codex results
+          </button>
+          <input
+            ref={codexResultsInput}
+            type="file"
+            accept="image/png,image/webp,image/jpeg"
+            multiple
+            hidden
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? []);
+              event.target.value = '';
+              void importCodexResults(files);
+            }}
+          />
+        </div>
+        {localJob && (
+          <p className="codex-job-status">
+            <strong>{localJob.ready}/{localJob.total} results ready</strong>
+            <span>{localJob.complete ? ' · complete' : ' · watching every 2 seconds'}</span>
+            <code title={localJob.path}>{localJob.path}</code>
+          </p>
+        )}
+        {!localJob && localBridge.available && localBridge.jobsDirectory && (
+          <p className="hint">Jobs folder: <code>{localBridge.jobsDirectory}</code></p>
+        )}
+        <p className="hint">Result filenames must be the exact card id shown in job.json, for example <code>instagram-12.png</code>.</p>
+      </details>
 
       <div className="row">
         <button

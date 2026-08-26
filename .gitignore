@@ -7,3 +7,4 @@ dist
 out
 tsconfig.tsbuildinfo
 .playwright-cli/
+codex-jobs/
