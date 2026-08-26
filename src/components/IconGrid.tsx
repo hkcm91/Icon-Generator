@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { composeCompleteIcon, composeIcon, composeOpenFrame, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
@@ -43,6 +43,7 @@ interface Props {
   onClearSelectedGlyphs: (ids: Iterable<string>) => void;
   maxBatchCost: number;
   containerMode: ContainerMode;
+  generationRequest?: { id: string; targetIds: string[] } | null;
 }
 
 /** Thumbnail for one card: the real container, with this card's glyph in it. */
@@ -93,6 +94,7 @@ export default function IconGrid(props: Props) {
   const [newName, setNewName] = useState('');
   const [newConcept, setNewConcept] = useState('');
   const stopped = useRef(false);
+  const handledGenerationRequest = useRef('');
   const input = useRef<HTMLInputElement>(null);
   const artworkInput = useRef<HTMLInputElement>(null);
 
@@ -278,6 +280,17 @@ export default function IconGrid(props: Props) {
     setProgress(null);
     if (stopped.current) setMessage('Stopped. Cards already finished are kept.');
   };
+
+  useEffect(() => {
+    const request = props.generationRequest;
+    if (!request || request.id === handledGenerationRequest.current || running) return;
+    handledGenerationRequest.current = request.id;
+    const ids = new Set(request.targetIds);
+    void runBatch(props.items.filter((item) => ids.has(item.id)));
+    // The request id is the imperative boundary. Item/running changes during
+    // the batch must not start the same paid work twice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.generationRequest, props.items, running]);
 
   const setAll = (selected: boolean) =>
     props.onItems(props.items.map((item) => ({ ...item, selected })));

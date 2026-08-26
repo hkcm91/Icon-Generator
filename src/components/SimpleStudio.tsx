@@ -200,6 +200,10 @@ export default function SimpleStudio(props: Props) {
   const [variantBusy, setVariantBusy] = useState(false);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [ideasBusy, setIdeasBusy] = useState(false);
+  const [directorGenerationRequest, setDirectorGenerationRequest] = useState<{
+    id: string;
+    targetIds: string[];
+  } | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const lockedInput = useRef<HTMLInputElement>(null);
   const referenceInput = useRef<HTMLInputElement>(null);
@@ -791,8 +795,9 @@ export default function SimpleStudio(props: Props) {
       (patch.cardInstructions ?? []).map((entry) => [entry.name.trim().toLocaleLowerCase(), entry.instruction]),
     );
     const named = new Set((patch.selection?.names ?? []).map((name) => name.trim().toLocaleLowerCase()));
+    let nextItems = props.items;
     if (patch.selection || instructionByName.size > 0) {
-      props.onItems(props.items.map((item) => {
+      nextItems = props.items.map((item) => {
         const key = item.name.trim().toLocaleLowerCase();
         const instruction = instructionByName.get(key);
         let selected = item.selected;
@@ -808,7 +813,20 @@ export default function SimpleStudio(props: Props) {
         return instruction
           ? { ...item, selected, approved: false, directorInstruction: instruction }
           : { ...item, selected };
-      }));
+      });
+      props.onItems(nextItems);
+    }
+
+    if (result.action === 'generate-selected') {
+      const targetIds = nextItems.filter((item) => item.selected).map((item) => item.id);
+      if (!targetIds.length) {
+        setStatus({ kind: 'error', message: 'Select at least one card before asking the Director to generate.' });
+        return;
+      }
+      setDirectorGenerationRequest({
+        id: globalThis.crypto?.randomUUID?.() ?? `director-generate-${Date.now()}-${Math.random()}`,
+        targetIds,
+      });
     }
   };
 
@@ -1333,6 +1351,7 @@ export default function SimpleStudio(props: Props) {
             generationBlocked={props.containerMode === 'open-frame' && !props.frameReady
               ? 'Extract or approve a subject-free transparent frame before generating the family.'
               : premiumMessage}
+            generationRequest={directorGenerationRequest}
           />
         </li>
 
