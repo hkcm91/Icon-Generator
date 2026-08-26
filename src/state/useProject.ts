@@ -22,9 +22,9 @@ export interface Project {
   qualitySelectionVersion: number;
   /** Versioned proof that a saved rim was chosen after borderless became the default. */
   borderlessVersion: number;
-  /** Built-in Material SVGs are AI shape guidance, not locally pasted results. */
+  /** Bundled Material and brand SVGs are AI subject guidance, not pasted results. */
   builtinGlyphStyleVersion: number;
-  /** Built-in subjects are prompted by text; their raw SVG pixels never enter the model. */
+  /** Bundled subjects are prompted by text; their raw SVG pixels never enter the model. */
   catalogTextSubjectVersion: number;
   /** v2 also registers the cleaned frame to the uploaded master's visible bounds. */
   openFramePreservationVersion: number;

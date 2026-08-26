@@ -64,6 +64,19 @@ describe('generation cost controls', () => {
     });
   });
 
+  it('routes bundled brand glyphs through paid AI generation instead of local composition', () => {
+    const brand = makeItem('Instagram', {
+      sourceUrl: '/libraries/glyphs/brands/instagram.svg',
+      sourceMode: 'exact',
+    });
+    expect(needsPaidGeneration(brand)).toBe(true);
+    expect(estimateGlyphBatch([brand], 'openai/gpt-image-2', 'low')).toMatchObject({
+      paid: 1,
+      local: 0,
+      cost: 0.012,
+    });
+  });
+
   it('queues a large selection in bounded batches instead of applying the limit to its total', () => {
     const items = Array.from({ length: 250 }, (_, index) => makeItem(`Icon ${index + 1}`));
     const plan = planGenerationQueue(items, 'openai/gpt-image-2', 'low', 3, 1);

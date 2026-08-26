@@ -137,9 +137,9 @@ describe('dedupe', () => {
 });
 
 describe('built-in glyph generation mode', () => {
-  it('routes Material subjects to AI but preserves exact brands and uploads', () => {
+  it('routes bundled Material and brand subjects to AI but preserves uploads', () => {
     expect(defaultGlyphSourceMode('/libraries/glyphs/material/home-fill.svg')).toBe('styled');
-    expect(defaultGlyphSourceMode('/libraries/glyphs/brands/github.svg')).toBe('exact');
+    expect(defaultGlyphSourceMode('/libraries/glyphs/brands/github.svg')).toBe('styled');
     expect(defaultGlyphSourceMode('data:image/png;base64,abc')).toBe('exact');
     expect(defaultGlyphSourceMode()).toBe('styled');
   });
@@ -176,7 +176,7 @@ describe('built-in glyph generation mode', () => {
     expect(repair.items[1]).toBe(ordinary);
   });
 
-  it('clears legacy pasted Material results without changing batch selection', () => {
+  it('clears legacy pasted Material and brand results without changing batch selection', () => {
     const material = makeItem('Home', {
       sourceUrl: '/libraries/glyphs/material/home-fill.svg',
       sourceMode: 'exact',
@@ -196,7 +196,7 @@ describe('built-in glyph generation mode', () => {
     });
     const repair = repairLegacyBuiltinGlyphModes([material, brand]);
 
-    expect(repair.clearedIds).toEqual([material.id]);
+    expect(repair.clearedIds).toEqual([material.id, brand.id]);
     expect(repair.items[0]).toMatchObject({
       sourceMode: 'styled',
       status: 'draft',
@@ -205,7 +205,14 @@ describe('built-in glyph generation mode', () => {
       approved: false,
     });
     expect(repair.items[0].outputMode).toBeUndefined();
-    expect(repair.items[1]).toBe(brand);
+    expect(repair.items[1]).toMatchObject({
+      sourceMode: 'styled',
+      status: 'draft',
+      selected: false,
+      revision: 0,
+      approved: false,
+    });
+    expect(repair.items[1].outputMode).toBeUndefined();
   });
 });
 
