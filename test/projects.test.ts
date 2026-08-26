@@ -39,4 +39,9 @@ describe('project catalog migration', () => {
     expect(hydrated.builtinGlyphStyleVersion).toBe(1);
     expect(hydrated.catalogTextSubjectVersion).toBe(1);
   });
+
+  it('requires legacy carved frames to be re-extracted once', () => {
+    expect(hydrateProject({ frameReady: true }).frameReady).toBe(false);
+    expect(hydrateProject({ frameReady: true, openFramePreservationVersion: 1 }).frameReady).toBe(true);
+  });
 });

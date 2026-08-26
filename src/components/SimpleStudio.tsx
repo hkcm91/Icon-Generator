@@ -5,7 +5,7 @@ import { traceMaster } from '../core/trace';
 import { describeMaster } from '../core/describe';
 import { analyzeReference, suggestThemeFamily, type ThemeSuggestion } from '../core/vision';
 import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '../core/spec';
-import { clearOpenFrameCenter, hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
 import IconDirector from './IconDirector';
@@ -118,6 +118,19 @@ function ShapeChip({ spec }: { spec: ContainerSpec }) {
       <path d={containerPath(preview)} fill="currentColor" />
     </svg>
   );
+}
+
+function LayerThumbnail({ image }: { image: CanvasImageSource }) {
+  const holder = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 320;
+    canvas.className = 'frame-compare-canvas';
+    canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height);
+    holder.current?.replaceChildren(canvas);
+  }, [image]);
+  return <div className="frame-compare-art" ref={holder} />;
 }
 
 /** Decode once, returning both the pixels to analyse and a URL to send. */
@@ -242,15 +255,11 @@ export default function SimpleStudio(props: Props) {
 
   useEffect(() => {
     if (props.containerMode !== 'open-frame' || !props.materialLayer) return;
-    const cleaned = clearOpenFrameCenter(props.spec, props.materialLayer);
-    const inspection = inspectOpenFrame(cleaned, props.spec.size);
-    if (!inspection.subjectLikely) {
-      if (!props.frameReady) {
-        props.onFrameReady(true);
-        setStatus({ kind: 'ok', message: 'Central subject removed locally. The frame is ready.' });
-      }
-      return;
-    }
+    const inspection = inspectOpenFrame(props.materialLayer, props.spec.size);
+    // Never auto-approve a transparent-looking layer. Older releases carved a
+    // large hole and would otherwise immediately approve that damaged result
+    // again after the migration deliberately marked it for re-extraction.
+    if (!inspection.subjectLikely) return;
     if (props.frameReady) {
       props.onFrameReady(false);
       props.onClearFrameVariants();
@@ -485,7 +494,7 @@ export default function SimpleStudio(props: Props) {
 
   const approveExistingFrame = () => {
     if (!props.materialLayer) return;
-    const inspection = inspectOpenFrame(clearOpenFrameCenter(props.spec, props.materialLayer), props.spec.size);
+    const inspection = inspectOpenFrame(props.materialLayer, props.spec.size);
     if (inspection.subjectLikely) {
       setStatus({
         kind: 'error',
@@ -926,6 +935,49 @@ export default function SimpleStudio(props: Props) {
             onMemory={props.onDirectorMemory}
             onApply={applyDirectorResult}
           />
+          {props.containerMode === 'open-frame' && (
+            <div className={props.frameReady ? 'frame-gate frame-gate-ready' : 'frame-gate'}>
+              <strong>{props.frameReady ? 'Subject-removed master ready' : 'Create a subject-removed master'}</strong>
+              <p>{props.frameReady
+                ? 'The original upload remains unchanged. The cleaned version removes only the subject and preserves inward frame details.'
+                : `Remove ${props.referenceSubject || 'the reference subject'} without applying a second center cut. You can compare both versions here before generating the family.`}</p>
+              {props.master && (
+                <div className="frame-master-compare" aria-label="Original and subject-removed master comparison">
+                  <figure>
+                    <div className="frame-compare-art">
+                      <img src={props.master.dataUrl} alt="Original uploaded master icon" />
+                    </div>
+                    <figcaption><strong>Original master upload</strong><small>Kept unchanged</small></figcaption>
+                  </figure>
+                  <figure>
+                    {props.frameReady && props.materialLayer
+                      ? <LayerThumbnail image={props.materialLayer} />
+                      : <div className="frame-compare-art frame-compare-empty">Subject-removed version appears here</div>}
+                    <figcaption><strong>Subject-removed master</strong><small>{props.frameReady ? 'Used as the family frame' : 'Not created yet'}</small></figcaption>
+                  </figure>
+                </div>
+              )}
+              <div className="row">
+                <button type="button" onClick={() => void extractFrame()} disabled={busy || !props.master}>
+                  {props.frameReady ? 'Re-extract subject only' : 'Remove subject'}
+                </button>
+                {!props.frameReady && props.master && (
+                  <button type="button" className="ghost" onClick={approveExistingFrame}>
+                    Frame already has no subject
+                  </button>
+                )}
+              </div>
+              {props.frameReady && targetFrameCount > 1 && (
+                <div className="frame-variants-control">
+                  <span>{Math.min(availableFrameCount, targetFrameCount)}/{targetFrameCount} frame variations ready</span>
+                  <button type="button" className="ghost" onClick={() => void generateFrameVariants()}
+                    disabled={busy || variantBusy || premiumBlocked}>
+                    {variantBusy ? 'Generating variations…' : `Generate ${targetFrameCount - 1} alternate frames`}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <details className="director-manual">
             <summary>Manual controls</summary>
             <div className="director-manual-body compact-fields">
@@ -948,33 +1000,6 @@ export default function SimpleStudio(props: Props) {
               </label>
             ))}
           </fieldset>
-          {props.containerMode === 'open-frame' && (
-            <div className={props.frameReady ? 'frame-gate frame-gate-ready' : 'frame-gate'}>
-              <strong>{props.frameReady ? 'Subject-free frame ready' : 'The uploaded example still contains its subject'}</strong>
-              <p>{props.frameReady
-                ? 'The frame will be reused without filling its transparent interior.'
-                : `Remove ${props.referenceSubject || 'the reference subject'} before generating the family, or approve the uploaded pixels only if they already contain no subject.`}</p>
-              <div className="row">
-                <button type="button" onClick={() => void extractFrame()} disabled={busy || !props.master}>
-                  {props.frameReady ? 'Re-extract clean frame' : 'Extract clean frame'}
-                </button>
-                {!props.frameReady && props.master && (
-                  <button type="button" className="ghost" onClick={approveExistingFrame}>
-                    Frame already has no subject
-                  </button>
-                )}
-              </div>
-              {props.frameReady && targetFrameCount > 1 && (
-                <div className="frame-variants-control">
-                  <span>{Math.min(availableFrameCount, targetFrameCount)}/{targetFrameCount} frame variations ready</span>
-                  <button type="button" className="ghost" onClick={() => void generateFrameVariants()}
-                    disabled={busy || variantBusy || premiumBlocked}>
-                    {variantBusy ? 'Generating variations…' : `Generate ${targetFrameCount - 1} alternate frames`}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
           <label className="field">
             <span className="field-label">Surface</span>
             <input

@@ -771,6 +771,47 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 .frame-gate-ready { border-color: var(--ok); background: rgba(52, 211, 153, 0.08); }
 .frame-gate p { margin: 4px 0 10px; color: var(--muted); font-size: 12.5px; }
 
+.frame-master-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+}
+.frame-master-compare figure {
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.frame-compare-art {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 8px;
+  background-color: #0a0e17;
+  background-image:
+    linear-gradient(45deg, #171f2f 25%, transparent 25%),
+    linear-gradient(-45deg, #171f2f 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #171f2f 75%),
+    linear-gradient(-45deg, transparent 75%, #171f2f 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+.frame-compare-art img,
+.frame-compare-canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+.frame-compare-empty {
+  padding: 16px;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: center;
+}
+.frame-master-compare figcaption { display: grid; gap: 1px; padding-top: 7px; font-size: 12px; }
+.frame-master-compare figcaption small { color: var(--muted); }
+
 .frame-variants-control {
   display: flex;
   align-items: center;
@@ -884,4 +925,5 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
     align-items: stretch;
     flex-direction: column;
   }
+  .frame-master-compare { grid-template-columns: 1fr; }
 }

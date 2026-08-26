@@ -188,7 +188,10 @@ export function composeOpenFrame(
   ctx.clip(outline, 'evenodd');
 
   if (layers.material) {
-    drawCover(ctx, clearOpenFrameCenter(spec, layers.material), 0, 0, spec.size, spec.size);
+    // The subject-removal model already returns the cleaned frame. Never cut
+    // the centre a second time here: decorative glass, bubbles and swirls are
+    // allowed to extend inward and must survive preview, export and reuse.
+    drawCover(ctx, layers.material, 0, 0, spec.size, spec.size);
   }
 
   if (layers.glyph) {
@@ -207,26 +210,6 @@ export function composeOpenFrame(
   }
 
   ctx.restore();
-  return canvas;
-}
-
-/**
- * Remove only the central subject zone while retaining the decorative frame.
- * The former glyph-safe path erased 82% of the artwork and reduced expressive
- * frames to a plain ring. A 64% similar contour clears the actual utility-icon
- * footprint while preserving perimeter swirls and bubbles.
- */
-export function clearOpenFrameCenter(
-  spec: ContainerSpec,
-  image: CanvasImageSource,
-): HTMLCanvasElement {
-  const canvas = createCanvas(spec.size);
-  const context = context2d(canvas);
-  drawCover(context, image, 0, 0, spec.size, spec.size);
-  context.save();
-  context.globalCompositeOperation = 'destination-out';
-  context.fill(new Path2D(containerPath(spec, 0.64)), 'evenodd');
-  context.restore();
   return canvas;
 }
 

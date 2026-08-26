@@ -26,6 +26,8 @@ export interface Project {
   builtinGlyphStyleVersion: number;
   /** Built-in subjects are prompted by text; their raw SVG pixels never enter the model. */
   catalogTextSubjectVersion: number;
+  /** v1 frames preserve validated model pixels without a destructive centre cut. */
+  openFramePreservationVersion: number;
   premiumAllowed: boolean;
   /** Vision model used to name the symbol in an uploaded master. */
   visionModel: string;
@@ -88,6 +90,7 @@ const DEFAULT_PROJECT: Project = {
   borderlessVersion: 1,
   builtinGlyphStyleVersion: 1,
   catalogTextSubjectVersion: 1,
+  openFramePreservationVersion: 1,
   premiumAllowed: false,
   visionModel: DEFAULT_VISION_MODEL,
   // Empty by design. A pre-filled default is indistinguishable from a field
@@ -164,11 +167,14 @@ export function hydrateProject(parsed: Partial<Project>): Project {
     // after IndexedDB has loaded. App performs that one-time image repair.
     builtinGlyphStyleVersion: parsed.builtinGlyphStyleVersion ?? (parsed.items ? 0 : 1),
     catalogTextSubjectVersion: parsed.catalogTextSubjectVersion ?? (parsed.items ? 0 : 1),
+    openFramePreservationVersion: 1,
     premiumAllowed: migrateExpensiveDefault ? false : (parsed.premiumAllowed ?? false),
     maxBatchCost: Math.max(0, parsed.maxBatchCost ?? 1),
     glyphTransparency: savedTransparency,
     containerMode: parsed.containerMode ?? (savedTransparency ? 'isolated' : 'filled'),
-    frameReady: parsed.frameReady ?? false,
+    // Frames approved before preservation v1 may be the old 64%-carved layer.
+    // Keep the pixels for comparison, but require one explicit re-extraction.
+    frameReady: parsed.openFramePreservationVersion === 1 ? (parsed.frameReady ?? false) : false,
     materialPalette: normalizeMaterialPalette(parsed.materialPalette),
     styleFidelity: percentage(parsed.styleFidelity, 90),
     detailVariation: percentage(parsed.detailVariation, 70),

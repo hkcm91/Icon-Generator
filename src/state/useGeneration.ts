@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { cleanGeneratedAlpha, clearOpenFrameCenter, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
+import { cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
 import { buildConditioning, type ConditioningMode } from '../core/condition';
 import {
   conditionedMaterialPrompt,
@@ -286,11 +286,12 @@ export function useGeneration() {
       wantAlpha,
       options.quality,
     );
-    const key = await cacheKey('open-frame', options.model, input);
+    // v2 caches the model's validated frame exactly. v1 permanently carved a
+    // 64% hole through inward glass details after the subject was already gone.
+    const key = await cacheKey('open-frame-v2-preserve-details', options.model, input);
     const cached = await cachedLayer(key);
     if (cached) {
-      const cleaned = clearOpenFrameCenter(options.spec, cached);
-      if (!inspectOpenFrame(cleaned, options.spec.size).subjectLikely) return cleaned;
+      if (!inspectOpenFrame(cached, options.spec.size).subjectLikely) return cached;
       await deleteBlob(GENERATION_CACHE, key);
     }
     const result = await generateImage(options.model, input);
@@ -298,13 +299,12 @@ export function useGeneration() {
     const rawFrame = result.alphaAccepted && hasNativeAlpha(image)
       ? preserveAlphaLayer(image, options.spec.size)
       : keyOutBackground(image, options.spec.size);
-    const frame = clearOpenFrameCenter(options.spec, rawFrame);
-    const inspection = inspectOpenFrame(frame, options.spec.size);
+    const inspection = inspectOpenFrame(rawFrame, options.spec.size);
     if (inspection.subjectLikely) {
-      throw new Error('The model left a large central subject in the extracted frame. Nothing was approved or cached; press Extract clean frame again for a new attempt.');
+      throw new Error('The model left a large central subject in the extracted frame. Nothing was approved or cached, and the app did not erase any frame details. Press Extract clean frame again for a new attempt.');
     }
-    await rememberLayer(key, frame);
-    return frame;
+    await rememberLayer(key, rawFrame);
+    return rawFrame;
   }, []);
 
   const generateMaterial = useCallback(

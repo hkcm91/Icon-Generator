@@ -392,9 +392,9 @@ export function openFramePrompt(
     `The reference subject is ${referenceSubject.trim() || 'the central object'}. Remove that subject completely: no silhouette, face, eyes, anatomy, pose, or recognizable fragments may remain.`,
     material.trim() ? `Preserve this material and finish: ${material.trim()}.` : '',
     frameStyle.trim() ? `FRAME TREATMENT AUTHORITY: ${frameStyle.trim()}.` : '',
-    'Preserve the reference outer container envelope, material vocabulary, iridescent palette, transparent gel, bubbles, swirls, highlights, lighting, camera and dimensionality.',
-    'This is an OPEN FRAME, not a filled tile. Keep the central glyph safe area empty and truly transparent. Keep intentional transparent gaps between every swirl, bubble and rim element.',
-    'Decorative elements may enter the interior slightly, but they must form a coherent perimeter and leave a large clear central area for many different symbols.',
+    'PIXEL-PRESERVATION PRIORITY: Preserve every non-subject frame element from the reference, including its exact outer envelope, inward extensions, material vocabulary, iridescent palette, transparent gel, bubbles, swirls, highlights, lighting, camera and dimensionality. Do not simplify, thin, crop, move, repaint, or erase those details.',
+    'This is an OPEN FRAME, not a filled tile. Make only the pixels formerly occupied by the named subject truly transparent. Do not enlarge that cleared region beyond the removed subject and do not apply a generic circular, square, or percentage-based center cut.',
+    'Decorative frame elements may enter the interior and must remain where they are. Preserve every intentional transparent gap between swirl, bubble and rim elements.',
     nativeAlpha
       ? 'Return a transparent PNG. Everything outside the decorative frame pixels and every intentional interior hole must have zero alpha.'
       : 'Render on a completely flat uniform #00FF00 chroma-green background with no gradient or color spill.',
