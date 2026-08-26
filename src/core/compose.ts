@@ -14,7 +14,7 @@
 
 import { containerPath, glyphSafePath, innerBox } from './geometry';
 import type { ContainerSpec } from './spec';
-import { alphaBounds, boundsContainTransform, boundsTransform } from './frameAlignment';
+import { alphaBounds, boundsContainTransform, boundsTransform, substantialAlphaBounds } from './frameAlignment';
 
 export interface ComposeLayers {
   /** Full-bleed surface texture. Cropped to fill, then clipped to the path. */
@@ -305,7 +305,9 @@ export function alignLayerToContainerBounds(
 ): HTMLCanvasElement {
   const source = preserveAlphaLayer(image, spec.size);
   const sourceContext = context2d(source);
-  const sourceBounds = alphaBounds(sourceContext.getImageData(0, 0, spec.size, spec.size).data, spec.size, spec.size);
+  const pixels = sourceContext.getImageData(0, 0, spec.size, spec.size).data;
+  const sourceBounds = substantialAlphaBounds(pixels, spec.size, spec.size)
+    ?? alphaBounds(pixels, spec.size, spec.size);
   if (!sourceBounds) return source;
   // An opaque fallback has no measurable exterior transparency. Leave it at
   // canvas scale; the exact family path will still clip its outer boundary.

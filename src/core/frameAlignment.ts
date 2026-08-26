@@ -37,6 +37,58 @@ export function alphaBounds(
     : { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
 }
 
+/**
+ * Measure the substantial visible envelope of a complete icon.
+ *
+ * Image models sometimes leave a bright stray pixel or a very faint shadow
+ * near the canvas edge. A normal min/max alpha bound treats that fringe as
+ * part of the container and therefore fails to enlarge an otherwise smaller
+ * result. Requiring a little alpha mass on each row/column keeps translucent
+ * glass edges while ignoring isolated noise.
+ */
+export function substantialAlphaBounds(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  threshold = 24,
+  minAxisMassRatio = 0.015,
+): PixelBounds | null {
+  const rowMass = new Float64Array(height);
+  const columnMass = new Float64Array(width);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const alpha = data[(y * width + x) * 4 + 3];
+      if (alpha < threshold) continue;
+      const mass = alpha / 255;
+      rowMass[y] += mass;
+      columnMass[x] += mass;
+    }
+  }
+
+  const minimumRowMass = Math.max(2, width * minAxisMassRatio);
+  const minimumColumnMass = Math.max(2, height * minAxisMassRatio);
+  const minX = columnMass.findIndex((mass) => mass >= minimumColumnMass);
+  const minY = rowMass.findIndex((mass) => mass >= minimumRowMass);
+  let maxX = -1;
+  let maxY = -1;
+  for (let x = width - 1; x >= 0; x--) {
+    if (columnMass[x] >= minimumColumnMass) {
+      maxX = x;
+      break;
+    }
+  }
+  for (let y = height - 1; y >= 0; y--) {
+    if (rowMass[y] >= minimumRowMass) {
+      maxY = y;
+      break;
+    }
+  }
+
+  return minX < 0 || minY < 0 || maxX < minX || maxY < minY
+    ? null
+    : { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
 /** Map one visible envelope exactly onto another without cropping pixels. */
 export function boundsTransform(source: PixelBounds, reference: PixelBounds): BoundsTransform {
   const scaleX = reference.width / Math.max(1, source.width);

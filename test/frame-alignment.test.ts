@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alphaBounds, boundsContainTransform, boundsTransform } from '../src/core/frameAlignment';
+import { alphaBounds, boundsContainTransform, boundsTransform, substantialAlphaBounds } from '../src/core/frameAlignment';
 
 describe('subject-removed master alignment', () => {
   it('measures the visible alpha envelope', () => {
@@ -12,6 +12,30 @@ describe('subject-removed master alignment', () => {
 
   it('ignores a fully transparent canvas', () => {
     expect(alphaBounds(new Uint8ClampedArray(4 * 4 * 4), 4, 4)).toBeNull();
+  });
+
+  it('ignores isolated fringe pixels when measuring a complete icon', () => {
+    const size = 12;
+    const data = new Uint8ClampedArray(size * size * 4);
+    for (let y = 3; y <= 8; y++) {
+      for (let x = 3; x <= 8; x++) data[(y * size + x) * 4 + 3] = 255;
+    }
+    data[0 * 4 + 3] = 255;
+    data[((size - 1) * size + size - 1) * 4 + 3] = 255;
+
+    expect(alphaBounds(data, size, size)).toEqual({ x: 0, y: 0, width: 12, height: 12 });
+    expect(substantialAlphaBounds(data, size, size)).toEqual({ x: 3, y: 3, width: 6, height: 6 });
+  });
+
+  it('retains a translucent glass edge when it has meaningful coverage', () => {
+    const size = 20;
+    const data = new Uint8ClampedArray(size * size * 4);
+    for (let y = 2; y <= 17; y++) {
+      for (let x = 2; x <= 17; x++) {
+        if (x === 2 || x === 17 || y === 2 || y === 17) data[(y * size + x) * 4 + 3] = 64;
+      }
+    }
+    expect(substantialAlphaBounds(data, size, size)).toEqual({ x: 2, y: 2, width: 16, height: 16 });
   });
 
   it('maps the cleaned frame bounds exactly onto the original upload', () => {
