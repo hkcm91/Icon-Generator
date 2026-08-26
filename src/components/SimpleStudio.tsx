@@ -26,7 +26,7 @@ import {
   renderTransparentAtSize,
   svgMask,
 } from '../core/export';
-import { estimateGlyphBatch, modelOutputCost } from '../core/cost';
+import { estimateGlyphBatch, modelOutputCost, planGenerationQueue } from '../core/cost';
 import { mergeMaterialPalette, type MaterialPalette, type MaterialRole } from '../core/materialPalette';
 import { inspectOpenFrame } from '../core/frameValidation';
 
@@ -844,8 +844,15 @@ export default function SimpleStudio(props: Props) {
       const requestedMode = patch.containerMode ?? props.containerMode;
       const effectiveMode = resolveGenerationContainerMode(requestedMode, props.frameReady);
       const estimate = estimateGlyphBatch(targets, props.model, props.quality);
-      if (estimate.cost !== null && estimate.cost > props.maxBatchCost) {
-        const message = `Generation blocked: this batch is estimated at $${estimate.cost.toFixed(2)}, above the $${props.maxBatchCost.toFixed(2)} limit.`;
+      const queuePlan = planGenerationQueue(
+        targets,
+        props.model,
+        props.quality,
+        props.concurrency,
+        props.maxBatchCost,
+      );
+      if (queuePlan.blocked) {
+        const message = `Generation blocked: one paid output exceeds the $${props.maxBatchCost.toFixed(2)} per-batch limit.`;
         setStatus({ kind: 'error', message });
         return message;
       }
@@ -860,7 +867,7 @@ export default function SimpleStudio(props: Props) {
         : effectiveMode === 'open-frame'
           ? `open-frame icon${targets.length === 1 ? '' : 's'}`
           : `isolated subject${targets.length === 1 ? '' : 's'}`;
-      const message = `Starting ${targets.length} selected card${targets.length === 1 ? '' : 's'} as ${construction}. Estimated batch cost: ${estimate.cost === null ? 'model-priced' : `$${estimate.cost.toFixed(2)}`}.`;
+      const message = `Queued ${targets.length} selected card${targets.length === 1 ? '' : 's'} as ${construction} in ${queuePlan.batches} batch${queuePlan.batches === 1 ? '' : 'es'} of up to ${queuePlan.effectiveBatchSize}. Estimated total cost: ${estimate.cost === null ? 'model-priced' : `$${estimate.cost.toFixed(2)}`}.`;
       setStatus({ kind: 'ok', message });
       return message;
     }

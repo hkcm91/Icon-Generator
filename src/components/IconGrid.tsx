@@ -18,7 +18,7 @@ import type { ContainerSpec } from '../core/spec';
 import type { GenerationOptions } from '../state/useGeneration';
 import { exactGlyph, fileDataUrl, imageFromUrl, imageSourceDataUrl, maskGeneratedGlyph, sourceReference } from '../core/images';
 import { makeItem } from '../core/library';
-import { estimateGlyphBatch, needsPaidGeneration } from '../core/cost';
+import { estimateGlyphBatch, needsPaidGeneration, planGenerationQueue } from '../core/cost';
 import { cancelActiveGenerations } from '../core/replicate';
 import { hashString } from '../core/hash';
 import { automaticThemeTreatment } from '../core/themeDirection';
@@ -99,6 +99,7 @@ function RenderedIcon({
 export default function IconGrid(props: Props) {
   const [progress, setProgress] = useState<PoolProgress | null>(null);
   const [running, setRunning] = useState(false);
+  const [queueSummary, setQueueSummary] = useState<{ batches: number; batchSize: number } | null>(null);
   const [message, setMessage] = useState('');
   const [browsing, setBrowsing] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -120,7 +121,13 @@ export default function IconGrid(props: Props) {
     resolveIconOutputMode(item, containerGenerationUsesAlpha(props.containerMode), props.containerMode) === 'transparent',
   );
   const nextEstimate = estimateGlyphBatch(selectedItems, props.options.model, props.options.quality);
-  const budgetBlocked = nextEstimate.cost !== null && nextEstimate.cost > props.maxBatchCost;
+  const nextQueuePlan = planGenerationQueue(
+    selectedItems,
+    props.options.model,
+    props.options.quality ?? 'low',
+    props.concurrency,
+    props.maxBatchCost,
+  );
   const constructionPlural = props.containerMode === 'filled'
     ? 'complete icons'
     : props.containerMode === 'open-frame' ? 'open-frame icons' : 'isolated subjects';
@@ -268,9 +275,18 @@ export default function IconGrid(props: Props) {
       setMessage('Generate and approve the marked style anchors before the rest of the family.');
       return;
     }
-    const estimate = estimateGlyphBatch(batchTargets, props.options.model, props.options.quality);
-    if (estimate.cost !== null && estimate.cost > props.maxBatchCost) {
-      setMessage(`Blocked: this click is estimated at $${estimate.cost.toFixed(2)}, above the $${props.maxBatchCost.toFixed(2)} batch limit.`);
+    const queuePlan = planGenerationQueue(
+      batchTargets,
+      props.options.model,
+      props.options.quality ?? 'low',
+      props.concurrency,
+      props.maxBatchCost,
+    );
+    if (queuePlan.blocked) {
+      const singleCost = queuePlan.totalCost !== null && queuePlan.paid
+        ? queuePlan.totalCost / queuePlan.paid
+        : null;
+      setMessage(`Blocked: one output costs about ${singleCost === null ? 'more than the configured limit' : `$${singleCost.toFixed(3)}`}, above the $${props.maxBatchCost.toFixed(2)} per-batch limit.`);
       return;
     }
     const automaticTreatments = new Map(batchTargets.map((item) => {
@@ -279,7 +295,12 @@ export default function IconGrid(props: Props) {
     }));
     stopped.current = false;
     setRunning(true);
-    setMessage('');
+    setQueueSummary({ batches: queuePlan.batches, batchSize: queuePlan.effectiveBatchSize });
+    setMessage(
+      `Queued ${batchTargets.length} card${batchTargets.length === 1 ? '' : 's'} in ${queuePlan.batches} batch${queuePlan.batches === 1 ? '' : 'es'} of up to ${queuePlan.effectiveBatchSize}` +
+      `${queuePlan.limitAdjusted ? ` (reduced from ${queuePlan.requestedBatchSize} to stay under the per-batch limit)` : ''}` +
+      `${queuePlan.totalCost === null ? '.' : `. Estimated total: $${queuePlan.totalCost.toFixed(2)}.`}`,
+    );
 
     if (batchTargets.length !== targets.length) {
       setMessage('Generating anchors first. Approve them, then run the remaining family.');
@@ -296,9 +317,9 @@ export default function IconGrid(props: Props) {
       props.onItems(current);
     };
 
-    await runPool(
+    const results = await runPool(
       batchTargets,
-      props.concurrency,
+      queuePlan.effectiveBatchSize,
       async (item) => {
         apply(item.id, { status: 'generating' });
         try {
@@ -368,7 +389,14 @@ export default function IconGrid(props: Props) {
 
     setRunning(false);
     setProgress(null);
-    if (stopped.current) setMessage('Stopped. Cards already finished are kept.');
+    setQueueSummary(null);
+    const failed = results.filter((result) => result.error).length;
+    if (stopped.current) {
+      setMessage('Queue stopped. Cards already finished are kept; unfinished cards remain selected.');
+    } else {
+      const finished = results.length - failed;
+      setMessage(`Queue finished: ${finished} completed${failed ? ` · ${failed} failed and remain selected` : ''}.`);
+    }
   };
 
   useEffect(() => {
@@ -551,13 +579,13 @@ export default function IconGrid(props: Props) {
         <button
           type="button"
           className="primary"
-          disabled={!selectedCount || running || budgetBlocked || Boolean(props.generationBlocked && props.items.some(
+          disabled={!selectedCount || running || nextQueuePlan.blocked || Boolean(props.generationBlocked && props.items.some(
             (item) => item.selected && needsPaidGeneration(item),
           ))}
           onClick={() => runBatch(props.items.filter((item) => item.selected))}
         >
-          {running ? `Generating ${constructionPlural}…`
-            : `Generate ${selectedCount || ''} selected as ${constructionPlural}${nextEstimate.cost !== null ? ` · ~$${nextEstimate.cost.toFixed(2)}` : ''}`}
+          {running ? `Processing queued ${constructionPlural}…`
+            : `Queue ${selectedCount || ''} selected ${constructionPlural}${nextEstimate.cost !== null ? ` · ~$${nextEstimate.cost.toFixed(2)} total` : ''}`}
         </button>
         {running && (
           <button type="button" className="ghost" onClick={() => {
@@ -570,7 +598,7 @@ export default function IconGrid(props: Props) {
           </button>
         )}
         <label className="field field-inline concurrency">
-          <span className="field-label">At once</span>
+          <span className="field-label">Batch size</span>
           <input
             type="number"
             min={1}
@@ -583,15 +611,20 @@ export default function IconGrid(props: Props) {
       </div>
 
       {selectedCount > 0 && (
-        <p className={budgetBlocked ? 'status status-error' : 'hint'}>
+        <p className={nextQueuePlan.blocked ? 'status status-error' : 'hint'}>
           {nextEstimate.local} local/$0 · {nextEstimate.paid} paid output{nextEstimate.paid === 1 ? '' : 's'}
-          {nextEstimate.cost !== null ? ` · estimated $${nextEstimate.cost.toFixed(2)} of $${props.maxBatchCost.toFixed(2)} limit` : ''}
+          {nextEstimate.cost !== null ? ` · estimated $${nextEstimate.cost.toFixed(2)} total` : ''}
+          {nextQueuePlan.batchCost !== null ? ` · up to $${nextQueuePlan.batchCost.toFixed(3)} per batch of ${nextQueuePlan.effectiveBatchSize}` : ''}
+          {nextQueuePlan.limitAdjusted ? ` · automatically reduced from ${nextQueuePlan.requestedBatchSize} at once` : ''}
+          {nextQueuePlan.blocked ? ` · raise the $${props.maxBatchCost.toFixed(2)} per-batch limit to cover one output` : ''}
         </p>
       )}
 
       {progress && (
         <p className="status status-busy">
           {progress.completed}/{progress.total} done · {progress.active} running
+          {` · ${Math.max(0, progress.total - progress.completed - progress.active)} queued`}
+          {queueSummary ? ` · ${queueSummary.batches} batches of up to ${queueSummary.batchSize}` : ''}
           {progress.failed ? ` · ${progress.failed} failed` : ''}
         </p>
       )}

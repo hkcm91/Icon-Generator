@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateGlyphBatch, modelOutputCost, needsPaidGeneration } from '../src/core/cost';
+import { estimateGlyphBatch, modelOutputCost, needsPaidGeneration, planGenerationQueue } from '../src/core/cost';
 import {
   containerGenerationUsesAlpha,
   frameVariantTarget,
@@ -61,6 +61,45 @@ describe('generation cost controls', () => {
     expect(needsPaidGeneration(staleExact)).toBe(true);
     expect(estimateGlyphBatch([staleExact], 'openai/gpt-image-2', 'low')).toEqual({
       paid: 1, local: 0, outputs: 1, cost: 0.012,
+    });
+  });
+
+  it('queues a large selection in bounded batches instead of applying the limit to its total', () => {
+    const items = Array.from({ length: 250 }, (_, index) => makeItem(`Icon ${index + 1}`));
+    const plan = planGenerationQueue(items, 'openai/gpt-image-2', 'low', 3, 1);
+    expect(plan).toMatchObject({
+      paid: 250,
+      totalCost: 3,
+      effectiveBatchSize: 3,
+      batches: 84,
+      blocked: false,
+    });
+    expect(plan.batchCost).toBeCloseTo(0.036);
+  });
+
+  it('automatically narrows concurrent batches to stay under the per-batch limit', () => {
+    const items = Array.from({ length: 5 }, (_, index) => makeItem(`Icon ${index + 1}`));
+    expect(planGenerationQueue(items, 'openai/gpt-image-2', 'low', 3, 0.02)).toMatchObject({
+      totalCost: 0.06,
+      batchCost: 0.012,
+      requestedBatchSize: 3,
+      effectiveBatchSize: 1,
+      batches: 5,
+      blocked: false,
+      limitAdjusted: true,
+    });
+  });
+
+  it('blocks only when one paid output exceeds the per-batch limit', () => {
+    expect(planGenerationQueue(
+      [makeItem('Icon')],
+      'openai/gpt-image-2',
+      'high',
+      3,
+      0.1,
+    )).toMatchObject({
+      blocked: true,
+      totalCost: 0.128,
     });
   });
 
