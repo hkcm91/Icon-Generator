@@ -122,10 +122,10 @@ export default function IconGrid(props: Props) {
   const nextEstimate = estimateGlyphBatch(selectedItems, props.options.model, props.options.quality);
   const budgetBlocked = nextEstimate.cost !== null && nextEstimate.cost > props.maxBatchCost;
   const constructionPlural = props.containerMode === 'filled'
-    ? 'filled tiles'
+    ? 'complete icons'
     : props.containerMode === 'open-frame' ? 'open-frame icons' : 'isolated subjects';
   const constructionAction = props.containerMode === 'filled'
-    ? 'tile'
+    ? 'complete icon'
     : props.containerMode === 'open-frame' ? 'open frame' : 'subject';
   const composeFor = (item: IconItem): ComposeOptions => ({
     ...props.compose,

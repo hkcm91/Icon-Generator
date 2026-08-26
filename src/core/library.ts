@@ -21,6 +21,15 @@ export function containerGenerationUsesAlpha(mode: ContainerMode): boolean {
 }
 
 /**
+ * A reusable open frame is an optimization, never a prerequisite. Until one
+ * exists, generate the complete icon directly from the uploaded master so the
+ * model replaces its subject in one pass instead of compositing over it.
+ */
+export function resolveGenerationContainerMode(mode: ContainerMode, frameReady: boolean): ContainerMode {
+  return mode === 'open-frame' && !frameReady ? 'filled' : mode;
+}
+
+/**
  * Subject masks belong only to layered constructions. Applying one to a
  * complete filled-tile result would cut the generated container back off.
  */
@@ -188,7 +197,15 @@ export function repairedTransparentOutputMode(
   item: IconItem,
   hasRealAlpha: boolean,
 ): IconOutputMode | undefined {
-  if (item.outputMode === 'framed' || item.outputMode === 'overlay') return item.outputMode;
+  // Explicit construction modes are authoritative. In particular, complete
+  // tiles normally have a transparent exterior; treating that alpha as proof
+  // of an isolated subject could race the final batch result into a smaller
+  // glyph-safe-area preview.
+  if (
+    (item.outputMode === 'complete' && item.status === 'ready') ||
+    item.outputMode === 'framed' ||
+    item.outputMode === 'overlay'
+  ) return item.outputMode;
   const generated = usesAiGeneration(item);
   return generated && hasRealAlpha
     ? 'transparent'
