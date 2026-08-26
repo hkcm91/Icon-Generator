@@ -347,6 +347,7 @@ export function completeIconPrompt(
   referenceSubject = '',
   theme = '',
   themeTreatment = '',
+  frameStyle = '',
 ): string {
   const requested = subject.trim() || 'a simple symbol';
   return [
@@ -359,18 +360,23 @@ export function completeIconPrompt(
     hasMaster
       ? `REFERENCE ROLE — APPEARANCE ONLY: Use the reference as authoritative for container silhouette, material vocabulary, palette, lighting, camera, and proportions, but not for content. It depicts ${referenceSubject.trim() || 'a different object'}; remove that source subject completely and replace it with ${requested}. Do not retain its silhouette, face, anatomy, pose, or recognizable fragments.`
       : 'Include a polished, fully visible icon container behind the symbol.',
-    'Return a fully opaque PNG containing the complete container and symbol together.',
-    'The artwork must fill the square canvas edge to edge and extend underneath the supplied silhouette.',
-    'Zero extra outer padding or empty margin. Never place a smaller framed icon inside the output square.',
+    'Return one PNG containing the complete container and symbol together. Never return only the isolated symbol.',
+    'The area outside the finished container must have zero alpha. Preserve partial alpha through translucent glass, gel, and clear rim materials instead of flattening them onto an opaque matte.',
+    hasMaster
+      ? "Match the reference container's exact scale and position, including its transparent exterior margin. Never crop the outer shell or shrink it into a smaller icon."
+      : 'Keep the complete container fully visible at large app-icon scale without cropping its outer edge.',
     hasMaster
       ? "Preserve the reference container's outer-edge construction. If it has a luminous translucent glass rim, bright pearlescent bevel, or layered clear border, reproduce that integral edge treatment with the same relative thickness, material, highlights, and depth."
       : 'Give the container a cohesive material edge and softly lit bevel that belongs to the object.',
+    hasMaster
+      ? `OUTER FRAME AUTHORITY: Reproduce the master container's visible outer shell as a separate material role${frameStyle.trim() ? `, following this detected treatment: ${frameStyle.trim()}` : ''}. When the master shell is glass, it must remain a distinct, thick, dimensional transparent-glass frame around the filled inner tile—not a thin outline, faint bevel, or edge color change. Do not invent a glass shell when the master has none.`
+      : '',
     'The luminous bevel and outer rim are essential parts of the container. Keep them fully visible at the reference thickness; do not crop, thin, flatten, fade, recolor, or omit them.',
     hasMaster
       ? 'Remove only an unintended black or near-black technical keyline introduced by the upload/template outside the true container edge. This exclusion must never remove or weaken an intentional bright, colored, translucent, pearlescent, glass, gel, beveled, layered, or decorative border from the reference.'
       : 'Do not add a separate black technical outline outside the finished container. Keep the intentional material edge and bevel fully visible.',
     'Arrange decorative microdetails such as bubbles, sparkles, particles, glints, droplets, and highlights in new positions that suit this subject. Never trace or reuse their coordinates from a reference image or another icon.',
-    'No transparency, isolated glyph, chroma screen, contact sheet, text, label, watermark, device, or mockup.',
+    'No isolated glyph, chroma screen, contact sheet, text, label, watermark, device, or mockup.',
   ].filter(Boolean).join(' ');
 }
 

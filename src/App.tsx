@@ -335,6 +335,8 @@ export default function App() {
           detailVariation={project.detailVariation}
           theme={project.theme}
           themeSuggestions={project.themeSuggestions}
+          directorMessages={project.directorMessages}
+          directorMemory={project.directorMemory}
           onSpec={setSpec}
           onCompose={setCompose}
           onMaterial={(value) => setField('materialDescription', value)}
@@ -351,6 +353,8 @@ export default function App() {
           onDetailVariation={(value) => setField('detailVariation', value)}
           onTheme={(value) => setField('theme', value)}
           onThemeSuggestions={(value) => setField('themeSuggestions', value)}
+          onDirectorMessages={(value) => setField('directorMessages', value)}
+          onDirectorMemory={(value) => setField('directorMemory', value)}
           onMaterialLayer={store.setMaterial}
           onGlyphLayer={store.setGlyph}
           materialLayer={material}

@@ -241,48 +241,6 @@ export function preserveAlphaLayer(
 }
 
 /**
- * Deterministically retain the approved master's real perimeter treatment.
- *
- * Complete-image models can understand the requested container but simplify
- * away a translucent or layered rim. Prompting cannot guarantee those pixels,
- * so filled master-driven families copy only the outer 18% ring from the
- * approved upload. The central 64%—where the old subject lives—always comes
- * from the new generation.
- */
-export function preserveMasterContainerRim(
-  spec: ContainerSpec,
-  generated: CanvasImageSource,
-  master: CanvasImageSource,
-  innerScale = 0.64,
-): HTMLCanvasElement {
-  const canvas = createCanvas(spec.size);
-  const context = context2d(canvas);
-  const outer = new Path2D(containerPath(spec));
-
-  context.save();
-  context.clip(outer, 'evenodd');
-  drawCover(context, generated, 0, 0, spec.size, spec.size);
-  // Keep only the new generation's central subject/surface. The perimeter is
-  // replaced rather than blended, otherwise a translucent glass master rim is
-  // flattened against the generated opaque tile underneath it.
-  context.globalCompositeOperation = 'destination-in';
-  context.fill(new Path2D(containerPath(spec, innerScale)), 'evenodd');
-  context.restore();
-
-  const rim = createCanvas(spec.size);
-  const rimContext = context2d(rim);
-  rimContext.save();
-  rimContext.clip(outer, 'evenodd');
-  drawCover(rimContext, master, 0, 0, spec.size, spec.size);
-  rimContext.globalCompositeOperation = 'destination-out';
-  rimContext.fill(new Path2D(containerPath(spec, innerScale)), 'evenodd');
-  rimContext.restore();
-
-  context.drawImage(rim, 0, 0);
-  return canvas;
-}
-
-/**
  * Render a self-contained generated tile without painting an opaque fallback
  * below it. Complete results can carry real translucent glass at their edge;
  * the normal material compositor's base fill would destroy that appearance.

@@ -157,20 +157,26 @@ describe('glyph isolation prompt', () => {
 });
 
 describe('complete icon prompt', () => {
-  it('requires the container and explicitly forbids transparent output', () => {
-    const prompt = completeIconPrompt('moon', 'pearl glass', true);
+  it('requires the complete container while preserving glass alpha and frame role', () => {
+    const prompt = completeIconPrompt('moon', 'pearl glass', true, '', '', '', 'thick clear aqua glass shell');
     expect(prompt).toContain('complete container and symbol together');
-    expect(prompt).toContain('fully opaque PNG');
-    expect(prompt).toContain('fill the square canvas edge to edge');
-    expect(prompt).toContain('Zero extra outer padding');
+    expect(prompt).toContain('area outside the finished container must have zero alpha');
+    expect(prompt).toContain('Preserve partial alpha');
+    expect(prompt).toContain("reference container's exact scale and position");
+    expect(prompt).toContain('Never crop the outer shell');
     expect(prompt).toContain('luminous translucent glass rim');
     expect(prompt).toContain('same relative thickness');
+    expect(prompt).toContain('OUTER FRAME AUTHORITY');
+    expect(prompt).toContain('thick clear aqua glass shell');
+    expect(prompt).toContain('distinct, thick, dimensional transparent-glass frame');
     expect(prompt).toContain('outer rim are essential parts');
     expect(prompt).toContain('do not crop, thin, flatten, fade, recolor, or omit');
     expect(prompt).toContain('Remove only an unintended black or near-black technical keyline');
     expect(prompt).toContain('must never remove or weaken an intentional bright, colored, translucent');
     expect(prompt).toContain('Never trace or reuse their coordinates');
-    expect(prompt).toContain('No transparency');
+    expect(prompt).toContain('Never return only the isolated symbol');
+    expect(prompt).not.toContain('fully opaque PNG');
+    expect(prompt).not.toContain('No transparency');
   });
 
   it('adds an integral bevel without inventing an extra frame when no master exists', () => {

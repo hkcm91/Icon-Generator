@@ -8,6 +8,8 @@ import { SHAPE_PRESETS, matchPreset, normalizeSpec, type ContainerSpec } from '.
 import { clearOpenFrameCenter, hasNativeAlpha, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import { useGeneration, type GenerationOptions } from '../state/useGeneration';
 import IconGrid from './IconGrid';
+import IconDirector from './IconDirector';
+import type { DirectorMessage, DirectorResult } from '../core/director';
 import { containerGenerationUsesAlpha, frameVariantTarget, makeItem, repairedTransparentOutputMode, resolveIconOutputMode, stableFrameIndex, type ContainerMode, type IconItem } from '../core/library';
 import {
   PLATFORM_TARGETS,
@@ -54,6 +56,8 @@ interface Props {
   detailVariation: number;
   theme: string;
   themeSuggestions: ThemeSuggestion[];
+  directorMessages: DirectorMessage[];
+  directorMemory: string;
   onSpec: (patch: Partial<ContainerSpec>) => void;
   onCompose: (patch: Partial<ComposeOptions>) => void;
   onMaterial: (value: string) => void;
@@ -70,6 +74,8 @@ interface Props {
   onDetailVariation: (value: number) => void;
   onTheme: (value: string) => void;
   onThemeSuggestions: (value: ThemeSuggestion[]) => void;
+  onDirectorMessages: (value: DirectorMessage[]) => void;
+  onDirectorMemory: (value: string) => void;
   onMaterialLayer: (image: CanvasImageSource | null) => void;
   onGlyphLayer: (image: CanvasImageSource | null) => void;
   master: { name: string; dataUrl: string } | null;
@@ -747,7 +753,59 @@ export default function SimpleStudio(props: Props) {
     }
   };
 
+  const applyDirectorResult = (result: DirectorResult) => {
+    const patch = result.patch;
+    if (patch.familyName !== undefined) props.onFamilyName(patch.familyName);
+    if (patch.material !== undefined) props.onMaterial(patch.material);
+    if (patch.familyPrompt !== undefined) props.onFamilyPrompt(patch.familyPrompt);
+    if (patch.negativePrompt !== undefined) props.onNegativePrompt(patch.negativePrompt);
+    if (patch.styleProfile !== undefined) props.onStyleProfile(patch.styleProfile);
+    if (patch.subjectStyleProfile !== undefined) props.onSubjectStyleProfile(patch.subjectStyleProfile);
+    if (patch.frameStyleProfile !== undefined) {
+      props.onFrameStyleProfile(patch.frameStyleProfile);
+      props.onClearFrameVariants();
+    }
+    if (patch.containerMode !== undefined) {
+      props.onContainerMode(patch.containerMode);
+      props.onGlyphTransparency(patch.containerMode !== 'filled');
+      if (patch.containerMode === 'open-frame') props.onFrameReady(false);
+    }
+    if (patch.styleFidelity !== undefined) props.onStyleFidelity(patch.styleFidelity);
+    if (patch.detailVariation !== undefined) {
+      props.onDetailVariation(patch.detailVariation);
+      props.onClearFrameVariants();
+    }
+    if (patch.glyphScale !== undefined) props.onCompose({ glyphScale: patch.glyphScale });
+    if (patch.theme !== undefined) props.onTheme(patch.theme);
+
+    const instructionByName = new Map(
+      (patch.cardInstructions ?? []).map((entry) => [entry.name.trim().toLocaleLowerCase(), entry.instruction]),
+    );
+    const named = new Set((patch.selection?.names ?? []).map((name) => name.trim().toLocaleLowerCase()));
+    if (patch.selection || instructionByName.size > 0) {
+      props.onItems(props.items.map((item) => {
+        const key = item.name.trim().toLocaleLowerCase();
+        const instruction = instructionByName.get(key);
+        let selected = item.selected;
+        switch (patch.selection?.mode) {
+          case 'all': selected = true; break;
+          case 'none': selected = false; break;
+          case 'named': selected = named.has(key); break;
+          case 'drafts': selected = item.status === 'draft'; break;
+          case 'failed': selected = item.status === 'failed'; break;
+          default: break;
+        }
+        if (instruction) selected = true;
+        return instruction
+          ? { ...item, selected, approved: false, directorInstruction: instruction }
+          : { ...item, selected };
+      }));
+    }
+  };
+
   const busy = status.kind === 'busy';
+  const directorSummary = [...props.directorMessages].reverse().find((message) => message.role === 'assistant')?.text
+    ?? (props.master ? 'Tell the director what this set needs' : 'Upload a reference to begin');
 
   return (
     <div className="studio">
@@ -837,10 +895,40 @@ export default function SimpleStudio(props: Props) {
         <li>
           <details className="compact-step">
           <summary>
-            <span className="compact-step-title"><span className="step-num">2</span> Appearance and model</span>
-            <span className="compact-step-value">{props.glyph.trim() || props.material.trim() || 'Set appearance'}</span>
+            <span className="compact-step-title"><span className="step-num">2</span> Icon Director</span>
+            <span className="compact-step-value">{directorSummary}</span>
           </summary>
           <div className="compact-step-body compact-fields">
+          <IconDirector
+            master={props.master}
+            model={props.visionModel}
+            messages={props.directorMessages}
+            memory={props.directorMemory}
+            context={{
+              familyName: props.familyName,
+              material: props.material,
+              familyPrompt: props.familyPrompt,
+              negativePrompt: props.negativePrompt,
+              styleProfile: props.styleProfile,
+              subjectStyleProfile: props.subjectStyleProfile,
+              frameStyleProfile: props.frameStyleProfile,
+              containerMode: props.containerMode,
+              styleFidelity: props.styleFidelity,
+              detailVariation: props.detailVariation,
+              glyphScale: props.compose.glyphScale,
+              theme: props.theme,
+              estimatedImageCost: cost,
+              cards: props.items.map(({ name, concept, status, selected, themeTreatment, directorInstruction }) => ({
+                name, concept, status, selected, themeTreatment, directorInstruction,
+              })),
+            }}
+            onMessages={props.onDirectorMessages}
+            onMemory={props.onDirectorMemory}
+            onApply={applyDirectorResult}
+          />
+          <details className="director-manual">
+            <summary>Manual controls</summary>
+            <div className="director-manual-body compact-fields">
           <fieldset className="construction-picker">
             <legend>Icon construction</legend>
             {([
@@ -1115,6 +1203,8 @@ export default function SimpleStudio(props: Props) {
                 <input type="range" min={0} max={120} value={props.compose.shadowBlur}
                   onChange={(event) => props.onCompose({ shadowBlur: Number(event.target.value) })} />
               </label>
+            </div>
+          </details>
             </div>
           </details>
           </div>
