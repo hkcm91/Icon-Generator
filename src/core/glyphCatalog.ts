@@ -92,12 +92,63 @@ export const MATERIAL_ESSENTIALS = [
   'health_and_safety',
 ] as const;
 
+// Curated demand ordering, most-requested first. This project has no request
+// telemetry, so the order is editorial: social marks lead by global reach and by how
+// often they show up in link-in-bio and app-icon work, then creator, platform, and
+// commerce marks. Every slug is asserted against the bundled Simple Icons inventory
+// by test/glyph-catalog.test.ts. That guard matters — Simple Icons drops brands on
+// trademark request, and LinkedIn, Microsoft, Amazon, Slack, Adobe, and Canva are all
+// gone from the bundle, so an unverified entry here silently renders nothing.
+
 const BRAND_POPULAR = [
-  'apple', 'google', 'microsoft', 'amazon', 'youtube', 'instagram', 'tiktok', 'facebook',
-  'x', 'github', 'discord', 'spotify', 'slack', 'notion', 'figma', 'canva', 'dropbox',
+  'instagram', 'tiktok', 'youtube', 'facebook', 'x', 'whatsapp', 'discord', 'telegram',
+  'snapchat', 'pinterest', 'reddit', 'threads', 'spotify', 'twitch', 'github', 'google',
+  'apple', 'netflix', 'figma', 'notion', 'gmail', 'zoom', 'paypal', 'dropbox',
 ] as const;
 
+const BRAND_SOCIAL = [
+  'instagram', 'tiktok', 'youtube', 'facebook', 'x', 'whatsapp', 'discord', 'telegram',
+  'snapchat', 'pinterest', 'reddit', 'threads', 'twitch', 'messenger', 'bluesky',
+  'mastodon', 'signal', 'wechat', 'line', 'kakaotalk', 'viber', 'vk', 'xiaohongshu',
+  'bilibili', 'patreon', 'substack', 'medium', 'kick', 'rumble', 'onlyfans',
+] as const;
+
+const BRAND_CREATIVE = [
+  'figma', 'behance', 'dribbble', 'vimeo', 'unsplash', 'blender', 'sketch',
+] as const;
+
+const BRAND_COMMERCE = [
+  'paypal', 'stripe', 'shopify', 'etsy', 'ebay', 'visa', 'mastercard', 'applepay',
+  'googlepay', 'cashapp', 'venmo', 'klarna', 'woocommerce', 'square',
+] as const;
+
+const BRAND_DEVELOPER = [
+  'github', 'gitlab', 'npm', 'nodedotjs', 'react', 'vuedotjs', 'python', 'docker',
+  'kubernetes', 'cloudflare', 'vercel', 'linux', 'ubuntu',
+] as const;
+
+/** Every curated brand, deduped, in overall most-requested order. */
+export const BRAND_CURATED: readonly string[] = [
+  ...new Set([
+    ...BRAND_POPULAR,
+    ...BRAND_SOCIAL,
+    ...BRAND_CREATIVE,
+    ...BRAND_COMMERCE,
+    ...BRAND_DEVELOPER,
+  ]),
+];
+
+const BRAND_SECTION_ORDER: Record<string, readonly string[]> = {
+  popular: BRAND_POPULAR,
+  social: BRAND_SOCIAL,
+  creative: BRAND_CREATIVE,
+  commerce: BRAND_COMMERCE,
+  developer: BRAND_DEVELOPER,
+};
+
 const all = (_entry: GlyphCatalogEntry) => true;
+const either = (...tests: ReadonlyArray<(entry: GlyphCatalogEntry) => boolean>) =>
+  (entry: GlyphCatalogEntry) => tests.some((test) => test(entry));
 
 export const GLYPH_SECTIONS: Record<GlyphCatalogId, GlyphSection[]> = {
   mobile: [
@@ -133,11 +184,11 @@ export const GLYPH_SECTIONS: Record<GlyphCatalogId, GlyphSection[]> = {
     { id: 'romance', label: 'Romance', description: 'Hearts, bows, love notes, and playful romantic symbols.', matches: has(/y2k_romance/) },
   ],
   brands: [
-    { id: 'popular', label: 'Popular', description: 'Frequently used platforms and services.', matches: named(BRAND_POPULAR) },
-    { id: 'social', label: 'Social & community', description: 'Social networks, messaging, video, and communities.', matches: has(/(facebook|instagram|threads|tiktok|youtube|reddit|discord|linkedin|whatsapp|telegram|snapchat|mastodon|pinterest)/) },
-    { id: 'creative', label: 'Creative tools', description: 'Design, photography, video, and creative software brands.', matches: has(/(adobe|figma|canva|blender|dribbble|behance|unsplash|vimeo|pinterest|sketch|affinity)/) },
-    { id: 'commerce', label: 'Commerce', description: 'Shopping, payments, marketplaces, and business services.', matches: has(/(shopify|etsy|ebay|amazon|paypal|stripe|square|klarna|visa|mastercard|woocommerce)/) },
-    { id: 'developer', label: 'Developer tools', description: 'Code hosting, languages, frameworks, cloud, and infrastructure.', matches: has(/(github|gitlab|npm|node|react|vue|python|docker|kubernetes|aws|azure|cloudflare|vercel|code|linux|ubuntu)/) },
+    { id: 'popular', label: 'Popular', description: 'The most-requested platforms and services, most popular first.', matches: named(BRAND_POPULAR) },
+    { id: 'social', label: 'Social & community', description: 'Social networks, messaging, video, and communities.', matches: either(named(BRAND_SOCIAL), has(/(facebook|instagram|threads|tiktok|youtube|reddit|discord|whatsapp|telegram|snapchat|mastodon|pinterest|twitch|bluesky)/)) },
+    { id: 'creative', label: 'Creative tools', description: 'Design, photography, video, and creative software brands.', matches: either(named(BRAND_CREATIVE), has(/(figma|blender|dribbble|behance|unsplash|vimeo|pinterest|sketch)/)) },
+    { id: 'commerce', label: 'Commerce', description: 'Shopping, payments, marketplaces, and business services.', matches: either(named(BRAND_COMMERCE), has(/(shopify|etsy|ebay|paypal|stripe|square|klarna|visa|mastercard|woocommerce)/)) },
+    { id: 'developer', label: 'Developer tools', description: 'Code hosting, languages, frameworks, cloud, and infrastructure.', matches: either(named(BRAND_DEVELOPER), has(/(github|gitlab|npm|node|react|vue|python|docker|kubernetes|aws|azure|cloudflare|vercel|code|linux|ubuntu)/)) },
     { id: 'all', label: 'All brands', description: 'The complete Simple Icons brand-logo inventory.', matches: all },
   ],
 };
@@ -173,10 +224,13 @@ export function organizeGlyphEntries(
       .includes(needle);
   });
 
+  // Brand sections lead with the curated demand order and fall back to alphabetical
+  // for the long tail. Searching spans every section, so it ranks against the full
+  // curated order rather than whichever section happens to be open.
   const preferred = catalogId === 'mobile'
     ? MATERIAL_ESSENTIALS
-    : catalogId === 'brands' && section.id === 'popular'
-      ? BRAND_POPULAR
+    : catalogId === 'brands'
+      ? (needle ? BRAND_CURATED : BRAND_SECTION_ORDER[section.id] ?? BRAND_CURATED)
       : null;
   const rank = preferred
     ? new Map<string, number>(preferred.map((name, index) => [name, index]))
