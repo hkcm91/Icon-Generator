@@ -175,12 +175,16 @@ describe('Icon Director response safety', () => {
     const openFrameContext: DirectorContext = {
       ...context,
       containerMode: 'open-frame',
-      cards: ['Mouse', 'Compact Disc'].map((name) => ({
-        name,
-        concept: name,
-        status: 'ready' as const,
-        selected: true,
-      })),
+      cards: [
+        ...['Mouse', 'Compact Disc'].map((name) => ({
+          name,
+          concept: name,
+          status: 'ready' as const,
+          selected: true,
+        })),
+        { name: 'Moon and Stars', concept: 'crescent moon', status: 'ready', selected: false },
+        { name: 'Scale', concept: 'weighing scale', status: 'ready', selected: false },
+      ],
     };
     const result = stageDirectorInstruction(
       'please regenerate selected icons to have a pearly icy white subject and dark oilslick-like frame and flourish (like the reference depicts) keep them on theme for halloween while remaining recognizable at small scale. Transparent cutouts',
@@ -190,6 +194,24 @@ describe('Icon Director response safety', () => {
     expect(result.patch.containerMode).toBe('filled');
     expect(result.action).toBe('generate-selected');
     expect(result.patch.selection).toEqual({ mode: 'named', names: ['Mouse', 'Compact Disc'] });
+  });
+
+  it('never lets incidental alias words override an explicit selected-card scope', () => {
+    const selectedContext: DirectorContext = {
+      ...context,
+      cards: [
+        { name: 'Mouse', concept: 'mouse', status: 'ready', selected: true },
+        { name: 'Compact Disc', concept: 'disc', status: 'ready', selected: true },
+        { name: 'Moon and Stars', concept: 'moon', status: 'ready', selected: false },
+      ],
+    };
+    const result = stageDirectorInstruction(
+      'regenerate selected icons with a pearly subject and dark frame',
+      selectedContext,
+      '',
+    );
+    expect(result.patch.selection).toEqual({ mode: 'named', names: ['Mouse', 'Compact Disc'] });
+    expect(result.patch.cardInstructions?.map((entry) => entry.name)).toEqual(['Mouse', 'Compact Disc']);
   });
 
   it('recreates named cards from unambiguous shorthand and acronyms', () => {

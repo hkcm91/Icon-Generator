@@ -189,9 +189,13 @@ const normalizeName = (value: string) => value.trim().toLocaleLowerCase().replac
 function mentionedCards(instruction: string, cards: DirectorContext['cards']): DirectorContext['cards'] {
   const normalizedInstruction = ` ${normalizeName(instruction)} `;
   const instructionWords = new Set(normalizeName(instruction).split(' ').filter(Boolean));
+  const aliasStopWords = new Set([
+    'a', 'an', 'and', 'app', 'apps', 'for', 'from', 'icon', 'icons', 'in',
+    'into', 'my', 'of', 'on', 'or', 'our', 'the', 'to', 'with', 'your',
+  ]);
   const aliasOwners = new Map<string, number>();
   const aliasesByCard = cards.map((card) => {
-    const words = normalizeName(card.name).split(' ').filter((word) => word.length > 1 && word !== 'icon');
+    const words = normalizeName(card.name).split(' ').filter((word) => word.length > 1 && !aliasStopWords.has(word));
     const aliases = new Set<string>();
     for (const word of words) {
       if (word.length >= 3) aliases.add(word);
@@ -253,7 +257,10 @@ export function stageDirectorInstruction(
   const selectedCards = /\bselected(?: cards?| icons?)?\b/i.test(cleaned)
     ? context.cards.filter((card) => card.selected)
     : [];
-  const targets = namedCards.length ? namedCards : failedCards.length ? failedCards : selectedCards;
+  // “Selected icons” is an explicit scope. It must outrank incidental words
+  // that happen to resemble a card alias (for example, “and” previously
+  // selected Moon and Stars from “subject and frame”).
+  const targets = selectedCards.length ? selectedCards : namedCards.length ? namedCards : failedCards;
   const confirmsGeneration = /^(?:(?:yes|ok(?:ay)?)[,.]?\s*)?(?:please\s+)?(?:now(?:\s+please)?|go ahead(?:\s+now)?|do it(?:\s+now)?|start(?:\s+(?:it|them|those))?(?:\s+now)?|run (?:it|them|those)(?:\s+now)?)(?:\s+please)?[.!]*$/i.test(cleaned);
   const createsNamedCard = namedCards.length > 0 && /\b(?:create|recreate|make|remake)\b/i.test(cleaned);
   const wantsGeneration = /\b(?:generate|regenerate|render|redo|recreate|remake)\b|\b(?:make|try)\s+(?:it|them|those|again)\b|\btest\b[^.]{0,80}\bselected\b/i.test(cleaned)

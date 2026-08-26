@@ -49,13 +49,16 @@ interface Props {
   generationRequest?: { id: string; targetIds: string[] } | null;
 }
 
-/** Thumbnail for one card: the real container, with this card's glyph in it. */
-function Thumb({
+/** One card render at either compact-card or full-screen inspection size. */
+function RenderedIcon({
   spec,
   compose,
   layers,
   empty = false,
   mode = 'composed',
+  size = 128,
+  className = 'card-thumb',
+  alt = '',
 }: {
   spec: ContainerSpec;
   compose: ComposeOptions;
@@ -64,22 +67,25 @@ function Thumb({
   empty?: boolean;
   /** Draw the stored asset directly; never synthesize a container behind it. */
   mode?: 'transparent' | 'framed' | 'overlay' | 'composed' | 'complete';
+  size?: number;
+  className?: string;
+  alt?: string;
 }) {
   const src = useMemo(() => {
     const canvas = empty ? document.createElement('canvas')
       : mode === 'transparent'
-        ? renderTransparentLayer({ ...spec, size: 128 }, layers.glyph, compose)
+        ? renderTransparentLayer({ ...spec, size }, layers.glyph, compose)
         : mode === 'overlay'
-          ? composeContainerOverlay({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 })
+          ? composeContainerOverlay({ ...spec, size }, layers, { ...compose, rimWidth: 0 })
         : mode === 'framed'
-          ? composeOpenFrame({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 })
+          ? composeOpenFrame({ ...spec, size }, layers, { ...compose, rimWidth: 0 })
           : mode === 'complete'
-            ? composeCompleteIcon({ ...spec, size: 128 }, layers.material, { ...compose, rimWidth: 0 })
-            : composeIcon({ ...spec, size: 128 }, layers, { ...compose, rimWidth: 0 });
-    if (empty) canvas.width = canvas.height = 128;
+            ? composeCompleteIcon({ ...spec, size }, layers.material, { ...compose, rimWidth: 0 })
+            : composeIcon({ ...spec, size }, layers, { ...compose, rimWidth: 0 });
+    if (empty) canvas.width = canvas.height = size;
     return canvas.toDataURL('image/png');
-  }, [spec, compose, layers, empty, mode]);
-  return <img className="card-thumb" src={src} alt="" />;
+  }, [spec, compose, layers, empty, mode, size]);
+  return <img className={className} src={src} alt={alt} />;
 }
 
 /**
@@ -98,6 +104,7 @@ export default function IconGrid(props: Props) {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newConcept, setNewConcept] = useState('');
+  const [fullscreenItemId, setFullscreenItemId] = useState<string | null>(null);
   const stopped = useRef(false);
   const handledGenerationRequest = useRef('');
   const input = useRef<HTMLInputElement>(null);
@@ -132,6 +139,39 @@ export default function IconGrid(props: Props) {
   ].slice(0, frameVariantTarget(props.options.detailVariation ?? 70));
   const frameFor = (item: IconItem) =>
     framePool[stableFrameIndex(item.id, framePool.length)] ?? props.material;
+  const layersFor = (item: IconItem, outputMode: ReturnType<typeof resolveIconOutputMode>): ComposeLayers =>
+    outputMode === 'transparent'
+      ? { material: null, glyph: props.glyphs.get(item.id) ?? null }
+      : outputMode === 'overlay'
+        ? { material: props.containerOverlay, glyph: props.glyphs.get(item.id) ?? null }
+        : outputMode === 'composed' || outputMode === 'framed'
+          ? { material: outputMode === 'framed' ? frameFor(item) : props.material, glyph: props.glyphs.get(item.id) ?? null }
+          : { material: props.glyphs.get(item.id) ?? null, glyph: null };
+
+  const fullscreenItem = fullscreenItemId
+    ? props.items.find((item) => item.id === fullscreenItemId && item.status === 'ready') ?? null
+    : null;
+  const fullscreenMode = fullscreenItem
+    ? resolveIconOutputMode(fullscreenItem, containerGenerationUsesAlpha(props.containerMode), props.containerMode)
+    : null;
+
+  useEffect(() => {
+    if (!fullscreenItemId) return;
+    if (!fullscreenItem || !props.glyphs.has(fullscreenItem.id)) {
+      setFullscreenItemId(null);
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullscreenItemId(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [fullscreenItemId, fullscreenItem, props.glyphs]);
 
   const patch = (id: string, change: Partial<IconItem>) =>
     props.onItems(props.items.map((item) => (item.id === id ? { ...item, ...change } : item)));
@@ -577,23 +617,30 @@ export default function IconGrid(props: Props) {
                 />
               </label>
 
-              <Thumb
-                spec={props.spec}
-                compose={composeFor(item)}
-                // Hide a stale locally pasted catalog glyph on the very first
-                // render too; the migration effect clears its stored pixels.
-                empty={!props.glyphs.has(item.id) || (
-                  isAiGuidedCatalogSource(item.sourceUrl) && item.sourceMode !== 'styled'
+              <div className="card-art">
+                <RenderedIcon
+                  spec={props.spec}
+                  compose={composeFor(item)}
+                  // Hide a stale locally pasted catalog glyph on the very first
+                  // render too; the migration effect clears its stored pixels.
+                  empty={!props.glyphs.has(item.id) || (
+                    isAiGuidedCatalogSource(item.sourceUrl) && item.sourceMode !== 'styled'
+                  )}
+                  mode={outputMode}
+                  layers={layersFor(item, outputMode)}
+                />
+                {item.status === 'ready' && props.glyphs.has(item.id) && (
+                  <button
+                    type="button"
+                    className="card-fullscreen"
+                    aria-label={`View ${item.name} full screen`}
+                    title="View full screen"
+                    onClick={() => setFullscreenItemId(item.id)}
+                  >
+                    <span aria-hidden="true">⛶</span>
+                  </button>
                 )}
-                mode={outputMode}
-                layers={outputMode === 'transparent'
-                  ? { material: null, glyph: props.glyphs.get(item.id) ?? null }
-                  : outputMode === 'overlay'
-                    ? { material: props.containerOverlay, glyph: props.glyphs.get(item.id) ?? null }
-                  : outputMode === 'composed' || outputMode === 'framed'
-                    ? { material: outputMode === 'framed' ? frameFor(item) : props.material, glyph: props.glyphs.get(item.id) ?? null }
-                  : { material: props.glyphs.get(item.id) ?? null, glyph: null }}
-              />
+              </div>
 
               <div className="card-name" title={item.concept || item.name}>
                 <input
@@ -756,6 +803,52 @@ export default function IconGrid(props: Props) {
             </article>
             );
           })}
+        </div>
+      )}
+      {fullscreenItem && fullscreenMode && (
+        <div
+          className="icon-lightbox"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setFullscreenItemId(null);
+          }}
+        >
+          <div
+            className="icon-lightbox-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="icon-lightbox-title"
+          >
+            <div className="icon-lightbox-head">
+              <div>
+                <strong id="icon-lightbox-title">{fullscreenItem.name}</strong>
+                <small>{fullscreenMode === 'transparent'
+                  ? 'Isolated subject'
+                  : fullscreenMode === 'framed'
+                    ? 'Open frame'
+                    : fullscreenMode === 'overlay' ? 'BYOC glass' : 'Complete icon'}</small>
+              </div>
+              <button
+                type="button"
+                className="ghost icon-lightbox-close"
+                aria-label="Close full screen preview"
+                autoFocus
+                onClick={() => setFullscreenItemId(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="icon-lightbox-stage">
+              <RenderedIcon
+                spec={props.spec}
+                compose={composeFor(fullscreenItem)}
+                layers={layersFor(fullscreenItem, fullscreenMode)}
+                mode={fullscreenMode}
+                size={1024}
+                className="icon-lightbox-image"
+                alt={`${fullscreenItem.name} full screen preview`}
+              />
+            </div>
+          </div>
         </div>
       )}
     </section>
