@@ -110,10 +110,72 @@ export const MATERIAL_ESSENTIALS = [
   ...MOBILE_ICON_GROUPS.devices,
 ] as const;
 
-const BRAND_POPULAR = [
-  'apple', 'google', 'microsoft', 'amazon', 'youtube', 'instagram', 'tiktok', 'facebook',
-  'x', 'github', 'discord', 'spotify', 'slack', 'notion', 'figma', 'canva', 'dropbox',
+/**
+ * Evidence-weighted mobile icon-pack demand order. Current app usage is the
+ * primary signal; repeated icon-pack must-have/request mentions break ties.
+ * Entries that Simple Icons cannot legally distribute are intentionally absent.
+ */
+export const BRAND_PRIORITY = [
+  'youtube', 'facebook', 'instagram', 'whatsapp', 'tiktok', 'googlechrome', 'gmail',
+  'googlemaps', 'netflix', 'spotify', 'telegram', 'messenger', 'snapchat', 'reddit',
+  'discord', 'pinterest', 'threads', 'x', 'twitch', 'signal', 'roblox', 'youtubemusic',
+  'ebay', 'etsy', 'paypal', 'cashapp', 'venmo', 'target', 'doordash', 'ubereats',
+  'instacart', 'aliexpress', 'uber', 'lyft', 'airbnb', 'bookingdotcom', 'tripadvisor',
+  'waze', 'dropbox', 'notion', 'figma', 'zoom', 'googledrive', 'googlecalendar',
+  'googlemeet', 'firefox', 'safari', 'github', 'trello', 'asana', 'todoist', 'hbomax',
+  'plex', 'crunchyroll', 'steam', 'playstation', 'soundcloud', 'patreon', 'bluesky',
+  'wechat', 'line', 'viber', 'mastodon', 'tumblr', 'nextdoor', 'quora', 'medium',
+  'substack', 'bereal', 'meetup', 'flickr', 'clubhouse', 'box', 'webex', 'shopify',
 ] as const;
+
+export const BRAND_SOCIAL_PRIORITY = [
+  'youtube', 'facebook', 'instagram', 'whatsapp', 'tiktok', 'messenger', 'telegram',
+  'snapchat', 'reddit', 'pinterest', 'threads', 'x', 'discord', 'twitch', 'signal',
+  'wechat', 'line', 'bluesky', 'tumblr', 'mastodon', 'nextdoor', 'quora', 'medium',
+  'substack', 'bereal', 'viber', 'patreon', 'meetup', 'flickr', 'clubhouse', 'matrix',
+  'simplex',
+] as const;
+
+export const BRAND_ENTERTAINMENT_PRIORITY = [
+  'youtube', 'netflix', 'spotify', 'tiktok', 'youtubemusic', 'twitch', 'roblox',
+  'hbomax', 'plex', 'crunchyroll', 'steam', 'playstation', 'soundcloud', 'audible',
+  'pandora', 'deezer', 'tidal', 'iheartradio', 'pocketcasts', 'castbox', 'vimeo',
+  'youtubetv', 'youtubekids', 'youtubegaming', 'facebookgaming', 'facebooklive',
+  'epicgames',
+] as const;
+
+export const BRAND_COMMERCE_PRIORITY = [
+  'paypal', 'cashapp', 'venmo', 'ebay', 'etsy', 'target', 'doordash', 'ubereats',
+  'instacart', 'aliexpress', 'shopify', 'klarna', 'afterpay', 'square', 'stripe',
+  'wise', 'revolut', 'coinbase', 'binance', 'robinhood', 'stockx', 'mercadopago',
+  'okx', 'wazirx', 'deliveroo', 'justeat', 'fedex', 'ups', 'dhl',
+] as const;
+
+export const BRAND_TRAVEL_PRIORITY = [
+  'googlemaps', 'uber', 'lyft', 'airbnb', 'bookingdotcom', 'tripadvisor', 'waze',
+  'doordash', 'ubereats', 'instacart', 'deliveroo', 'justeat', 'expedia', 'fedex',
+  'ups', 'dhl', 'southwestairlines', 'unitedairlines', 'americanairlines', 'delta',
+  'singaporeairlines', 'turkishairlines', 'japanairlines', 'ethiopianairlines',
+  'copaairlines',
+] as const;
+
+export const BRAND_WORK_PRIORITY = [
+  'gmail', 'googlechrome', 'googledrive', 'googlecalendar', 'googlemeet', 'googledocs',
+  'googlesheets', 'dropbox', 'notion', 'figma', 'zoom', 'firefox', 'safari', 'github',
+  'trello', 'asana', 'todoist', 'box', 'webex', 'linear', 'jira', 'evernote',
+  'wordpress', 'squarespace', 'wix', 'dribbble', 'behance', 'sketch', 'blender',
+  'unsplash', 'vimeo', 'protonmail', 'icloud', 'canvas',
+] as const;
+
+const BRAND_SECTION_PRIORITY: Record<string, readonly string[]> = {
+  popular: BRAND_PRIORITY,
+  social: BRAND_SOCIAL_PRIORITY,
+  entertainment: BRAND_ENTERTAINMENT_PRIORITY,
+  commerce: BRAND_COMMERCE_PRIORITY,
+  travel: BRAND_TRAVEL_PRIORITY,
+  creative: BRAND_WORK_PRIORITY,
+  all: BRAND_PRIORITY,
+};
 
 const all = (_entry: GlyphCatalogEntry) => true;
 
@@ -150,12 +212,14 @@ export const GLYPH_SECTIONS: Record<GlyphCatalogId, GlyphSection[]> = {
     { id: 'romance', label: 'Romance', description: 'Hearts, bows, love notes, and playful romantic symbols.', matches: has(/y2k_romance/) },
   ],
   brands: [
-    { id: 'popular', label: 'Popular', description: 'Frequently used platforms and services.', matches: named(BRAND_POPULAR) },
-    { id: 'social', label: 'Social & community', description: 'Social networks, messaging, video, and communities.', matches: has(/(facebook|instagram|threads|tiktok|youtube|reddit|discord|linkedin|whatsapp|telegram|snapchat|mastodon|pinterest)/) },
-    { id: 'creative', label: 'Creative tools', description: 'Design, photography, video, and creative software brands.', matches: has(/(adobe|figma|canva|blender|dribbble|behance|unsplash|vimeo|pinterest|sketch|affinity)/) },
-    { id: 'commerce', label: 'Commerce', description: 'Shopping, payments, marketplaces, and business services.', matches: has(/(shopify|etsy|ebay|amazon|paypal|stripe|square|klarna|visa|mastercard|woocommerce)/) },
+    { id: 'popular', label: 'Most requested (75)', description: 'Mobile brands ranked by current usage and recurring icon-pack demand.', matches: named(BRAND_PRIORITY) },
+    { id: 'social', label: 'Social & messaging (32)', description: 'Social, messaging, video, and community apps in demand order.', matches: named(BRAND_SOCIAL_PRIORITY) },
+    { id: 'entertainment', label: 'Entertainment (27)', description: 'Streaming, music, gaming, podcasts, and creator platforms.', matches: named(BRAND_ENTERTAINMENT_PRIORITY) },
+    { id: 'commerce', label: 'Shopping & money (29)', description: 'Payments, shopping, delivery, banking, and investing brands.', matches: named(BRAND_COMMERCE_PRIORITY) },
+    { id: 'travel', label: 'Travel & delivery (25)', description: 'Maps, rides, lodging, travel, airlines, couriers, and delivery.', matches: named(BRAND_TRAVEL_PRIORITY) },
+    { id: 'creative', label: 'Work & creative (34)', description: 'Mail, browsers, cloud, productivity, design, and publishing tools.', matches: named(BRAND_WORK_PRIORITY) },
     { id: 'developer', label: 'Developer tools', description: 'Code hosting, languages, frameworks, cloud, and infrastructure.', matches: has(/(github|gitlab|npm|node|react|vue|python|docker|kubernetes|aws|azure|cloudflare|vercel|code|linux|ubuntu)/) },
-    { id: 'all', label: 'All brands', description: 'The complete Simple Icons brand-logo inventory.', matches: all },
+    { id: 'all', label: 'All brands', description: 'Most-requested mobile brands first, followed by the complete alphabetical inventory.', matches: all },
   ],
 };
 
@@ -192,8 +256,8 @@ export function organizeGlyphEntries(
 
   const preferred = catalogId === 'mobile'
     ? MATERIAL_ESSENTIALS
-    : catalogId === 'brands' && section.id === 'popular'
-      ? BRAND_POPULAR
+    : catalogId === 'brands'
+      ? BRAND_SECTION_PRIORITY[section.id] ?? null
       : null;
   const rank = preferred
     ? new Map<string, number>(preferred.map((name, index) => [name, index]))
