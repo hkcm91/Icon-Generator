@@ -90,13 +90,15 @@ export interface IconItem {
 }
 
 /**
- * Material Symbols are shape references, not finished artwork. They should be
- * shown to the image model alongside the family's appearance references so the
- * result is actually redrawn in the requested style. Brand and user-uploaded
- * artwork remain exact by default because fidelity is normally the point.
+ * Bundled Material and brand glyphs identify a subject; they are never finished
+ * artwork. The model redraws that subject in the family's requested style.
+ * User-uploaded artwork remains exact by default because it is user-authored.
  */
 export function isAiGuidedCatalogSource(sourceUrl?: string): boolean {
-  return Boolean(sourceUrl?.includes('/libraries/glyphs/material/'));
+  return Boolean(
+    sourceUrl?.includes('/libraries/glyphs/material/') ||
+    sourceUrl?.includes('/libraries/glyphs/brands/'),
+  );
 }
 
 export function defaultGlyphSourceMode(sourceUrl?: string): 'exact' | 'styled' {
@@ -124,9 +126,9 @@ export interface BuiltinGlyphRepair {
 }
 
 /**
- * Before catalog mode v1, built-in Material glyphs were incorrectly pasted
- * locally and saved as if they were generated results. Convert only those old
- * cards to AI-guided drafts; never touch brand logos or uploaded artwork.
+ * Before catalog mode v1, built-in glyphs were incorrectly pasted locally and
+ * saved as if they were generated results. Convert those Material and brand
+ * cards to AI-guided drafts; never touch user-uploaded artwork.
  */
 export function repairLegacyBuiltinGlyphModes(items: IconItem[]): BuiltinGlyphRepair {
   const clearedIds: string[] = [];
