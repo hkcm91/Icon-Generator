@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import materialCatalog from '../public/libraries/material-symbols.json';
 import {
   MATERIAL_ESSENTIALS,
+  MOBILE_ICON_GROUPS,
   humanizeGlyphName,
   organizeGlyphEntries,
   type GlyphCatalogEntry,
@@ -22,6 +23,18 @@ describe('organized glyph catalog', () => {
     expect(MATERIAL_ESSENTIALS).toHaveLength(250);
     expect(new Set(MATERIAL_ESSENTIALS).size).toBe(250);
     expect(MATERIAL_ESSENTIALS.filter((slug) => !available.has(slug))).toEqual([]);
+  });
+
+  it('organizes the mobile set as phone-focused categories without generic layout controls', () => {
+    expect(Object.values(MOBILE_ICON_GROUPS).map((group) => group.length)).toEqual([
+      35, 35, 30, 35, 30, 30, 30, 25,
+    ]);
+    expect(MATERIAL_ESSENTIALS).toContain('phone_in_talk');
+    expect(MATERIAL_ESSENTIALS).toContain('grocery');
+    expect(MATERIAL_ESSENTIALS).toContain('medication');
+    expect(MATERIAL_ESSENTIALS).not.toContain('first_page');
+    expect(MATERIAL_ESSENTIALS).not.toContain('view_sidebar');
+    expect(MATERIAL_ESSENTIALS).not.toContain('toggle_on');
   });
 
   it('opens the mobile library on useful essentials instead of the raw inventory', () => {

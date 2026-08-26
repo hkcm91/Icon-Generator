@@ -26,9 +26,10 @@ interface Catalog {
 const CATALOGS: Catalog[] = [
   {
     id: 'mobile',
-    label: 'Mobile essentials',
+    label: 'Mobile icon set',
     file: '/libraries/material-symbols.json',
     count: 250,
+    note: 'Curated for phone icon packs. Interface controls remain available in All symbols.',
     source: (entry) => entry.slug ? `/libraries/glyphs/material/${entry.slug}-fill.svg` : undefined,
   },
   {

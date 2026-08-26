@@ -26,70 +26,88 @@ const named = (names: readonly string[]) => {
   return (entry: GlyphCatalogEntry) => wanted.has((entry.slug ?? entry.name).toLowerCase());
 };
 
+/**
+ * A phone icon-pack starter set, not a generic UI-control inventory.
+ *
+ * The categories favor apps and functions people recognize on a home screen.
+ * Low-level controls (pagination, layout modes, toggle states, and repeated
+ * arrows) remain discoverable in the complete Material Symbols catalog.
+ */
+export const MOBILE_ICON_GROUPS = {
+  core: [
+    'home', 'search', 'apps', 'settings', 'notifications', 'phone_in_talk', 'sms',
+    'contacts', 'mail', 'photo_camera', 'photo_library', 'calendar_month', 'alarm',
+    'calculate', 'folder', 'map', 'sunny', 'music_note', 'play_circle', 'shopping_bag',
+    'account_balance_wallet', 'health_and_safety', 'language', 'public', 'translate',
+    'qr_code_scanner', 'flashlight_on', 'download', 'cloud', 'wifi', 'bluetooth',
+    'battery_full', 'lock', 'shield', 'help',
+  ],
+  communication: [
+    'chat', 'forum', 'send', 'inbox', 'alternate_email', 'video_call', 'voice_chat',
+    'voicemail', 'contact_page', 'group', 'groups', 'person', 'person_add', 'share',
+    'link', 'campaign', 'notifications_active', 'quickreply', 'wifi_calling', 'call',
+    'call_end', 'call_missed', 'mark_email_read', 'mark_email_unread', 'speaker_phone',
+    'ring_volume', 'emoji_people', 'diversity_3', 'handshake', 'volunteer_activism',
+    'thumbs_up_down', 'favorite', 'mood', 'support_agent', 'record_voice_over',
+  ],
+  media: [
+    'photo', 'image', 'videocam', 'movie', 'mic', 'headphones', 'album', 'queue_music',
+    'radio', 'podcasts', 'library_music', 'video_library', 'palette', 'brush', 'draw',
+    'camera', 'camera_roll', 'music_video', 'subscriptions', 'live_tv', 'cast',
+    'equalizer', 'graphic_eq', 'animation', 'auto_awesome_mosaic', 'theaters',
+    'toys_and_games', 'sports_esports', 'menu_book', 'newspaper',
+  ],
+  productivity: [
+    'folder_open', 'create_new_folder', 'description', 'article', 'note_alt', 'notes',
+    'task', 'checklist', 'event', 'schedule', 'print', 'archive', 'work', 'file_copy',
+    'file_export', 'file_save', 'drive_file_move', 'topic', 'snippet_folder',
+    'folder_shared', 'event_available', 'edit_document', 'document_scanner',
+    'attach_file', 'upload', 'cloud_upload', 'cloud_download', 'backup', 'history',
+    'timer', 'password', 'key', 'table_chart', 'analytics', 'school',
+  ],
+  commerce: [
+    'shopping_cart', 'store', 'payments', 'credit_card', 'account_balance',
+    'receipt_long', 'sell', 'price_check', 'inventory_2', 'add_shopping_cart',
+    'shopping_basket', 'redeem', 'percent_discount', 'currency_exchange',
+    'request_quote', 'savings', 'paid', 'point_of_sale', 'barcode_scanner', 'loyalty',
+    'featured_seasonal_and_gifts', 'local_mall', 'storefront', 'grocery',
+    'shoppingmode', 'restaurant', 'fastfood', 'local_cafe', 'bakery_dining',
+    'delivery_truck_speed',
+  ],
+  travel: [
+    'location_on', 'navigation', 'near_me', 'explore', 'directions_car',
+    'directions_bus', 'train', 'flight', 'hotel', 'local_taxi', 'directions_bike',
+    'directions_walk', 'two_wheeler', 'local_shipping', 'local_parking',
+    'local_gas_station', 'beach_access', 'luggage', 'route', 'travel_explore',
+    'commute', 'airport_shuttle', 'subway', 'directions_boat', 'ev_station',
+    'car_rental', 'connecting_airports', 'passport', 'confirmation_number',
+    'local_activity',
+  ],
+  wellness: [
+    'fitness_center', 'medical_services', 'water_drop', 'dark_mode', 'light_mode',
+    'bedtime', 'monitor_heart', 'medication', 'local_hospital', 'emergency', 'vaccines',
+    'psychology', 'self_improvement', 'spa', 'nutrition', 'exercise', 'sports', 'pool',
+    'hiking', 'pets', 'child_care', 'family_restroom', 'cake', 'celebration', 'chef_hat',
+    'eco', 'forest', 'park', 'garden_cart', 'local_florist',
+  ],
+  devices: [
+    'mobile_2', 'tablet', 'laptop_windows', 'desktop_windows', 'watch', 'computer',
+    'keyboard', 'mouse', 'router', 'battery_charging_full', 'signal_cellular_alt',
+    'mobile_3', 'devices', 'connected_tv', 'thermostat', 'lightbulb', 'power',
+    'cleaning_services', 'local_laundry_service', 'garage', 'door_front', 'security',
+    'camera_outdoor', 'doorbell', 'smart_toy',
+  ],
+} as const;
+
 export const MATERIAL_ESSENTIALS = [
-  // Navigation and layout (40)
-  'home', 'menu', 'search', 'apps', 'arrow_back', 'arrow_forward', 'arrow_upward',
-  'arrow_downward', 'chevron_left', 'chevron_right', 'keyboard_arrow_up',
-  'keyboard_arrow_down', 'close', 'more_vert', 'more_horiz', 'fullscreen',
-  'fullscreen_exit', 'refresh', 'sync', 'open_in_new', 'first_page', 'last_page',
-  'unfold_more', 'drag_handle', 'dashboard', 'view_list', 'grid_view', 'tab', 'swipe',
-  'shield', 'subdirectory_arrow_left', 'subdirectory_arrow_right', 'zoom_in', 'zoom_out',
-  'menu_open', 'view_module', 'view_compact', 'view_sidebar', 'reorder', 'swap_horiz',
-
-  // Actions and status (45)
-  'add', 'remove', 'check', 'done_all', 'edit', 'delete', 'save', 'share', 'download',
-  'upload', 'content_copy', 'undo', 'redo', 'filter_list', 'sort', 'tune', 'settings',
-  'favorite', 'heart_plus', 'star', 'star_half', 'bookmark', 'bookmark_add', 'info',
-  'help', 'warning', 'error', 'check_circle', 'cancel', 'add_circle', 'do_not_disturb_on',
-  'visibility', 'visibility_off', 'lock', 'lock_open', 'delete_forever',
-  'settings_backup_restore', 'history', 'manage_search', 'select_all', 'clear_all',
-  'toggle_on', 'toggle_off', 'verified', 'flag',
-
-  // Communication (28)
-  'mail', 'inbox', 'send', 'reply', 'forward', 'chat', 'forum', 'sms', 'call',
-  'phone_in_talk', 'contacts', 'contact_page', 'notifications', 'notifications_off',
-  'alternate_email', 'language', 'public', 'link', 'attach_file', 'campaign',
-  'mark_email_read', 'mark_email_unread', 'chat_bubble', 'quickreply', 'voice_chat',
-  'speaker_phone', 'ring_volume', 'wifi_calling',
-
-  // Files and productivity (28)
-  'folder', 'folder_open', 'create_new_folder', 'description', 'article', 'note_alt',
-  'notes', 'task', 'checklist', 'event', 'calendar_month', 'schedule', 'alarm', 'print',
-  'archive', 'unarchive', 'cloud', 'cloud_upload', 'cloud_download', 'work', 'file_copy',
-  'file_export', 'file_save', 'drive_file_move', 'topic', 'snippet_folder', 'folder_shared',
-  'event_available',
-
-  // Photos, video, and audio (28)
-  'photo', 'image', 'photo_library', 'photo_camera', 'videocam', 'movie', 'music_note',
-  'mic', 'play_arrow', 'pause', 'stop', 'skip_next', 'skip_previous', 'fast_forward',
-  'fast_rewind', 'volume_up', 'volume_off', 'cast', 'palette', 'brush', 'play_circle',
-  'pause_circle', 'repeat', 'shuffle', 'subtitles', 'closed_caption', 'equalizer',
-  'queue_music',
-
-  // People and social (20)
-  'person', 'person_add', 'group', 'groups', 'account_circle', 'face', 'mood',
-  'sentiment_satisfied', 'thumb_up', 'thumb_down', 'handshake', 'diversity_3',
-  'person_remove', 'group_add', 'manage_accounts', 'supervisor_account', 'emoji_people',
-  'waving_hand', 'volunteer_activism', 'social_leaderboard',
-
-  // Shopping and money (19)
-  'shopping_cart', 'shopping_bag', 'store', 'payments', 'credit_card', 'account_balance',
-  'account_balance_wallet', 'receipt_long', 'sell', 'price_check', 'inventory_2',
-  'qr_code_scanner', 'add_shopping_cart', 'remove_shopping_cart', 'shopping_basket',
-  'redeem', 'percent_discount', 'currency_exchange', 'request_quote',
-
-  // Maps and travel (19)
-  'location_on', 'map', 'navigation', 'near_me', 'explore', 'directions_car',
-  'directions_bus', 'train', 'flight', 'hotel', 'restaurant', 'local_taxi',
-  'directions_bike', 'directions_walk', 'two_wheeler', 'local_shipping', 'local_parking',
-  'local_gas_station', 'beach_access',
-
-  // Devices, environment, and health (23)
-  'mobile_2', 'tablet', 'laptop_windows', 'desktop_windows', 'watch', 'headphones',
-  'wifi', 'bluetooth', 'battery_full', 'sunny', 'dark_mode', 'water_drop',
-  'fitness_center', 'medical_services', 'computer', 'keyboard', 'mouse', 'router',
-  'battery_charging_full', 'signal_cellular_alt', 'light_mode', 'bedtime',
-  'health_and_safety',
+  ...MOBILE_ICON_GROUPS.core,
+  ...MOBILE_ICON_GROUPS.communication,
+  ...MOBILE_ICON_GROUPS.media,
+  ...MOBILE_ICON_GROUPS.productivity,
+  ...MOBILE_ICON_GROUPS.commerce,
+  ...MOBILE_ICON_GROUPS.travel,
+  ...MOBILE_ICON_GROUPS.wellness,
+  ...MOBILE_ICON_GROUPS.devices,
 ] as const;
 
 const BRAND_POPULAR = [
@@ -101,16 +119,15 @@ const all = (_entry: GlyphCatalogEntry) => true;
 
 export const GLYPH_SECTIONS: Record<GlyphCatalogId, GlyphSection[]> = {
   mobile: [
-    { id: 'all', label: 'All 250', description: 'The complete mobile essentials collection.', matches: named(MATERIAL_ESSENTIALS) },
-    { id: 'navigation', label: 'Navigation (40)', description: 'Navigation, layout, menus, views, and common mobile gestures.', matches: named(MATERIAL_ESSENTIALS.slice(0, 40)) },
-    { id: 'actions', label: 'Actions & status (45)', description: 'Editing, selection, settings, feedback, security, and app states.', matches: named(MATERIAL_ESSENTIALS.slice(40, 85)) },
-    { id: 'communication', label: 'Communication (28)', description: 'Mail, messaging, calls, contacts, notifications, and sharing.', matches: named(MATERIAL_ESSENTIALS.slice(85, 113)) },
-    { id: 'files', label: 'Files & work (28)', description: 'Files, notes, calendars, tasks, cloud storage, and productivity.', matches: named(MATERIAL_ESSENTIALS.slice(113, 141)) },
-    { id: 'media', label: 'Media (28)', description: 'Photography, video, audio, playback, and creative tools.', matches: named(MATERIAL_ESSENTIALS.slice(141, 169)) },
-    { id: 'people', label: 'People (20)', description: 'Profiles, groups, reactions, community, and social activity.', matches: named(MATERIAL_ESSENTIALS.slice(169, 189)) },
-    { id: 'commerce', label: 'Shopping (19)', description: 'Shopping, stores, payments, banking, offers, and inventory.', matches: named(MATERIAL_ESSENTIALS.slice(189, 208)) },
-    { id: 'travel', label: 'Travel (19)', description: 'Maps, locations, navigation, transportation, lodging, and food.', matches: named(MATERIAL_ESSENTIALS.slice(208, 227)) },
-    { id: 'devices', label: 'Devices & wellness (23)', description: 'Mobile devices, connectivity, environment, fitness, and health.', matches: named(MATERIAL_ESSENTIALS.slice(227, 250)) },
+    { id: 'all', label: 'All 250', description: 'The complete researched phone icon-pack collection.', matches: named(MATERIAL_ESSENTIALS) },
+    { id: 'core', label: 'Phone basics (35)', description: 'The apps and utilities most people expect on every phone.', matches: named(MOBILE_ICON_GROUPS.core) },
+    { id: 'communication', label: 'Communication & social (35)', description: 'Calls, messaging, mail, contacts, communities, and sharing.', matches: named(MOBILE_ICON_GROUPS.communication) },
+    { id: 'media', label: 'Photos, media & creative (30)', description: 'Camera, gallery, music, video, reading, games, and creative apps.', matches: named(MOBILE_ICON_GROUPS.media) },
+    { id: 'productivity', label: 'Work & organization (35)', description: 'Files, notes, calendars, tasks, cloud storage, school, and work.', matches: named(MOBILE_ICON_GROUPS.productivity) },
+    { id: 'commerce', label: 'Money, shopping & food (30)', description: 'Banking, payments, stores, grocery, dining, rewards, and delivery.', matches: named(MOBILE_ICON_GROUPS.commerce) },
+    { id: 'travel', label: 'Maps, travel & transport (30)', description: 'Navigation, commuting, vehicles, tickets, lodging, and destinations.', matches: named(MOBILE_ICON_GROUPS.travel) },
+    { id: 'wellness', label: 'Health & lifestyle (30)', description: 'Health, fitness, family, food, pets, nature, and self-care.', matches: named(MOBILE_ICON_GROUPS.wellness) },
+    { id: 'devices', label: 'Devices, home & security (25)', description: 'Computers, wearables, connectivity, smart home, cleaning, and safety.', matches: named(MOBILE_ICON_GROUPS.devices) },
   ],
   material: [
     { id: 'all', label: 'All symbols', description: 'The complete Material Symbols inventory.', matches: all },
