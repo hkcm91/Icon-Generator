@@ -28,7 +28,7 @@ from pathlib import Path
 import bpy
 
 from . import materials
-from .loop import LoopClock, bake, bake_linear, bake_socket
+from .loop import LoopClock, bake, bake_socket
 from .spec import ContainerSpec
 from .tile import build_tile
 
@@ -144,9 +144,9 @@ def build(
     clock: LoopClock,
     icons: list[Path],
     framing: str = "phone",
-    bubbles: int = 120,
-    rays: int = 7,
-    far_tiles: int = 18,
+    bubbles: int = 55,
+    rays: int = 6,
+    far_tiles: int = 11,
     seed: int = 20260826,
 ) -> None:
     """Assemble the whole scene into the current (empty) scene."""
@@ -155,6 +155,7 @@ def build(
 
     _add_medium(scene)
     _add_surface(scene, clock)
+    _add_bleed(scene)
     _add_rays(scene, clock, scatter, count=rays)
     _add_bubbles(scene, clock, scatter, count=bubbles)
     _add_far_tiles(scene, clock, scatter, spec, icons, count=far_tiles)
@@ -172,7 +173,7 @@ def _add_medium(scene: bpy.types.Scene) -> None:
     getting darker the further down the frame you look.
     """
     box = volume_box("WaterColumn", (140.0, 140.0, 90.0))
-    box.data.materials.append(materials.water_volume(density=0.088))
+    box.data.materials.append(materials.water_volume(density=0.045, surface_height=SURFACE_HEIGHT, floor_depth=FLOOR_DEPTH - 8.0))
 
     world = bpy.data.worlds.new("Deep")
     world.use_nodes = True
@@ -191,18 +192,29 @@ def _add_surface(scene: bpy.types.Scene, clock: LoopClock) -> None:
     # plane's own far edge would otherwise appear as a horizon line across the
     # upper third — a hard horizontal rule exactly where the clock sits.
     plane = horizontal_plane("Surface", size=600.0, height=SURFACE_HEIGHT)
-    material = materials.water_surface(scale=0.18, strength=5.0)
+    material = materials.water_surface(scale=0.085, strength=3.2)
     plane.data.materials.append(material)
 
     socket = material.node_tree.nodes["CausticPhase"].outputs["Value"]
-    bake_socket(socket, lambda frame: clock.phase(frame, cycles=1), clock.frames, step=2)
+    bake_socket(socket, lambda frame: clock.phase(frame, cycles=1), clock.frames, step=clock.sample_step(120))
 
     # The sun, seen through the surface: a radial glow rather than a bright
     # patch of the same caustic material, because a patch has corners and the
     # aperture only softens them, never removes them.
     sun_patch = horizontal_plane("SunPatch", size=30.0, height=SURFACE_HEIGHT - 0.2)
     sun_patch.location = (3.5, 17.0, SURFACE_HEIGHT - 0.2)
-    sun_patch.data.materials.append(materials.radial_glow("SunPatch", strength=30.0))
+    sun_patch.data.materials.append(materials.radial_glow("SunPatch", strength=11.0))
+
+
+def _add_bleed(scene: bpy.types.Scene) -> None:
+    """The wash of light below the waterline, softening Snell's hard edge."""
+    # Short, and hung directly off the waterline. The first version was
+    # twenty-six units tall and washed the whole upper frame to white — the
+    # bleed is meant to soften one edge, not to light the scene.
+    height = 8.0
+    card = quad("LightBleed", 150.0, height)
+    card.location = (0.0, 26.0, SURFACE_HEIGHT - height / 2.0)
+    card.data.materials.append(materials.light_bleed(strength=0.55))
 
 
 def _add_rays(scene: bpy.types.Scene, clock: LoopClock, scatter: Scatter, count: int) -> None:
@@ -213,9 +225,9 @@ def _add_rays(scene: bpy.types.Scene, clock: LoopClock, scatter: Scatter, count:
     a searchlight; a shaft that leans a degree or two either side reads as the
     surface moving above it, which is the thing actually being depicted.
     """
-    material = materials.god_ray()
+    material = materials.god_ray(colour=(0.125, 0.596, 1.000, 1.0), strength=1.15)
     for index in range(count):
-        width = scatter.between(1.6, 4.2)
+        width = scatter.between(2.8, 6.5)
         height = SURFACE_HEIGHT - FLOOR_DEPTH
         card = quad(f"Ray_{index}", width, height)
         card.data.materials.append(material)
@@ -242,15 +254,28 @@ def _add_bubbles(scene: bpy.types.Scene, clock: LoopClock, scatter: Scatter, cou
     """
     Rising bubbles, each on its own phase offset.
 
-    One bubble rising and vanishing is a loop with a visible seam. A hundred of
+    One bubble rising and vanishing is a loop with a visible seam. Fifty of
     them, evenly spread across the phase so that at any instant some are
     starting while others are ending, is a continuous field — the loop point
     stops existing because there is no moment when the whole population resets
     together.
+
+    Position and opacity must be driven by *the same* phase, and getting that
+    wrong is subtle enough to survive review. An earlier version travelled on
+    a plain two-keyframe ramp while the fade ran off `rise(frame, offset)`:
+    both closed the loop on their own, but they closed it at different
+    moments, so a bubble that was halfway up at full opacity teleported back
+    to the bottom in plain sight. It measured as a wrap 3.1x an ordinary step
+    (`tools/loop_check.py`) and it was invisible in the phase unit tests,
+    because the phase maths was never what was wrong.
+
+    So both come off one `rise`. Where it wraps, the bubble does jump — and
+    the fade is exactly zero there, which is what makes the jump unobservable
+    rather than merely fast.
     """
-    material = materials.bubble()
+    material = materials.bubble(strength=1.1)
     for index in range(count):
-        size = scatter.between(0.045, 0.3)
+        size = scatter.between(0.04, 0.17)
         card = quad(f"Bubble_{index}", size, size)
 
         # Each bubble owns a copy of the material, because each one keyframes
@@ -264,16 +289,18 @@ def _add_bubbles(scene: bpy.types.Scene, clock: LoopClock, scatter: Scatter, cou
         offset = scatter.next()
         # Bigger bubbles rise faster, which is true and also keeps the field
         # from moving like a single sheet.
-        travel = (SURFACE_HEIGHT - FLOOR_DEPTH) * scatter.between(0.55, 1.0)
-        base = FLOOR_DEPTH + offset * travel
+        travel = (SURFACE_HEIGHT - FLOOR_DEPTH) * scatter.between(0.45, 0.9)
 
-        card.location = (x, y, base)
-        bake_linear(card, "location", base, base + travel, clock.frames, index=2)
+        def height(frame: int, offset: float = offset, travel: float = travel) -> float:
+            return FLOOR_DEPTH + travel * clock.rise(frame, offset=offset)
+
+        card.location = (x, y, height(1))
+        bake(card, "location", height, clock.frames, index=2)
         bake_socket(
             own.node_tree.nodes["BubbleFade"].outputs["Value"],
             lambda frame, offset=offset: LoopClock.fade(clock.rise(frame, offset=offset), edge=0.2),
             clock.frames,
-            step=4,
+            step=clock.sample_step(),
         )
 
 
@@ -293,29 +320,46 @@ def _add_far_tiles(
     resolves as a tile, the home screen is squircles on a background of
     squircles and every icon disappears into it.
 
-    Three things keep that from happening, and all three are needed: the tiles
+    Four things keep that from happening, and all four are needed: the tiles
     sit far enough away that the medium has eaten most of their contrast, the
-    camera's aperture throws them well past recognition, and none of them are
-    ever at the size or spacing of the real grid. They are a colour field with
-    a family resemblance, not a pattern.
+    camera's aperture throws them well past recognition, none of them are ever
+    at the size or spacing of the real grid, and they are held *above* the
+    grid entirely — up under the surface, where a launcher puts nothing but a
+    clock. That last one was learned from `tools/mock_homescreen.py`: with a
+    real grid composited on top, tiles at the same height as the first row
+    were the one thing that genuinely looked tappable.
+
+    They drift on a sine rather than rising. A one-way rise needs an opacity
+    envelope to hide its reset, and glass has no opacity to fade — a sine
+    returns to where it started on its own, which is the only kind of motion
+    that closes a loop without help.
     """
-    glass = materials.aero_glass("FarGlass", density=2.4, rim_strength=5.5)
+    glass = materials.aero_glass(
+        "FarGlass", density=2.1, rim_strength=6.5, tint=(0.157, 0.647, 0.878, 1.0)
+    )
     for index in range(count):
         icon = scatter.pick(icons) if icons else None
         obj = build_tile(spec, name=f"Far_{index}", glass=glass, icon=icon)
 
-        depth = scatter.between(22.0, 70.0)
+        depth = scatter.between(12.0, 34.0)
         # Held to a narrow angular size band, deliberately unlike the grid's.
-        size = depth * scatter.between(0.018, 0.046)
+        size = depth * scatter.between(0.014, 0.028)
         obj.scale = (size, size, size)
 
         x = scatter.between(-0.85, 0.85) * depth * 0.5
         offset = scatter.next()
-        travel = scatter.between(2.5, 6.0)
-        base = scatter.between(FLOOR_DEPTH + 1.0, SURFACE_HEIGHT - 4.0) - travel * offset
+        drift = scatter.between(0.5, 1.4)
+        base = scatter.between(4.5, SURFACE_HEIGHT - 0.9)
 
         obj.location = (x, depth, base)
-        bake_linear(obj, "location", base, base + travel, clock.frames, index=2)
+        bake(
+            obj,
+            "location",
+            lambda frame, base=base, drift=drift, offset=offset: base
+            + drift * clock.sine(frame, cycles=1, offset=offset),
+            clock.frames,
+            index=2,
+        )
 
         tumble = math.radians(scatter.between(9.0, 26.0))
         bake(
@@ -347,7 +391,7 @@ def _add_light(scene: bpy.types.Scene) -> None:
     shadows across an icon grid would be a disaster anyway.
     """
     data = bpy.data.lights.new("Sun", "SUN")
-    data.energy = 3.4
+    data.energy = 9.0
     data.angle = math.radians(11.0)
     data.color = (1.0, 0.97, 0.9)
     sun = bpy.data.objects.new("Sun", data)
@@ -391,8 +435,8 @@ def _add_cameras(scene: bpy.types.Scene, framing: str) -> bpy.types.Object:
     desk_data.shift_x = 0.06
     desktop = bpy.data.objects.new("DesktopCam", desk_data)
     scene.collection.objects.link(desktop)
-    desktop.location = (-4.6, -9.0, 1.2)
-    desktop.rotation_euler = (math.radians(84.0), math.radians(-2.5), math.radians(-14.0))
+    desktop.location = (-1.4, -9.0, 1.2)
+    desktop.rotation_euler = (math.radians(84.0), math.radians(-2.0), math.radians(9.0))
     cameras["desktop"] = desktop
 
     chosen = cameras.get(framing, phone)

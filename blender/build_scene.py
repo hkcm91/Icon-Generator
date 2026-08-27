@@ -58,10 +58,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--columns", type=int, default=3, help="tiles across in studio")
     parser.add_argument("--rows", type=int, default=1)
-    parser.add_argument("--bubbles", type=int, default=90)
-    parser.add_argument("--rays", type=int, default=7)
-    parser.add_argument("--far-tiles", type=int, default=12)
+    parser.add_argument("--bubbles", type=int, default=55)
+    parser.add_argument("--rays", type=int, default=6)
+    parser.add_argument("--far-tiles", type=int, default=11)
     parser.add_argument("--seed", type=int, default=20260826)
+    parser.add_argument("--view", default="Standard")
+    parser.add_argument("--look", default="None")
+    parser.add_argument("--exposure", type=float, default=0.0)
     parser.add_argument("--still", action="store_true", help="render one frame")
     parser.add_argument("--animation", action="store_true", help="render the whole loop")
     parser.add_argument("--video", action="store_true", help="encode to MP4 instead of PNGs")
@@ -246,7 +249,7 @@ def main() -> None:
 
     render.apply_loop(scene, clock.frames, clock.fps)
     render.apply_target(scene, args.target, args.percent)
-    render.colour_management(scene)
+    render.colour_management(scene, look=args.look, transform=args.view, exposure=args.exposure)
     if args.engine == "cycles":
         render.use_cycles(scene, samples=args.samples)
     else:

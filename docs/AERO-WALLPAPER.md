@@ -165,16 +165,46 @@ compositions correct.
 
 **Video.** One seamless MP4 that every target accepts.
 
+## What the art-direction pass changed
+
+The first build had the right structure and looked like nothing — grey murk.
+Four things were wrong, and three of them were invisible until measured.
+
+**The view transform.** AgX, Blender's default, deliberately desaturates
+highlights. It is right for photography and wrong for a glossy aesthetic; it
+was turning every lit part of the frame grey. Switching to Standard changed
+the image more than any other single edit.
+
+**Red in the light.** The water's red channel sits near 0.11, so light carrying
+0.40 red nearly triples it while barely moving blue. The light shafts were
+desaturating the frame every time they got brighter — measured at 0.39
+saturation against water at 0.59. Cutting their red to 0.125 took them to 0.64.
+
+**The loop was broken.** Bubbles travelled on a two-keyframe ramp while their
+opacity ran off a different phase function. Both closed the loop on their own;
+they closed it at different moments, so bubbles teleported at full opacity. The
+phase unit tests passed the whole time. A pixel-level measurement caught it at
+3.13x an ordinary frame step; it now measures 0.98x.
+
+**Bokeh did not work.** A field of defocused glowing discs is the signature of
+the aesthetic, and it needs a bright ground to sit on. Against deep navy the
+same discs read as pale smudges. It was removed; the small ring-lit bubbles
+already give the sparkle.
+
+The far-field tiles also moved. With a launcher grid composited on top, tiles
+sitting at the height of the first icon row were the one thing that genuinely
+looked tappable, so they were lifted above the grid entirely — up under the
+surface, where a launcher puts nothing but a clock.
+
 ## Still open
 
-- **Art direction.** The scene has the right value structure and the right
-  motion. The palette, shaft density and far-field population have only been
-  judged on small CPU previews and want an eye on them at full resolution.
-- **The far-field camouflage test.** The tiles are held well under the icon
-  grid's angular size, but that has not yet been checked the only way that
-  counts: a real home screen, real icons, this wallpaper behind them.
-- **Loop length.** Ten seconds at 30fps is the working default and has not been
-  tested against how quickly the eye catches the repeat.
+- **A full-resolution render.** Everything so far was judged on CPU previews a
+  few hundred pixels tall. The surface ripple is currently sub-pixel detail at
+  1440x3120 and will need re-tuning on real hardware.
+- **Loop length.** Ten seconds at 30fps is a render-cost default, still not
+  tested against how fast the eye catches the repeat.
+- **Icons on the tiles.** `--icons` is wired and untested against a real
+  export, because this environment has none.
 
 ## Sources
 

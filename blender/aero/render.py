@@ -130,19 +130,19 @@ def output_frames(scene: bpy.types.Scene, path: str) -> None:
     scene.render.image_settings.compression = 15
 
 
-def colour_management(scene: bpy.types.Scene, look: str = "None") -> None:
+def colour_management(scene: bpy.types.Scene, look: str = "None", transform: str = "AgX", exposure: float = 0.0) -> None:
     """
     AgX view transform, which is the 4.x+ default and is what keeps the bright
     cyan rim from clipping to white the moment emission goes above 1.
     """
     view = scene.view_settings
     try:
-        view.view_transform = "AgX"
+        view.view_transform = transform
     except TypeError:
         view.view_transform = "Filmic"
     try:
         view.look = look
     except TypeError:
         pass
-    view.exposure = 0.0
+    view.exposure = exposure
     view.gamma = 1.0

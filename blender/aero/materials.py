@@ -282,19 +282,33 @@ def caustic_phase(material: bpy.types.Material):
 
 def water_volume(
     name: str = "WaterColumn",
-    tint: tuple[float, float, float, float] = (0.106, 0.404, 0.573, 1.0),
+    shallow: tuple[float, float, float, float] = (0.451, 0.925, 1.0, 1.0),
+    mid: tuple[float, float, float, float] = (0.063, 0.553, 0.784, 1.0),
+    deep: tuple[float, float, float, float] = (0.004, 0.055, 0.161, 1.0),
     density: float = 0.032,
-    anisotropy: float = 0.35,
+    anisotropy: float = 0.55,
+    surface_height: float = 9.0,
+    floor_depth: float = -16.0,
 ) -> bpy.types.Material:
     """
-    The medium everything else is seen through.
+    The medium everything else is seen through, graded by depth.
 
-    This is the single most important material in the scene and the one that
-    does the compositional work: distance fog is what turns the far field into
-    colour rather than shape, so the icon tiles drifting at the back become
-    unreadable *by physics* rather than by being blurred in post. It is also
-    what makes god rays visible at all — a light shaft is only the medium it
-    passes through.
+    This is the most important material in the scene twice over. It does the
+    compositional work — distance fog is what turns the far field into colour
+    rather than shape, so the tiles drifting at the back become unreadable *by
+    physics* rather than by being blurred in post — and it supplies essentially
+    all of the colour in the frame.
+
+    A single flat tint was the first version and it was the reason the whole
+    thing read as a grey slab. Water is not one colour: it absorbs red almost
+    immediately and blue last, so the scattered light shifts from bright cyan
+    near the surface to a deep saturated blue-black further down, and it is
+    that vertical shift — not the objects in it — that makes a body of water
+    look deep. Grading the scatter colour by world Z gives it back.
+
+    It also does the job a vignette would otherwise be asked to do. The frame
+    naturally darkens toward the bottom, which is precisely where a home
+    screen's dock sits and where contrast is least wanted.
 
     Forward anisotropy matters more than it sounds. Water scatters light
     forward, so shafts brighten as they point toward the camera, which is the
@@ -308,10 +322,50 @@ def water_volume(
 
     output = _new(nodes, "ShaderNodeOutputMaterial", (400, 0))
     volume = _new(nodes, "ShaderNodeVolumePrincipled", (150, 0))
-    _set(volume, "Color", tint)
     _set(volume, "Density", density)
     _set(volume, "Anisotropy", anisotropy)
     _set(volume, ("Emission Strength",), 0.0)
+
+    # World Z, normalised so 1.0 is the surface and 0.0 is the deep. Geometry
+    # rather than a texture coordinate: the box this is applied to is huge, and
+    # its object space would put the gradient somewhere unrelated to where the
+    # water actually is.
+    geometry = _new(nodes, "ShaderNodeNewGeometry", (-720, 0))
+    separate = _new(nodes, "ShaderNodeSeparateXYZ", (-560, 0))
+    links.new(geometry.outputs["Position"], separate.inputs["Vector"])
+
+    depth = _new(nodes, "ShaderNodeMapRange", (-400, 0))
+    depth.inputs["From Min"].default_value = floor_depth
+    depth.inputs["From Max"].default_value = surface_height
+    depth.inputs["To Min"].default_value = 0.0
+    depth.inputs["To Max"].default_value = 1.0
+    depth.clamp = True
+    links.new(separate.outputs["Z"], depth.inputs["Value"])
+
+    ramp = _new(nodes, "ShaderNodeValToRGB", (-220, 0))
+    elements = ramp.color_ramp.elements
+    elements[0].position = 0.0
+    elements[0].color = deep
+    elements[1].position = 1.0
+    elements[1].color = shallow
+    middle = elements.new(0.46)
+    middle.color = mid
+    links.new(depth.outputs["Result"], ramp.inputs["Fac"])
+    links.new(ramp.outputs["Color"], volume.inputs["Color"])
+
+    # Density rises a little toward the surface too. Real water carries more
+    # suspended matter in the lit layer, and it strengthens the shafts exactly
+    # where they should be strongest without touching the deep.
+    thickness = _new(nodes, "ShaderNodeMapRange", (-220, -260))
+    thickness.interpolation_type = "SMOOTHSTEP"
+    thickness.inputs["From Min"].default_value = 0.0
+    thickness.inputs["From Max"].default_value = 1.0
+    thickness.inputs["To Min"].default_value = density * 0.75
+    thickness.inputs["To Max"].default_value = density * 1.35
+    thickness.clamp = True
+    links.new(depth.outputs["Result"], thickness.inputs["Value"])
+    links.new(thickness.outputs["Result"], volume.inputs["Density"])
+
     links.new(volume.outputs["Volume"], output.inputs["Volume"])
     return material
 
@@ -388,10 +442,31 @@ def god_ray(
     feather.clamp = True
     links.new(hump.outputs["Value"], feather.inputs["Value"])
 
-    combined = _new(nodes, "ShaderNodeMath", (200, 60))
+    shape = _new(nodes, "ShaderNodeMath", (200, 60))
+    shape.operation = "MULTIPLY"
+    links.new(vertical.outputs["Result"], shape.inputs[0])
+    links.new(feather.outputs["Result"], shape.inputs[1])
+
+    # Break the shaft up along its length. Without this each card reads as a
+    # bar of even fog; the ripple that cast the shaft in the first place is
+    # what gives a real one its uneven, banded interior.
+    noise = _new(nodes, "ShaderNodeTexNoise", (40, 220))
+    noise.inputs["Scale"].default_value = 0.35
+    noise.inputs["Detail"].default_value = 1.0
+    links.new(coords.outputs["Object"], noise.inputs["Vector"])
+
+    modulate = _new(nodes, "ShaderNodeMapRange", (200, 220))
+    modulate.inputs["From Min"].default_value = 0.3
+    modulate.inputs["From Max"].default_value = 0.7
+    modulate.inputs["To Min"].default_value = 0.82
+    modulate.inputs["To Max"].default_value = 1.0
+    modulate.clamp = True
+    links.new(noise.outputs["Fac"], modulate.inputs["Value"])
+
+    combined = _new(nodes, "ShaderNodeMath", (280, 120))
     combined.operation = "MULTIPLY"
-    links.new(vertical.outputs["Result"], combined.inputs[0])
-    links.new(feather.outputs["Result"], combined.inputs[1])
+    links.new(shape.outputs["Value"], combined.inputs[0])
+    links.new(modulate.outputs["Result"], combined.inputs[1])
 
     # Kept at or below 1. A Mix Shader clamps its Fac, so scaling past 1 does
     # not brighten the shaft — it flattens the falloff into a solid slab with
@@ -447,16 +522,22 @@ def bubble(
     length.operation = "LENGTH"
     links.new(centre.outputs["Vector"], length.inputs[0])
 
-    # Ring: bright just inside the edge, dark in the middle, nothing outside.
+    # A true annulus: dark centre, a bright band near the rim, nothing beyond
+    # it. The first version ramped from a dark centre straight up to white at
+    # 42% radius, which is a filled gradient disc, not a ring — and filled
+    # discs are exactly the white blobs that make fake bokeh look fake. The
+    # dark hole in the middle is the whole read.
     ring = _new(nodes, "ShaderNodeValToRGB", (-120, 0))
-    ring.color_ramp.interpolation = "B_SPLINE"
+    ring.color_ramp.interpolation = "EASE"
     elements = ring.color_ramp.elements
     elements[0].position = 0.0
-    elements[0].color = (0.06, 0.06, 0.06, 1.0)
-    elements[1].position = 0.42
-    elements[1].color = (1.0, 1.0, 1.0, 1.0)
-    tail = elements.new(0.5)
-    tail.color = (0.0, 0.0, 0.0, 1.0)
+    elements[0].color = (0.0, 0.0, 0.0, 1.0)
+    elements[1].position = 0.5
+    elements[1].color = (0.0, 0.0, 0.0, 1.0)
+    inner = elements.new(0.30)
+    inner.color = (0.10, 0.10, 0.10, 1.0)
+    crest = elements.new(0.42)
+    crest.color = (1.0, 1.0, 1.0, 1.0)
     links.new(length.outputs["Value"], ring.inputs["Fac"])
 
     emission = _new(nodes, "ShaderNodeEmission", (200, 60))
@@ -480,6 +561,90 @@ def bubble(
 
     mix = _new(nodes, "ShaderNodeMixShader", (560, 0))
     links.new(gate.outputs["Value"], mix.inputs["Fac"])
+    links.new(transparent.outputs["BSDF"], mix.inputs[1])
+    links.new(emission.outputs["Emission"], mix.inputs[2])
+    links.new(mix.outputs["Shader"], output.inputs["Surface"])
+    return material
+
+
+def light_bleed(
+    name: str = "LightBleed",
+    colour: tuple[float, float, float, float] = (0.588, 0.902, 1.0, 1.0),
+    strength: float = 1.6,
+    falloff: float = 2.2,
+) -> bpy.types.Material:
+    """
+    A vertical wash of light hanging below the waterline.
+
+    Looking up from underwater, the surface ends at a hard line — that is
+    Snell's window and it is real. But a *hard* line straight across the frame
+    is still the most artificial thing in this composition, because in real
+    water the light does not stop there: it keeps bleeding downward through the
+    suspended matter for several metres before the depth takes it.
+
+    Getting that from the medium alone would mean cranking density until the
+    whole scene fogs over. This is the same effect painted where it is wanted:
+    an additive card, bright along its top edge, gone by its bottom, spanning
+    the frame. It contributes light and nothing else — no silhouette, no
+    occlusion, nothing to focus on.
+    """
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+
+    output = _new(nodes, "ShaderNodeOutputMaterial", (600, 0))
+    coords = _new(nodes, "ShaderNodeTexCoord", (-600, 0))
+    separate = _new(nodes, "ShaderNodeSeparateXYZ", (-440, 0))
+    links.new(coords.outputs["UV"], separate.inputs["Vector"])
+
+    fade = _new(nodes, "ShaderNodeMapRange", (-280, 0))
+    fade.interpolation_type = "SMOOTHSTEP"
+    fade.inputs["From Min"].default_value = 0.0
+    fade.inputs["From Max"].default_value = 1.0
+    fade.inputs["To Min"].default_value = 0.0
+    fade.inputs["To Max"].default_value = 1.0
+    fade.clamp = True
+    links.new(separate.outputs["Y"], fade.inputs["Value"])
+
+    concentrate = _new(nodes, "ShaderNodeMath", (-100, 0))
+    concentrate.operation = "POWER"
+    concentrate.inputs[1].default_value = falloff
+    links.new(fade.outputs["Result"], concentrate.inputs[0])
+
+    # Feathered at the left and right edges as well, so the card cannot show a
+    # vertical seam where it ends.
+    centred = _new(nodes, "ShaderNodeMath", (-280, -220))
+    centred.operation = "SUBTRACT"
+    centred.inputs[1].default_value = 0.5
+    links.new(separate.outputs["X"], centred.inputs[0])
+
+    absolute = _new(nodes, "ShaderNodeMath", (-140, -220))
+    absolute.operation = "ABSOLUTE"
+    links.new(centred.outputs["Value"], absolute.inputs[0])
+
+    sides = _new(nodes, "ShaderNodeMapRange", (20, -220))
+    sides.interpolation_type = "SMOOTHSTEP"
+    sides.inputs["From Min"].default_value = 0.5
+    sides.inputs["From Max"].default_value = 0.32
+    sides.inputs["To Min"].default_value = 0.0
+    sides.inputs["To Max"].default_value = 1.0
+    sides.clamp = True
+    links.new(absolute.outputs["Value"], sides.inputs["Value"])
+
+    combined = _new(nodes, "ShaderNodeMath", (200, 0))
+    combined.operation = "MULTIPLY"
+    links.new(concentrate.outputs["Value"], combined.inputs[0])
+    links.new(sides.outputs["Result"], combined.inputs[1])
+
+    emission = _new(nodes, "ShaderNodeEmission", (380, 80))
+    emission.inputs["Color"].default_value = colour
+    emission.inputs["Strength"].default_value = strength
+
+    transparent = _new(nodes, "ShaderNodeBsdfTransparent", (380, -120))
+    mix = _new(nodes, "ShaderNodeMixShader", (460, 0))
+    links.new(combined.outputs["Value"], mix.inputs["Fac"])
     links.new(transparent.outputs["BSDF"], mix.inputs[1])
     links.new(emission.outputs["Emission"], mix.inputs[2])
     links.new(mix.outputs["Shader"], output.inputs["Surface"])
@@ -564,8 +729,8 @@ def water_surface(
     """
     material = caustic_backdrop(
         name=name,
-        shallow=(1.0, 1.0, 1.0, 1.0),
-        deep=(0.055, 0.243, 0.365, 1.0),
+        shallow=(0.855, 0.980, 1.0, 1.0),
+        deep=(0.031, 0.278, 0.451, 1.0),
         scale=scale,
         strength=strength,
     )

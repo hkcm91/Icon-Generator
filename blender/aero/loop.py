@@ -50,6 +50,18 @@ class LoopClock:
         """A sine that completes `cycles` whole oscillations across the loop."""
         return amp * math.sin(self.phase(frame, cycles, offset) * math.tau)
 
+    def sample_step(self, samples: int = 60) -> int:
+        """
+        A `bake_socket` step that takes roughly `samples` readings per loop.
+
+        A fixed step is a trap. Four frames is a sensible economy across a
+        300-frame loop and hopelessly coarse across a 24-frame one, where it
+        can straddle an entire fade envelope and leave a particle part-visible
+        exactly where it teleports. Scaling with the loop keeps the envelope
+        resolved at any length.
+        """
+        return max(1, self.frames // max(1, samples))
+
     def rise(self, frame: int, cycles: int = 1, offset: float = 0.0) -> float:
         """
         A 0..1 ramp that resets at the loop point.
@@ -129,31 +141,6 @@ def bake_socket(socket, fn, frames: int, step: int = 1) -> None:
     for frame in list(range(1, frames + 1, step)) + [frames + 1]:
         socket.default_value = fn(frame)
         socket.keyframe_insert(data_path="default_value", frame=frame)
-
-
-def bake_linear(obj, data_path: str, start, end, frames: int, index: int = -1) -> None:
-    """
-    Two keyframes for a value that moves at a constant rate across the loop.
-
-    Anything travelling in a straight line — a rising bubble, a drifting
-    particle — needs exactly two keys and linear interpolation. Baking three
-    hundred of them instead describes the same straight line with a hundred and
-    fifty times the data.
-
-    The second key is at `frames + 1`, the frame that is deliberately not
-    rendered, so the last rendered frame sits one step short of the start
-    value and the wrap is seamless rather than doubled.
-    """
-    for frame, value in ((1, start), (frames + 1, end)):
-        if index >= 0:
-            getattr_path(obj, data_path)[index] = value
-        else:
-            set_path(obj, data_path, value)
-        obj.keyframe_insert(data_path=data_path, index=index, frame=frame)
-
-    for fcurve in fcurves_of(obj):
-        for point in fcurve.keyframe_points:
-            point.interpolation = "LINEAR"
 
 
 def fcurves_of(obj) -> list:
