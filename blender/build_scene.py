@@ -58,7 +58,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--columns", type=int, default=3, help="tiles across in studio")
     parser.add_argument("--rows", type=int, default=1)
-    parser.add_argument("--bubbles", type=int, default=55)
+    parser.add_argument("--bubbles", type=int, default=110)
+    parser.add_argument("--fish", type=int, default=7)
+    parser.add_argument("--weed", type=int, default=7)
     parser.add_argument("--rays", type=int, default=6)
     parser.add_argument("--far-tiles", type=int, default=11)
     parser.add_argument("--seed", type=int, default=20260826)
@@ -241,6 +243,8 @@ def main() -> None:
             bubbles=args.bubbles,
             rays=args.rays,
             far_tiles=args.far_tiles,
+            fish=args.fish,
+            weed=args.weed,
             seed=args.seed,
         )
         print(f"built deepfield, framing={framing}")

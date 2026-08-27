@@ -154,6 +154,30 @@ gradient, and a 16:9 crop either loses the bright surface or drags it down into
 the icon band. The desktop camera is rolled and shifted so the brightness
 gathers right, because desktop icons cluster left.
 
+### Quiet is not the same as empty
+
+The first art-directed version measured perfectly and looked like nothing. It
+was a correctly-graded body of water with some specks in it, and a correctly
+graded body of water is not the aesthetic — it is what the aesthetic looks like
+once everything characteristic has been removed in the name of legibility.
+
+Frutiger Aero is maximalist. Its vocabulary is a short list of motifs that
+appear together and loudly, and `aero/motifs.py` builds them: iridescent
+bubbles with a specular dot, a lens flare with coloured ghosts streaming down
+frame, a swept glass ribbon with chromatic edges, tropical fish, and green weed
+fringing the bottom. The composition rule did not change — the icon band is
+still measured under its brightness ceiling — but "low in value" was never an
+instruction to leave the frame bare, and the first pass confused the two.
+
+Two things were tried and cut, both for the same reason: they need a bright
+background and this composition cannot have one. A **bokeh field** of defocused
+glowing discs turns into pale smudges against deep navy. A **caustic sea floor**
+— the pool-bottom image, the most iconic in the whole aesthetic — draws a hard
+horizon straight across the middle of the frame, because a floor plane's
+horizon sits at eye level however deep it is; pushed far enough back for fog to
+soften that, its caustics resolve into rings rather than a net, and it greyed
+the dock band from 0.78 saturation to 0.37 on the way.
+
 ### Three decisions worth not re-litigating
 
 **View transform is Standard, not AgX.** AgX is Blender's default and the right
@@ -171,6 +195,17 @@ a blank white frame. Rather than ship an unverifiable node tree, the glow comes
 from the scene itself — the scattering medium haloes bright objects because
 that is what a scattering medium does.
 
+**Place scenery by where it lands in the frame, not by world coordinate.**
+`z_at`, `x_at`, `depth_for` and `place` in `deepfield.py` do the trigonometry.
+Two real bugs came from not having them: weed meant to fringe the bottom edge
+grew through the middle of the picture, because with a pitched camera the
+centre of frame twenty units out is already six units below the lens; and the
+sun, placed at a plausible-looking distance, sat just above the top edge with
+its entire lens flare off-screen. Always use `place()` — it returns all three
+coordinates, which is the only way to avoid passing world Y where a
+camera-relative depth was wanted. That mistake put the weed seven units too
+close and was invisible until measured.
+
 **Light with red in it turns this scene grey.** The water's red channel sits
 near 0.11, so an emission carrying 0.40 red nearly triples it while barely
 touching blue, and the frame desaturates without ever looking brighter. The
@@ -186,7 +221,9 @@ aero/spec.py       ContainerSpec — mirrors src/core/spec.ts
 aero/geometry.py   the contour — ported from src/core/geometry.ts
 aero/tile.py       that contour, extruded, bevelled, with a glyph plate
 aero/deepfield.py  the wallpaper scene: water, surface, shafts, bubbles, far field
-aero/materials.py  glass, caustics, medium, shafts, bubbles, glow
+aero/motifs.py     the Frutiger Aero vocabulary: iridescent bubbles, lens flare,
+                   glass ribbon, fish, weed
+aero/materials.py  glass, caustics, medium, shafts, glow
 aero/loop.py       phase helpers and keyframe baking
 aero/render.py     engines, output targets, colour management, video settings
 specs/             container specs
@@ -232,11 +269,17 @@ two images, and it has already moved the far-field tiles once.
 
 ## Status
 
-Composed, art-directed and measuring clean. The phone framing profiles at 0.885
+Composed, art-directed, motif-complete and measuring clean. The phone framing profiles at 0.885
 luma behind the clock falling to 0.147 behind the dock, with saturation rising
 0.31 → 0.78 into the deep; the loop wraps at 0.98x an ordinary frame step; the
 grid reads cleanly in the home-screen mock. A full 300-frame scene builds in
 about 1.3 seconds and the .blend is under a megabyte.
+
+Known weak points, in order: the fish are four-vertex silhouettes and look it
+if anything brings them closer; the placement helpers are solved for the
+*phone* camera, so motifs land differently in the desktop framing and the weed
+misses it entirely; and the desktop icon column measures 0.335 against a 0.34
+ceiling, which is passing but has no margin left in it.
 
 What has *not* happened is a full-resolution render. Everything above was
 judged on CPU previews at a few hundred pixels, because there is no GPU in the

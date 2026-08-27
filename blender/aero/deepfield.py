@@ -27,7 +27,7 @@ from pathlib import Path
 
 import bpy
 
-from . import materials
+from . import materials, motifs
 from .loop import LoopClock, bake, bake_socket
 from .spec import ContainerSpec
 from .tile import build_tile
@@ -138,15 +138,95 @@ def volume_box(name: str, size: tuple[float, float, float]) -> bpy.types.Object:
 SURFACE_HEIGHT = 9.0
 FLOOR_DEPTH = -11.0
 
+# The phone camera, as numbers the placement helper can use. Kept here rather
+# than only inside _add_cameras because composition depends on them.
+CAMERA_Z = 0.6
+CAMERA_Y = -7.0
+CAMERA_PITCH = math.radians(18.0)  # below horizontal
+CAMERA_LENS = 32.0
+SENSOR = 36.0
+# Frame aspect (width / height) for the portrait target.
+ASPECT = 1080.0 / 2400.0
+
+
+def z_at(depth: float, frame_fraction: float) -> float:
+    """
+    The world Z that lands at `frame_fraction` down the frame, `depth` away.
+
+    Placing scenery by world coordinate is guesswork the moment the camera is
+    tilted, and it produced a real mistake: weed rooted near the sea floor was
+    expected to fringe the bottom edge and instead grew straight through the
+    middle of the picture, because with an 18-degree downward pitch the centre
+    of frame at twenty units out is already six units *below* the camera. Where
+    something appears is a function of depth as well as height, so this does
+    the trigonometry instead of the author.
+
+    `frame_fraction` is 0 at the top edge, 1 at the bottom.
+    """
+    centre = CAMERA_Z - depth * math.tan(CAMERA_PITCH)
+    return centre + _half_height(depth) * (1.0 - 2.0 * frame_fraction)
+
+
+def x_at(depth: float, frame_fraction: float) -> float:
+    """
+    The world X that lands at `frame_fraction` across the frame, `depth` away.
+
+    0 is the left edge, 1 the right.
+    """
+    return _half_height(depth) * ASPECT * (2.0 * frame_fraction - 1.0)
+
+
+def depth_for(height: float, frame_fraction: float) -> float:
+    """
+    How far away something at world `height` must be to appear at
+    `frame_fraction` down the frame.
+
+    The inverse of `z_at`, and it exists because of a specific failure: the sun
+    is on the surface, so its height is fixed at the waterline and only its
+    distance is free. Placed at a plausible-looking twenty-four units it sat
+    just above the top edge of the frame, and the entire lens flare hung around
+    it out of shot. Solving for the distance puts it where it can be seen.
+    """
+    # z = (CAMERA_Z - d·tanθ) + d·k·(1 - 2f)  =>  d = (z - CAMERA_Z) / (k(1-2f) - tanθ)
+    k = (SENSOR / 2.0) / CAMERA_LENS
+    denominator = k * (1.0 - 2.0 * frame_fraction) - math.tan(CAMERA_PITCH)
+    if abs(denominator) < 1e-6:
+        raise ValueError("that height never reaches that part of the frame")
+    return (height - CAMERA_Z) / denominator
+
+
+def place(depth: float, across: float, down: float) -> tuple[float, float, float]:
+    """
+    A full world position from a distance and two frame fractions.
+
+    Use this rather than composing `x_at` / `z_at` by hand. Every argument
+    named `depth` in this module means *distance from the camera*, and the
+    camera does not sit at the origin — so a call site that writes
+    `location = (x, depth, z_at(depth, f))` puts the object seven units closer
+    than the height was solved for, and everything lands high.
+
+    That is not hypothetical: weed tips solved for 0.88 of the way down the
+    frame measured at 0.63 to 0.74, a fringe that had quietly grown into the
+    middle of the picture. Returning all three coordinates together removes the
+    only place the mistake can be made.
+    """
+    return (x_at(depth, across), CAMERA_Y + depth, z_at(depth, down))
+
+
+def _half_height(depth: float) -> float:
+    return depth * (SENSOR / 2.0) / CAMERA_LENS
+
 
 def build(
     spec: ContainerSpec,
     clock: LoopClock,
     icons: list[Path],
     framing: str = "phone",
-    bubbles: int = 55,
+    bubbles: int = 110,
     rays: int = 6,
     far_tiles: int = 11,
+    fish: int = 7,
+    weed: int = 7,
     seed: int = 20260826,
 ) -> None:
     """Assemble the whole scene into the current (empty) scene."""
@@ -159,6 +239,10 @@ def build(
     _add_rays(scene, clock, scatter, count=rays)
     _add_bubbles(scene, clock, scatter, count=bubbles)
     _add_far_tiles(scene, clock, scatter, spec, icons, count=far_tiles)
+    _add_ribbon(scene, clock)
+    _add_flare(scene, clock)
+    _add_fish(scene, clock, scatter, count=fish)
+    _add_weed(scene, clock, scatter, count=weed)
     _add_light(scene)
     _add_cameras(scene, framing)
 
@@ -173,7 +257,7 @@ def _add_medium(scene: bpy.types.Scene) -> None:
     getting darker the further down the frame you look.
     """
     box = volume_box("WaterColumn", (140.0, 140.0, 90.0))
-    box.data.materials.append(materials.water_volume(density=0.045, surface_height=SURFACE_HEIGHT, floor_depth=FLOOR_DEPTH - 8.0))
+    box.data.materials.append(materials.water_volume(density=0.038, shallow=(0.404, 1.000, 0.898, 1.0), mid=(0.094, 0.729, 0.812, 1.0), deep=(0.008, 0.129, 0.286, 1.0), surface_height=SURFACE_HEIGHT, floor_depth=FLOOR_DEPTH - 8.0))
 
     world = bpy.data.worlds.new("Deep")
     world.use_nodes = True
@@ -192,7 +276,7 @@ def _add_surface(scene: bpy.types.Scene, clock: LoopClock) -> None:
     # plane's own far edge would otherwise appear as a horizon line across the
     # upper third — a hard horizontal rule exactly where the clock sits.
     plane = horizontal_plane("Surface", size=600.0, height=SURFACE_HEIGHT)
-    material = materials.water_surface(scale=0.085, strength=3.2)
+    material = materials.water_surface(scale=0.085, strength=4.0)
     plane.data.materials.append(material)
 
     socket = material.node_tree.nodes["CausticPhase"].outputs["Value"]
@@ -201,8 +285,12 @@ def _add_surface(scene: bpy.types.Scene, clock: LoopClock) -> None:
     # The sun, seen through the surface: a radial glow rather than a bright
     # patch of the same caustic material, because a patch has corners and the
     # aperture only softens them, never removes them.
-    sun_patch = horizontal_plane("SunPatch", size=30.0, height=SURFACE_HEIGHT - 0.2)
-    sun_patch.location = (3.5, 17.0, SURFACE_HEIGHT - 0.2)
+    # Distance solved so the sun lands just inside the top of frame. At an
+    # eyeballed twenty-four units it sat above the edge, taking its whole lens
+    # flare off-screen with it.
+    sun_depth = depth_for(SURFACE_HEIGHT - 0.2, 0.055)
+    sun_patch = horizontal_plane("SunPatch", size=sun_depth * 0.55, height=SURFACE_HEIGHT - 0.2)
+    sun_patch.location = (x_at(sun_depth, 0.66), CAMERA_Y + sun_depth, SURFACE_HEIGHT - 0.2)
     sun_patch.data.materials.append(materials.radial_glow("SunPatch", strength=11.0))
 
 
@@ -273,9 +361,9 @@ def _add_bubbles(scene: bpy.types.Scene, clock: LoopClock, scatter: Scatter, cou
     the fade is exactly zero there, which is what makes the jump unobservable
     rather than merely fast.
     """
-    material = materials.bubble(strength=1.1)
+    material = motifs.iridescent_bubble(strength=3.0)
     for index in range(count):
-        size = scatter.between(0.04, 0.17)
+        size = scatter.between(0.05, 0.46)
         card = quad(f"Bubble_{index}", size, size)
 
         # Each bubble owns a copy of the material, because each one keyframes
@@ -285,7 +373,7 @@ def _add_bubbles(scene: bpy.types.Scene, clock: LoopClock, scatter: Scatter, cou
         card.data.materials.append(own)
 
         x = scatter.between(-18.0, 18.0)
-        y = scatter.between(2.0, 42.0)
+        y = scatter.between(-4.5, 40.0)
         offset = scatter.next()
         # Bigger bubbles rise faster, which is true and also keeps the field
         # from moving like a single sheet.
@@ -301,6 +389,186 @@ def _add_bubbles(scene: bpy.types.Scene, clock: LoopClock, scatter: Scatter, cou
             lambda frame, offset=offset: LoopClock.fade(clock.rise(frame, offset=offset), edge=0.2),
             clock.frames,
             step=clock.sample_step(),
+        )
+
+
+def _add_flare(scene: bpy.types.Scene, clock: LoopClock) -> None:
+    """
+    Lens flare on the sun: an anamorphic streak, a star, and ghosts.
+
+    Nothing dates an image to this aesthetic faster. It is also, strictly, a
+    defect — a flare is light bouncing between elements inside a lens — and
+    that is the point: the whole era was skeuomorphic, and a photographic
+    artefact drawn deliberately into a rendered scene is exactly the kind of
+    borrowed realism it ran on.
+
+    Built from objects rather than in post. That costs the screen-space
+    accuracy of a real flare and buys something better here: these sit in the
+    water, so the medium fogs them with distance and anything nearer the camera
+    occludes them.
+    """
+    sun_depth = depth_for(SURFACE_HEIGHT - 0.2, 0.055)
+    sun_x = x_at(sun_depth, 0.66)
+    sun_y = CAMERA_Y + sun_depth
+    sun_z = SURFACE_HEIGHT - 0.6
+
+    star = quad("FlareStar", sun_depth * 0.16, sun_depth * 0.16)
+    star.location = (sun_x, sun_y - 0.6, sun_z)
+    star.data.materials.append(
+        motifs.flare_element("FlareStar", (1.0, 0.976, 0.882, 1.0), 26.0, falloff=2.2)
+    )
+
+    streak = quad("FlareStreak", sun_depth * 1.9, sun_depth * 0.035)
+    streak.location = (sun_x, sun_y - 0.9, sun_z)
+    streak.data.materials.append(
+        motifs.flare_element("FlareStreak", (0.573, 0.871, 1.0, 1.0), 5.0, aspect=30.0, falloff=1.5)
+    )
+
+    # Ghosts march back along the line from the sun toward the frame centre,
+    # which is where a real lens would put them.
+    # across, down (frame fractions), size, colour, strength
+    ghosts = (
+        (0.56, 0.20, 0.45, (0.216, 1.0, 0.647, 1.0), 1.1),
+        (0.46, 0.31, 0.85, (0.196, 0.667, 1.0, 1.0), 0.5),
+        (0.36, 0.44, 0.34, (1.0, 0.678, 0.298, 1.0), 0.9),
+        (0.24, 0.58, 1.05, (0.549, 0.400, 1.0, 1.0), 0.35),
+    )
+    # Ghosts stream away from the light along the line through frame centre,
+    # which is where a real lens puts them — and, usefully, over the darker
+    # water where they can actually be seen.
+    for index, (across, down, size, colour, strength) in enumerate(ghosts):
+        depth = 9.0 + index * 2.5
+        ghost = quad(f"FlareGhost_{index}", size, size)
+        ghost.location = (x_at(depth, across), CAMERA_Y + depth, z_at(depth, down))
+        ghost.data.materials.append(
+            motifs.flare_element(f"FlareGhost_{index}", colour, strength, falloff=0.9)
+        )
+
+    # The star breathes once per loop, so the flare is alive without anything
+    # in the frame appearing to move.
+    bake(
+        star,
+        "scale",
+        lambda frame: 1.0 + 0.10 * clock.sine(frame, cycles=1),
+        clock.frames,
+        index=0,
+    )
+    bake(
+        star,
+        "scale",
+        lambda frame: 1.0 + 0.10 * clock.sine(frame, cycles=1),
+        clock.frames,
+        index=2,
+    )
+
+
+def _add_ribbon(scene: bpy.types.Scene, clock: LoopClock) -> None:
+    """
+    The glass ribbon — the one motif that is pure Aero rather than pure ocean.
+
+    Placed high and swept across the upper frame, above the icon grid, where
+    its chromatic edges are visible against the bright water. Low and central
+    it would be a bright object sitting exactly where icons go.
+    """
+    strip = motifs.ribbon("Ribbon", length=20.0, width=1.15, amplitude=1.5, twist=2.6, waves=1.5)
+    strip.location = place(22.0, 0.62, 0.245)
+    strip.rotation_euler = (math.radians(-6.0), math.radians(4.0), 0.0)
+    strip.data.materials.append(motifs.ribbon_glass())
+
+    # A slow roll, one turn per loop, so the fringe travels along its length.
+    bake(
+        strip,
+        "rotation_euler",
+        lambda frame: math.radians(4.0) + math.radians(3.0) * clock.sine(frame, cycles=1),
+        clock.frames,
+        index=1,
+    )
+
+
+def _add_fish(scene: bpy.types.Scene, clock: LoopClock, scatter: Scatter, count: int) -> None:
+    """
+    Tropical fish, crossing the middle distance.
+
+    The most recognisable motif in the whole aesthetic after the bubbles, and
+    the easiest to overdo: a shoal reads as an aquarium screensaver. A handful,
+    small, dark, well back and out of focus, reads as the thing being referred
+    to rather than as a feature.
+
+    They cross on a sine rather than swimming one way and being replaced —
+    silhouettes have no opacity to fade, so a sine is the only motion that
+    closes the loop unaided.
+    """
+    material = motifs.silhouette("FishBody", colour=(0.012, 0.086, 0.129, 1.0), rim=(0.298, 0.878, 0.741, 1.0), rim_strength=1.15)
+    for index in range(count):
+        depth = scatter.between(12.0, 26.0)
+        size = depth * scatter.between(0.065, 0.115)
+        obj = motifs.fish(f"Fish_{index}", length=size)
+        obj.data.materials.append(material)
+
+        centre, y, z = place(depth, scatter.between(0.25, 0.75), scatter.between(0.18, 0.44))
+        span = depth * scatter.between(0.18, 0.34)
+        offset = scatter.next()
+
+        obj.location = (centre, y, z)
+        bake(
+            obj,
+            "location",
+            lambda frame, centre=centre, span=span, offset=offset: centre
+            + span * clock.sine(frame, cycles=1, offset=offset),
+            clock.frames,
+            index=0,
+        )
+        # A slight rise and fall as it goes, and a nose that follows the turn.
+        bake(
+            obj,
+            "location",
+            lambda frame, z=z, offset=offset: z
+            + 0.35 * clock.sine(frame, cycles=2, offset=offset),
+            clock.frames,
+            index=2,
+        )
+        bake(
+            obj,
+            "rotation_euler",
+            lambda frame, offset=offset: math.radians(-92.0)
+            * (1.0 if clock.sine(frame, cycles=1, offset=offset + 0.25) >= 0 else -1.0),
+            clock.frames,
+            index=2,
+        )
+
+
+def _add_weed(scene: bpy.types.Scene, clock: LoopClock, scatter: Scatter, count: int) -> None:
+    """
+    Weed growing in from the bottom edge, behind where the dock sits.
+
+    This is the green half of the palette, which a purely blue scene is missing,
+    and it is also what finally puts something in the bottom fifth of the frame
+    — the strip that read as flat navy fill in every previous version. Dark
+    bodies with a green-teal rim: present, but nowhere near bright enough to
+    compete with a dock full of icons.
+    """
+    material = motifs.silhouette("Weed", colour=(0.008, 0.071, 0.106, 1.0), rim=(0.180, 0.847, 0.588, 1.0), rim_strength=1.5)
+    for index in range(count):
+        depth = scatter.between(9.0, 20.0)
+        height = scatter.between(3.5, 7.0)
+        blade = motifs.frond(f"Weed_{index}", height=height, width=scatter.between(0.34, 0.78))
+        blade.data.materials.append(material)
+
+        # Rooted so the tips reach a set distance up from the bottom edge, and
+        # the base is off-frame. Solving for the root rather than choosing it
+        # is what keeps the fringe a fringe at every depth.
+        x, y, tip = place(depth, scatter.between(0.05, 0.95), scatter.between(0.86, 0.98))
+        blade.location = (x, y, tip - height)
+        blade.rotation_euler = (0.0, scatter.between(-0.25, 0.25), 0.0)
+
+        sway = scatter.between(0.05, 0.13)
+        offset = scatter.next()
+        bake(
+            blade,
+            "rotation_euler",
+            lambda frame, sway=sway, offset=offset: sway * clock.sine(frame, cycles=1, offset=offset),
+            clock.frames,
+            index=1,
         )
 
 
@@ -391,7 +659,7 @@ def _add_light(scene: bpy.types.Scene) -> None:
     shadows across an icon grid would be a disaster anyway.
     """
     data = bpy.data.lights.new("Sun", "SUN")
-    data.energy = 9.0
+    data.energy = 13.0
     data.angle = math.radians(11.0)
     data.color = (1.0, 0.97, 0.9)
     sun = bpy.data.objects.new("Sun", data)
