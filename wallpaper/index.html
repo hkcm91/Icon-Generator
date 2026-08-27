@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Liquid Shaker</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #f5f6f8; overflow: hidden;
+    overscroll-behavior: none; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #tap {
+    position: fixed; inset: auto 0 8% 0; text-align: center;
+    font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #6b7280; pointer-events: none; transition: opacity .5s;
+  }
+  #tap.hide { opacity: 0; }
+  #enable {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    padding: 14px 22px; border: 0; border-radius: 999px;
+    background: #2b8cf0; color: #fff; font: 600 16px system-ui, sans-serif;
+    box-shadow: 0 6px 20px rgba(43,140,240,.4); display: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="tap">shake me</div>
+<button id="enable">Enable motion</button>
+<script>
+"use strict";
+
+/* Liquid shaker — real-time interactive wallpaper.
+ *
+ * The Blender pipeline in ../blender bakes the hero loop; this is the layer
+ * that actually reacts, because a baked loop plays the same way no matter
+ * how hard the phone is shaken.
+ *
+ * The liquid is a 1-D height field living in the gravity frame rather than a
+ * 2-D fluid: the surface is always perpendicular to gravity, and the waves
+ * run along it. That is what makes arbitrary tilt cheap — there is no grid to
+ * rotate, only a basis. A full SPH solver would cost an order of magnitude
+ * more per frame and read almost the same at this scale.
+ */
+
+const params = new URLSearchParams(location.search);
+const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
+
+const CONFIG = {
+  // "full" — the screen itself is the shaker, liquid edge to edge, squircle
+  // corners landing in the screen corners. This is the wallpaper.
+  // "pouch" — a discrete squircle floating on a backdrop, which is the
+  // product-shot framing rather than a wallpaper.
+  mode: params.get("mode") === "pouch" ? "pouch" : "full",
+  squircleN: num("n", 4),          // 2 = circle, 4 = squircle, 8 = near square
+  fill: num("fill", 0.86),         // fraction of the container holding liquid
+  stars: num("stars", 260),
+  bubbles: num("bubbles", 46),
+  scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
+  damping: num("damping", 0.985),
+  waveSpeed: num("wave", 0.22),
+  columns: 96,
+  top: "#1a7af2",                  // matches LIQUID_TOP in liquid_shaker.py
+  bottom: "#1bd4bd",               // matches LIQUID_BOTTOM
+};
+
+const HUES = ["#fadd6b", "#73ed8c", "#9edcfd", "#fcc7ea", "#d9fcb8"];
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d", { alpha: false });
+const hint = document.getElementById("tap");
+const enableBtn = document.getElementById("enable");
+
+let W = 0, H = 0, DPR = 1;
+let CX = 0, CY = 0, RX = 0, RY = 0;   // container centre and half-extents
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2.5);
+  W = Math.floor(window.innerWidth);
+  H = Math.floor(window.innerHeight);
+  canvas.width = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  CX = W * 0.5; CY = H * 0.5;
+  if (CONFIG.mode === "full") {
+    // Fill the screen. The squircle keeps its identity at the corners; the
+    // liquid runs to every edge, so the wallpaper *is* the shaker rather
+    // than a picture of one.
+    RX = W * 0.5; RY = H * 0.5;
+    corner = num("corner", Math.min(W, H) * 0.12);
+  } else {
+    RX = RY = Math.min(W, H) * 0.5 * CONFIG.scale;
+  }
+  buildOutline();
+}
+
+/* ---------------------------------------------------------------- geometry */
+
+let outline = [];          // container boundary, sampled once per resize
+let corner = 0;            // squircle corner radius, full-bleed mode only
+const OUTLINE_STEPS = 220;
+
+const sgnPow = (v, p) => Math.sign(v) * Math.pow(Math.abs(v), p);
+
+function buildOutline() {
+  outline = [];
+  const e = 2 / CONFIG.squircleN;
+
+  if (CONFIG.mode === "pouch") {
+    // One superellipse. Only sane when RX ≈ RY.
+    for (let i = 0; i < OUTLINE_STEPS; i++) {
+      const t = (i / OUTLINE_STEPS) * Math.PI * 2;
+      outline.push({
+        x: CX + RX * sgnPow(Math.cos(t), e),
+        y: CY + RY * sgnPow(Math.sin(t), e),
+      });
+    }
+    return;
+  }
+
+  /* Full-bleed: straight edges with squircle corners of a fixed radius.
+   *
+   * A single superellipse cannot do this. Its exponent works on coordinates
+   * normalised by RX and RY, so on a 390×844 screen the "corner" rounding
+   * scales with each half-extent and the shape balloons into a lozenge —
+   * nothing like a phone's corner. Fixing the radius in pixels and bending
+   * only the corners keeps the squircle character where it is actually
+   * visible, at any aspect ratio.
+   */
+  const r = corner;
+  const L = CX - RX, R = CX + RX, T = CY - RY, B = CY + RY;
+  const seg = 26;
+
+  // Each arc runs a quarter turn; `swap` selects which axis leads, so the
+  // four corners chain head-to-tail and the straight edges fall out of the
+  // lineTo between them.
+  const arc = (cx, cy, sx, sy, swap) => {
+    for (let i = 0; i <= seg; i++) {
+      const t = (i / seg) * Math.PI / 2;
+      const a = Math.pow(Math.cos(t), e);
+      const b = Math.pow(Math.sin(t), e);
+      outline.push(swap
+        ? { x: cx + sx * r * b, y: cy + sy * r * a }
+        : { x: cx + sx * r * a, y: cy + sy * r * b });
+    }
+  };
+
+  arc(R - r, B - r, 1, 1, false);    // bottom-right
+  arc(L + r, B - r, -1, 1, true);    // bottom-left
+  arc(L + r, T + r, -1, -1, false);  // top-left
+  arc(R - r, T + r, 1, -1, true);    // top-right
+}
+
+function tracePath(target) {
+  target.beginPath();
+  target.moveTo(outline[0].x, outline[0].y);
+  for (let i = 1; i < outline.length; i++) target.lineTo(outline[i].x, outline[i].y);
+  target.closePath();
+}
+
+/** Push a point back inside the container, reporting whether it moved. */
+function clampInside(p, pad) {
+  const n = CONFIG.squircleN;
+
+  if (CONFIG.mode === "pouch") {
+    const ax = RX - pad, ay = RY - pad;
+    const dx = (p.x - CX) / ax, dy = (p.y - CY) / ay;
+    const f = Math.pow(Math.abs(dx), n) + Math.pow(Math.abs(dy), n);
+    if (f <= 1) return false;
+    // Radial pull-back: cheap, and exact enough for confetti at this scale.
+    const k = Math.pow(f, -1 / n);
+    p.x = CX + dx * ax * k;
+    p.y = CY + dy * ay * k;
+    return true;
+  }
+
+  // Full-bleed: clamp to the inset rectangle, then round off whichever
+  // corner the point sits in.
+  const L = CX - RX + pad, R = CX + RX - pad;
+  const T = CY - RY + pad, B = CY + RY - pad;
+  let moved = false;
+  if (p.x < L) { p.x = L; moved = true; }
+  if (p.x > R) { p.x = R; moved = true; }
+  if (p.y < T) { p.y = T; moved = true; }
+  if (p.y > B) { p.y = B; moved = true; }
+
+  const r = Math.max(1, corner - pad);
+  const cx = p.x < CX ? L + r : R - r;
+  const cy = p.y < CY ? T + r : B - r;
+  const dx = p.x - cx, dy = p.y - cy;
+  // Only the quadrant outside both corner centres is actually curved.
+  const outX = p.x < CX ? dx < 0 : dx > 0;
+  const outY = p.y < CY ? dy < 0 : dy > 0;
+  if (outX && outY) {
+    const f = Math.pow(Math.abs(dx / r), n) + Math.pow(Math.abs(dy / r), n);
+    if (f > 1) {
+      const k = Math.pow(f, -1 / n);
+      p.x = cx + dx * k;
+      p.y = cy + dy * k;
+      moved = true;
+    }
+  }
+  return moved;
+}
+
+/* ----------------------------------------------------------------- gravity */
+
+// Screen-space gravity, y positive downward. Starts pointing down so the
+// wallpaper looks right before any sensor event arrives.
+const g = { x: 0, y: 1 };
+let gTarget = { x: 0, y: 1 };
+let shakeEnergy = 0;
+let lastAccel = null;
+
+function setGravityFromOrientation(beta, gamma) {
+  // beta: front-back tilt (-180..180), gamma: left-right (-90..90).
+  const b = (beta || 0) * Math.PI / 180;
+  const gm = (gamma || 0) * Math.PI / 180;
+  let x = Math.sin(gm);
+  let y = Math.sin(b) * Math.cos(gm);
+  const len = Math.hypot(x, y);
+  // Near-flat on a table: no meaningful in-plane direction, so hold "down".
+  if (len < 0.08) { gTarget.x = 0; gTarget.y = 1; return; }
+  gTarget.x = x / len; gTarget.y = y / len;
+}
+
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x === null) return;
+  if (lastAccel) {
+    // Jerk, not acceleration: gravity alone is a constant ~9.8 and must not
+    // register as shaking.
+    const jerk = Math.hypot(a.x - lastAccel.x, a.y - lastAccel.y, a.z - lastAccel.z);
+    if (jerk > 3) shakeEnergy = Math.min(shakeEnergy + jerk * 0.06, 14);
+  }
+  lastAccel = { x: a.x, y: a.y, z: a.z };
+  if (e.rotationRate) {
+    const spin = Math.abs(e.rotationRate.alpha || 0) + Math.abs(e.rotationRate.beta || 0);
+    if (spin > 220) shakeEnergy = Math.min(shakeEnergy + spin * 0.004, 14);
+  }
+}
+
+function onOrientation(e) {
+  if (e.beta === null && e.gamma === null) return;
+  hint.classList.add("hide");
+  setGravityFromOrientation(e.beta, e.gamma);
+}
+
+function listenMotion() {
+  window.addEventListener("deviceorientation", onOrientation, true);
+  window.addEventListener("devicemotion", onMotion, true);
+}
+
+// iOS 13+ gates the sensors behind a user gesture; Android and WebView
+// wallpapers do not, so only surface the button when it is actually needed.
+const needsPermission =
+  typeof DeviceMotionEvent !== "undefined" &&
+  typeof DeviceMotionEvent.requestPermission === "function";
+
+if (needsPermission) {
+  enableBtn.style.display = "block";
+  enableBtn.addEventListener("click", async () => {
+    try {
+      await DeviceMotionEvent.requestPermission();
+      if (typeof DeviceOrientationEvent?.requestPermission === "function") {
+        await DeviceOrientationEvent.requestPermission();
+      }
+    } catch (_) { /* denied — pointer fallback still works */ }
+    enableBtn.style.display = "none";
+    listenMotion();
+  });
+} else {
+  listenMotion();
+}
+
+/* Pointer fallback so the wallpaper is testable on a desktop: drag tilts it,
+ * a quick flick shakes it. */
+let dragging = false, lastPointer = null;
+canvas.addEventListener("pointerdown", (e) => {
+  dragging = true; lastPointer = { x: e.clientX, y: e.clientY };
+  hint.classList.add("hide");
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  const dx = e.clientX - lastPointer.x, dy = e.clientY - lastPointer.y;
+  lastPointer = { x: e.clientX, y: e.clientY };
+  const speed = Math.hypot(dx, dy);
+  if (speed > 18) shakeEnergy = Math.min(shakeEnergy + speed * 0.05, 14);
+  const nx = (e.clientX - CX) / RX, ny = (e.clientY - CY) / RY;
+  const len = Math.hypot(nx, ny) || 1;
+  gTarget.x = nx / len; gTarget.y = ny / len;
+});
+const endDrag = () => {
+  dragging = false;
+  gTarget.x = 0; gTarget.y = 1;   // settle back to real down
+};
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+
+/* ------------------------------------------------------------- height field */
+
+// h[i] is surface displacement along -gravity; v[i] its velocity.
+const N = CONFIG.columns;
+const h = new Float32Array(N);
+const v = new Float32Array(N);
+let level = 0;              // signed distance of the surface from centre
+let targetArea = 0;
+
+function splash(centre, strength) {
+  const i0 = Math.max(0, Math.min(N - 1, Math.round(centre)));
+  const width = 9;
+  for (let d = -width; d <= width; d++) {
+    const i = i0 + d;
+    if (i < 0 || i >= N) continue;
+    v[i] += strength * Math.cos((d / width) * Math.PI * 0.5);
+  }
+}
+
+function stepWaves(dt) {
+  const c = CONFIG.waveSpeed;
+  for (let i = 0; i < N; i++) {
+    const l = h[i > 0 ? i - 1 : 0];
+    const r = h[i < N - 1 ? i + 1 : N - 1];
+    v[i] += (l + r - 2 * h[i]) * c;
+    v[i] *= CONFIG.damping;
+  }
+  for (let i = 0; i < N; i++) h[i] += v[i] * dt * 60;
+}
+
+/* --------------------------------------------------------------- particles */
+
+const stars = [], bubbles = [];
+
+function seed() {
+  stars.length = 0; bubbles.length = 0;
+  for (let i = 0; i < CONFIG.stars; i++) {
+    stars.push({
+      x: CX + (Math.random() * 2 - 1) * RX * 0.8,
+      y: CY + (Math.random() * 2 - 1) * RY * 0.8,
+      vx: 0, vy: 0,
+      r: (2.2 + Math.random() * 3.4) * (Math.min(W, H) / 720),
+      spin: Math.random() * Math.PI * 2,
+      spinRate: (Math.random() - 0.5) * 0.06,
+      hue: HUES[(Math.random() * HUES.length) | 0],
+      star: Math.random() > 0.28,
+      // Per-flake sink rate. Kept tiny on purpose: the whole appeal of a
+      // glitter shaker is that the flakes hang in suspension for a long
+      // time, and anything faster piles them on the floor within seconds.
+      settle: 0.06 + Math.random() * 0.14,
+    });
+  }
+  for (let i = 0; i < CONFIG.bubbles; i++) {
+    bubbles.push({
+      x: CX + (Math.random() * 2 - 1) * RX * 0.8,
+      y: CY + (Math.random() * 2 - 1) * RY * 0.8,
+      vx: 0, vy: 0,
+      r: (3 + Math.random() * 6) * (Math.min(W, H) / 720),
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ render */
+
+/* Basis: `up` opposes gravity, `tan` runs along the surface. Everything to do
+ * with the liquid is computed in this frame, then drawn in screen space. */
+let up = { x: 0, y: -1 }, tan = { x: 1, y: 0 };
+
+/* Half-extents of the container along the two basis directions. These are
+ * support-function values, not max(RX, RY): on a full-screen portrait
+ * container the tangent extent is the *width*, and sizing the height field
+ * to the height instead would leave most of its columns off-screen — the
+ * wave would run at a fraction of its intended resolution. */
+let span = 1;        // along `tan`
+let upExtent = 1;    // along `up`
+
+function updateBasis() {
+  const gl = Math.hypot(g.x, g.y) || 1;
+  up = { x: -g.x / gl, y: -g.y / gl };
+  tan = { x: -up.y, y: up.x };
+  span = Math.abs(tan.x) * RX + Math.abs(tan.y) * RY;
+  upExtent = Math.abs(up.x) * RX + Math.abs(up.y) * RY;
+}
+
+function surfaceAt(s) {
+  // s is the coordinate along `tan`, in pixels from the container centre.
+  const f = (s + span) / (2 * span) * (N - 1);
+  const i = Math.max(0, Math.min(N - 2, Math.floor(f)));
+  const frac = f - i;
+  return h[i] * (1 - frac) + h[i + 1] * frac;
+}
+
+/** Perpendicular distance above the wavy surface; negative = submerged. */
+function depthOf(x, y) {
+  const dx = x - CX, dy = y - CY;
+  const along = dx * tan.x + dy * tan.y;
+  const height = dx * up.x + dy * up.y;
+  return height - (level + surfaceAt(along));
+}
+
+function liquidPolygon() {
+  // Walk the surface line across the container, then close the polygon along
+  // the squircle boundary on the downhill side.
+  const pts = [];
+  const steps = 64;
+  for (let i = 0; i <= steps; i++) {
+    const s = -span + (2 * span) * (i / steps);
+    const lift = level + surfaceAt(s);
+    pts.push({
+      x: CX + tan.x * s + up.x * lift,
+      y: CY + tan.y * s + up.y * lift,
+    });
+  }
+  // Close well outside the container; the squircle clip trims it back.
+  const far = (span + upExtent) * 2;
+  pts.push({ x: CX + tan.x * span - up.x * far, y: CY + tan.y * span - up.y * far });
+  pts.push({ x: CX - tan.x * span - up.x * far, y: CY - tan.y * span - up.y * far });
+  return pts;
+}
+
+function polygonArea(pts) {
+  let a = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    a += (pts[j].x + pts[i].x) * (pts[j].y - pts[i].y);
+  }
+  return Math.abs(a) * 0.5;
+}
+
+function drawStar(p) {
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(p.spin);
+  ctx.fillStyle = p.hue;
+  ctx.beginPath();
+  if (p.star) {
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? p.r : p.r * 0.44;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const x = Math.cos(a) * r, y = Math.sin(a) * r;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+  } else {
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3;
+      const r = p.r * (0.55 + 0.45 * ((i * 7) % 5) / 4);
+      const x = Math.cos(a) * r, y = Math.sin(a) * r;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function render() {
+  ctx.fillStyle = "#f5f6f8";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  tracePath(ctx);
+  ctx.clip();
+
+  // Liquid body, graded along the gravity axis so the blue always sits at the
+  // top of the pour no matter how the phone is held.
+  const poly = liquidPolygon();
+  // Grade across the liquid itself, not the container. Spanning the whole
+  // squircle would leave a part-filled pouch sampling only the teal end.
+  const grad = ctx.createLinearGradient(
+    CX + up.x * level, CY + up.y * level,
+    CX - up.x * upExtent, CY - up.y * upExtent);
+  grad.addColorStop(0, CONFIG.top);
+  grad.addColorStop(1, CONFIG.bottom);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(poly[0].x, poly[0].y);
+  for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Confetti and bubbles are clipped to the liquid so nothing floats in the
+  // empty headspace.
+  ctx.save();
+  ctx.clip();
+  for (const p of stars) drawStar(p);
+  for (const b of bubbles) {
+    const bg = ctx.createRadialGradient(
+      b.x - b.r * 0.3, b.y - b.r * 0.3, b.r * 0.1, b.x, b.y, b.r);
+    bg.addColorStop(0, "rgba(255,255,255,.95)");
+    bg.addColorStop(0.55, "rgba(255,255,255,.18)");
+    bg.addColorStop(1, "rgba(255,255,255,.55)");
+    ctx.fillStyle = bg;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Meniscus: the bright line where liquid meets air.
+  ctx.strokeStyle = "rgba(255,255,255,.75)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(poly[0].x, poly[0].y);
+  for (let i = 1; i <= 64; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  ctx.stroke();
+
+  // Glass: inner shading round the rim, then a specular sweep top-left.
+  // Drawn in normalised container space so the vignette stays an ellipse
+  // that matches the screen. A circular radial gradient would band badly
+  // once RX and RY diverge, which they do the moment this goes full-bleed.
+  ctx.save();
+  ctx.translate(CX, CY);
+  ctx.scale(RX, RY);
+  const shade = ctx.createRadialGradient(0, 0, 0.55, 0, 0, 1.05);
+  shade.addColorStop(0, "rgba(255,255,255,0)");
+  shade.addColorStop(1, "rgba(120,190,220,.42)");
+  ctx.fillStyle = shade;
+  ctx.fillRect(-1, -1, 2, 2);
+  ctx.restore();
+
+  const spec = ctx.createLinearGradient(
+    CX - RX, CY - RY, CX + RX * 0.4, CY + RY * 0.5);
+  spec.addColorStop(0, "rgba(255,255,255,.55)");
+  spec.addColorStop(0.35, "rgba(255,255,255,.06)");
+  spec.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = spec;
+  ctx.fillRect(CX - RX, CY - RY, RX * 2, RY * 2);
+
+  ctx.restore();
+
+  // Casing edge.
+  tracePath(ctx);
+  ctx.lineWidth = Math.max(2, RX * 0.022);
+  ctx.strokeStyle = "rgba(255,255,255,.9)";
+  ctx.stroke();
+  ctx.lineWidth = Math.max(1, RX * 0.006);
+  ctx.strokeStyle = "rgba(150,200,225,.55)";
+  ctx.stroke();
+}
+
+/* -------------------------------------------------------------------- step */
+
+function step(dt) {
+  // Ease the gravity direction so a sharp tilt does not teleport the surface.
+  g.x += (gTarget.x - g.x) * Math.min(1, dt * 6);
+  g.y += (gTarget.y - g.y) * Math.min(1, dt * 6);
+  updateBasis();
+
+  if (shakeEnergy > 0.02) {
+    const bursts = Math.min(4, 1 + (shakeEnergy | 0));
+    for (let i = 0; i < bursts; i++) {
+      splash(Math.random() * N, (Math.random() - 0.5) * shakeEnergy * 0.9);
+    }
+    for (const p of stars) {
+      p.vx += (Math.random() - 0.5) * shakeEnergy * 1.4;
+      p.vy += (Math.random() - 0.5) * shakeEnergy * 1.4;
+    }
+    for (const b of bubbles) {
+      b.vx += (Math.random() - 0.5) * shakeEnergy * 1.1;
+      b.vy += (Math.random() - 0.5) * shakeEnergy * 1.1;
+    }
+    shakeEnergy *= 0.86;
+  }
+
+  stepWaves(dt);
+
+  // Volume conservation: nudge the level until the drawn liquid area matches
+  // the target. A feedback loop is far cheaper than solving the tilted
+  // squircle's area analytically, and settles within a few frames.
+  const clipped = clipToContainer(liquidPolygon());
+  if (clipped.length >= 3) {
+    const area = polygonArea(clipped);
+    if (targetArea === 0) targetArea = area;
+    // Raising `level` raises the surface, which *increases* the area — so an
+    // over-full container has to pull the level down. Adding here instead
+    // makes the loop positively fed back, and the pouch floods to the brim
+    // on the first shake.
+    level -= (area - targetArea) / (span * 4) * 0.5;
+    const limit = upExtent * 1.2;
+    level = Math.max(-limit, Math.min(limit, level));
+  }
+
+  const pad = Math.min(RX, RY) * 0.03;
+  const scale = Math.min(W, H) / 720;
+
+  for (const p of stars) {
+    const depth = depthOf(p.x, p.y);
+    if (depth > 0) {
+      // Above the surface: fall until it re-enters the liquid.
+      p.vx += g.x * 40 * dt; p.vy += g.y * 40 * dt;
+    } else {
+      // Suspended: sinks slowly, with drag standing in for viscosity.
+      p.vx += g.x * p.settle * 9 * dt;
+      p.vy += g.y * p.settle * 9 * dt;
+      p.vx *= 0.94; p.vy *= 0.94;
+      p.vx += (Math.random() - 0.5) * 0.28 * scale;
+      p.vy += (Math.random() - 0.5) * 0.28 * scale;
+      // Pin to just under the surface rather than letting flakes drift out.
+      if (depth > -2) { p.vx -= up.x * 6 * dt; p.vy -= up.y * 6 * dt; }
+    }
+    p.x += p.vx; p.y += p.vy;
+    p.spin += p.spinRate + (p.vx + p.vy) * 0.004;
+    if (clampInside(p, pad)) {
+      p.vx *= 0.35; p.vy *= 0.35;
+      // Without an inward nudge, settled flakes weld into a hard line along
+      // the rim instead of drifting back into the body of the liquid.
+      p.vx += (CX - p.x) * 0.004;
+      p.vy += (CY - p.y) * 0.004;
+    }
+  }
+
+  for (const b of bubbles) {
+    const depth = depthOf(b.x, b.y);
+    b.phase += dt * 3;
+    if (depth < 0) {
+      // Buoyancy scales with radius, so big bubbles overtake small ones.
+      b.vx += up.x * b.r * 2.2 * dt * 10;
+      b.vy += up.y * b.r * 2.2 * dt * 10;
+      b.vx += Math.sin(b.phase) * 0.12 * scale;
+      b.vx *= 0.93; b.vy *= 0.93;
+    } else {
+      // Surfaced: pop and re-enter somewhere below the surface. Sampling the
+      // box and rejecting anything above the waterline spreads them evenly
+      // whatever the aspect ratio, where projecting along the basis piled
+      // them against the long edges.
+      b.vx = 0; b.vy = 0;
+      for (let tries = 0; tries < 6; tries++) {
+        b.x = CX + (Math.random() * 2 - 1) * RX * 0.92;
+        b.y = CY + (Math.random() * 2 - 1) * RY * 0.92;
+        if (depthOf(b.x, b.y) < -b.r * 2) break;
+      }
+      clampInside(b, pad);
+    }
+    b.x += b.vx; b.y += b.vy;
+    if (clampInside(b, pad)) { b.vx *= 0.3; b.vy *= 0.3; }
+  }
+}
+
+/** Sutherland–Hodgman clip of the liquid polygon against the squircle, so the
+ *  area feedback measures what is actually drawn rather than the raw slab. */
+function clipToContainer(poly) {
+  let out = poly;
+  for (let i = 0; i < outline.length; i += 6) {
+    const a = outline[i];
+    const b = outline[(i + 6) % outline.length];
+    const ex = b.x - a.x, ey = b.y - a.y;
+    const side = (p) => (p.x - a.x) * ey - (p.y - a.y) * ex;
+    const next = [];
+    for (let j = 0; j < out.length; j++) {
+      const cur = out[j], prev = out[(j + out.length - 1) % out.length];
+      const dc = side(cur), dp = side(prev);
+      if (dc <= 0) {
+        if (dp > 0) next.push(intersect(prev, cur, a, b));
+        next.push(cur);
+      } else if (dp <= 0) {
+        next.push(intersect(prev, cur, a, b));
+      }
+    }
+    out = next;
+    if (out.length === 0) return [];
+  }
+  return out;
+}
+
+function intersect(p1, p2, a, b) {
+  const r = { x: p2.x - p1.x, y: p2.y - p1.y };
+  const s = { x: b.x - a.x, y: b.y - a.y };
+  const denom = r.x * s.y - r.y * s.x;
+  if (Math.abs(denom) < 1e-9) return { x: p2.x, y: p2.y };
+  const t = ((a.x - p1.x) * s.y - (a.y - p1.y) * s.x) / denom;
+  return { x: p1.x + r.x * t, y: p1.y + r.y * t };
+}
+
+/* -------------------------------------------------------------------- loop */
+
+let last = 0, raf = 0;
+
+function frame(now) {
+  raf = requestAnimationFrame(frame);
+  const dt = Math.min((now - last) / 1000 || 0.016, 0.05);
+  last = now;
+  step(dt);
+  render();
+}
+
+function start() {
+  resize();
+  updateBasis();
+  // `level` is the surface's signed height along `up`, so a fill above half
+  // is a positive offset from centre. Inverting this drains the container.
+  level = (CONFIG.fill - 0.5) * 2 * upExtent;
+  targetArea = 0;
+  h.fill(0); v.fill(0);
+  seed();
+  last = performance.now();
+  if (!raf) raf = requestAnimationFrame(frame);
+}
+
+window.addEventListener("resize", () => { resize(); targetArea = 0; });
+// A live wallpaper is hidden whenever the launcher is not showing; stopping
+// the loop there is the difference between a wallpaper and a battery leak.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { cancelAnimationFrame(raf); raf = 0; }
+  else { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); }
+});
+
+start();
+</script>
+</body>
+</html>
