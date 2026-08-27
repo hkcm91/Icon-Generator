@@ -66,14 +66,15 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a discrete squircle on a backdrop |
-| `fill` | `0.86` | Fraction of the container holding liquid. The air gap is what sloshes — at `1` nothing moves |
+| `fill` | `0.95` | Fraction of the container holding liquid. The thin ullage is what sloshes — at `1` nothing moves |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `260` | Confetti count |
-| `bubbles` | `46` | Bubble count |
+| `stars` | `620` | Confetti count |
+| `bubbles` | `64` | Bubble count |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
-Drop `stars` to about 120 and `bubbles` to 20 on a low-end device.
+Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
+fluid solver's cost is fixed, so the particle count is the dial that matters.
 
 ## Getting it onto an Android home screen
 
