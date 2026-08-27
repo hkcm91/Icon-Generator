@@ -214,22 +214,55 @@ const g = { x: 0, y: 1 };
 let gTarget = { x: 0, y: 1 };
 let shakeEnergy = 0;
 let lastAccel = null;
+// Once the accelerometer is supplying gravity, ignore deviceorientation —
+// the two disagree slightly and letting both write causes a slow wobble.
+let haveAccelGravity = false;
+
+/** Point gravity along the screen-plane part of a device-frame vector. */
+function setGravityFromVector(x, y) {
+  const len = Math.hypot(x, y);
+  // Lying flat on a table there is no meaningful in-plane direction, so hold
+  // "down" rather than snapping to whatever noise the sensor reports.
+  if (len < 0.12) { gTarget.x = 0; gTarget.y = 1; return; }
+  gTarget.x = x / len; gTarget.y = y / len;
+}
+
+/* Preferred path: the accelerometer already reports the gravity vector in
+ * device coordinates, so its screen-plane part is the answer directly — no
+ * Euler angles, no convention guessing. Device +Y runs up the screen while
+ * canvas +y runs down, hence the sign flip on x only. */
+function setGravityFromAccel(a, magnitude) {
+  setGravityFromVector(-a.x / magnitude, a.y / magnitude);
+}
 
 function setGravityFromOrientation(beta, gamma) {
-  // beta: front-back tilt (-180..180), gamma: left-right (-90..90).
+  // Fallback for when only deviceorientation is available. beta is the
+  // front-back tilt, gamma the left-right one, and the screen-plane gravity
+  // components fall out of the Z-X'-Y'' rotation the spec defines.
+  //
+  // The cos(beta) term is what makes this correct: a phone lying flat is
+  // beta 0, and there the in-plane pull vanishes no matter what gamma is.
+  // Dropping it turns any small tilt into full sideways gravity and stands
+  // the waterline on end.
   const b = (beta || 0) * Math.PI / 180;
   const gm = (gamma || 0) * Math.PI / 180;
-  let x = Math.sin(gm);
-  let y = Math.sin(b) * Math.cos(gm);
-  const len = Math.hypot(x, y);
-  // Near-flat on a table: no meaningful in-plane direction, so hold "down".
-  if (len < 0.08) { gTarget.x = 0; gTarget.y = 1; return; }
-  gTarget.x = x / len; gTarget.y = y / len;
+  setGravityFromVector(-Math.cos(b) * Math.sin(gm), Math.sin(b));
 }
 
 function onMotion(e) {
   const a = e.accelerationIncludingGravity;
   if (!a || a.x === null) return;
+  hint.classList.add("hide");
+
+  // Only trust this as an orientation reading when it is close to a plain
+  // 1g rest state; mid-shake the vector is dominated by hand acceleration
+  // and would whip the waterline around.
+  const magnitude = Math.hypot(a.x, a.y, a.z);
+  if (magnitude > 6 && magnitude < 14) {
+    setGravityFromAccel(a, magnitude);
+    haveAccelGravity = true;
+  }
+
   if (lastAccel) {
     // Jerk, not acceleration: gravity alone is a constant ~9.8 and must not
     // register as shaking.
@@ -244,6 +277,7 @@ function onMotion(e) {
 }
 
 function onOrientation(e) {
+  if (haveAccelGravity) return;
   if (e.beta === null && e.gamma === null) return;
   hint.classList.add("hide");
   setGravityFromOrientation(e.beta, e.gamma);
