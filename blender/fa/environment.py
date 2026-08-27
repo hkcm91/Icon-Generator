@@ -200,14 +200,39 @@ def build_light_rig(
 
 
 def add_caustic_projector(
-    location=(0.0, 0.0, 6.0),
-    size: float = 14.0,
-    energy: float = 220.0,
+    location=(0.0, 1.0, 9.5),
+    energy: float = 6000.0,
+    cone: float = 135.0,
+    scale: float = 9.0,
+    softness: float = 0.05,
 ) -> bpy.types.Object:
-    """An area light textured with the caustics gobo, aimed straight down."""
-    data = bpy.data.lights.new("FA_Caustics", type="AREA")
+    """A textured spot light: dancing water caustics, and the shafts they ride.
+
+    Real refractive caustics need punishing sample counts and still arrive
+    noisy at wallpaper resolution, so this projects an animated Voronoi gobo
+    instead. At the scale caustics appear on screen the difference is not
+    visible; the cost difference is enormous.
+
+    **A spot, not an area light.** This is the whole reason the first attempt
+    at this failed: gobo sharpness is set by the *apparent size of the source*,
+    and an 18m area light a few metres away is about as soft a source as it is
+    possible to build. It washes any pattern fed to it into flat, even light —
+    the texture is still being evaluated, it just cannot cast a shadow crisp
+    enough to show. A spot with a small `shadow_soft_size` is nearly a point,
+    so the pattern survives the trip to the surface.
+
+    The same projector supplies the god rays. With the scene's volume in
+    place, a textured spot does not just pattern the surfaces it hits — the
+    pattern is carried through the haze as shafts. That is one light doing
+    both of the underwater signature effects, which is why caustics and shafts
+    are not separately configurable here.
+    """
+    data = bpy.data.lights.new("FA_Caustics", type="SPOT")
     data.energy = energy
-    data.size = size
+    data.spot_size = math.radians(cone)
+    data.spot_blend = 0.45
+    # Near-point source: this number is the gobo's focus control.
+    data.shadow_soft_size = softness
     data.use_nodes = True
 
     tree = data.node_tree
@@ -222,26 +247,34 @@ def add_caustic_projector(
     mapping.name = "CausticDrift"
     mapping.label = "CausticDrift"
     mapping.location = (-620, 0)
+    # Normal, on a light, is the outgoing ray direction — so the pattern is
+    # projected down the cone rather than stuck to the lamp's own surface.
     tree.links.new(mapping.inputs["Vector"], coords.outputs["Normal"])
 
     cells = tree.nodes.new("ShaderNodeTexVoronoi")
     cells.location = (-420, 0)
     cells.feature = "SMOOTH_F1"
-    cells.inputs["Scale"].default_value = 5.0
+    cells.inputs["Scale"].default_value = scale
     tree.links.new(cells.inputs["Vector"], mapping.outputs["Vector"])
 
+    # Caustics are thin bright filaments between dark cells, so the useful
+    # signal is the *edges* of the Voronoi. A short ramp near zero keeps the
+    # web of light and crushes the cell interiors to near-black — a gentle
+    # ramp here is the difference between caustics and a lava-lamp blob.
     ramp = tree.nodes.new("ShaderNodeValToRGB")
     ramp.location = (-220, 0)
     ramp.color_ramp.elements[0].position = 0.0
     ramp.color_ramp.elements[0].color = (1.0, 1.0, 1.0, 1.0)
-    ramp.color_ramp.elements[1].position = 0.3
-    ramp.color_ramp.elements[1].color = (0.05, 0.2, 0.4, 1.0)
+    ramp.color_ramp.elements[1].position = 0.22
+    ramp.color_ramp.elements[1].color = (0.02, 0.12, 0.28, 1.0)
     tree.links.new(ramp.inputs["Fac"], cells.outputs["Distance"])
     tree.links.new(emission.inputs["Color"], ramp.outputs["Color"])
     tree.links.new(out.inputs["Surface"], emission.outputs["Emission"])
 
     obj = bpy.data.objects.new("FA_Caustics", data)
     obj.location = location
+    # Aimed straight down. A spot's default is -Z, which is already down, so
+    # this stays unrotated and the cone stays symmetric about the vertical.
     bpy.context.scene.collection.objects.link(obj)
     return obj
 
@@ -336,9 +369,11 @@ def scatter_bokeh(
     other, brighten as they cross a bright background, and drift with true
     parallax. Compositing circles on top gets none of that.
 
-    Their brightness is deliberately far above 1.0: a mote only blooms into a
-    proper bokeh disc if it survives the tonemap after being blurred across a
-    few hundred pixels.
+    Brightness is a narrow window. Too dim and a mote never blooms into a disc
+    at all; too bright and every one of them clips to flat white, which is
+    where they stop reading as light in water and start reading as dust on the
+    sensor. Bokeh should be *translucent* — bright enough to glow, dim enough
+    that the discs tint and overlap rather than punching holes in the frame.
     """
     rng = random.Random(seed)
     mat = bpy.data.materials.new("FA_Bokeh")
@@ -347,9 +382,52 @@ def scatter_bokeh(
     tree.nodes.clear()
     out = tree.nodes.new("ShaderNodeOutputMaterial")
     emission = tree.nodes.new("ShaderNodeEmission")
-    emission.inputs["Color"].default_value = (0.75, 0.95, 1.0, 1.0)
-    emission.inputs["Strength"].default_value = 24.0
-    tree.links.new(out.inputs["Surface"], emission.outputs["Emission"])
+    emission.location = (-100, 60)
+    emission.inputs["Color"].default_value = (0.62, 0.90, 1.0, 1.0)
+    emission.inputs["Strength"].default_value = 4.0
+
+    # A mote fades to *transparent* at its rim, not to black.
+    #
+    # A uniformly emissive sphere defocuses into a flat disc with a hard edge.
+    # That is optically correct — it is the aperture's own shape — but it
+    # reads as a white circle pasted over the frame at every brightness tried.
+    # Photographic bokeh from light in water is soft-edged, because the source
+    # is a diffuse glow rather than a point.
+    #
+    # Grading emission by facing angle was the first attempt and made it
+    # worse: dimming the rim still leaves opaque geometry there, so each mote
+    # gained a dark ring where it occluded the water behind it and the frame
+    # filled with little donuts. The rim must stop *blocking*, not just stop
+    # glowing — so the falloff drives a mix to a Transparent BSDF, and the
+    # mote dissolves into the background instead of stamping a hole in it.
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (-100, -80)
+
+    facing = tree.nodes.new("ShaderNodeLayerWeight")
+    facing.location = (-560, -220)
+    facing.inputs["Blend"].default_value = 0.5
+
+    # Ramp runs white-to-black, because Layer Weight's Facing output is 0 when
+    # a surface points straight at the viewer and 1 at its silhouette — the
+    # opposite way round to what the name suggests. Fed a black-to-white ramp
+    # this lit the rim and cleared the middle, turning every mote into a tiny
+    # ring. Verified by rendering the motes against an empty world; in the
+    # full scene the rings were small enough to pass as bubbles.
+    falloff = tree.nodes.new("ShaderNodeValToRGB")
+    falloff.location = (-380, -220)
+    falloff.color_ramp.interpolation = "EASE"
+    falloff.color_ramp.elements[0].position = 0.0
+    falloff.color_ramp.elements[0].color = (1, 1, 1, 1)
+    falloff.color_ramp.elements[1].position = 0.85
+    falloff.color_ramp.elements[1].color = (0, 0, 0, 1)
+    tree.links.new(falloff.inputs["Fac"], facing.outputs["Facing"])
+
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    mix.location = (100, 0)
+    tree.links.new(mix.inputs[0], falloff.outputs["Color"])
+    tree.links.new(mix.inputs[1], transparent.outputs["BSDF"])
+    tree.links.new(mix.inputs[2], emission.outputs["Emission"])
+    tree.links.new(out.inputs["Surface"], mix.outputs["Shader"])
 
     import bmesh
 
@@ -409,21 +487,43 @@ def add_camera(
     return obj
 
 
+def aim(obj: bpy.types.Object, target) -> bpy.types.Object:
+    """Point a light or camera's -Z axis at `target`.
+
+    Scenes need this to place their own key and rim lights: the default rig is
+    generic, and where a backlight belongs depends entirely on where the
+    subject ended up. Keeping the rig generic and the aiming in the scene is
+    what stops one scene's art direction leaking into the shared library.
+    """
+    direction = tuple(t - o for t, o in zip(target, obj.location))
+    obj.rotation_euler = _look_rotation(direction)
+    return obj
+
+
 def _look_rotation(direction) -> tuple[float, float, float]:
     """Euler angles aiming a Blender camera's -Z axis down `direction`.
 
     An unrotated camera looks along -Z. Pitching by the polar angle swings
     that onto the horizon, then the Z rotation spins it to the right bearing.
 
-    The -pi/2 is the part worth stating: after the pitch the camera points
-    along +Y, not +X, so the yaw has to be measured from +Y. Using +pi/2
-    instead aims it exactly backwards — which renders as a perfectly clean,
-    entirely black frame, with nothing in the scene to suggest why.
+    Both signs here are easy to get wrong and neither fails loudly.
+
+    The pitch is `atan2(horizontal, -dz)`, negated because the axis being
+    aimed is *minus* Z. Rotating -Z by alpha about X gives (0, sin a, -cos a),
+    so matching it to the target direction needs cos a = -dz/|d|. Dropping the
+    negation mirrors the pitch about the horizon: ask to look 7 degrees up and
+    the camera looks 7 degrees down instead. Small angles just seem like
+    slightly odd framing, which is how it survives being noticed.
+
+    The -pi/2 on the yaw is there because after the pitch the camera points
+    along +Y, not +X, so the bearing is measured from +Y. Using +pi/2 aims it
+    exactly backwards — a perfectly clean, entirely black frame, with nothing
+    in the scene to suggest why.
     """
     dx, dy, dz = direction
     horizontal = math.hypot(dx, dy)
     return (
-        math.atan2(horizontal, dz),
+        math.atan2(horizontal, -dz),
         0.0,
         math.atan2(dy, dx) - math.pi / 2,
     )

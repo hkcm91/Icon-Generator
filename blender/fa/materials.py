@@ -235,12 +235,24 @@ def water(name: str = "FA_Water", loop_radius: float = 0.35) -> bpy.types.Materi
 
 
 def bubble(name: str = "FA_Bubble") -> bpy.types.Material:
-    """A soap bubble: a transmissive shell with a strong thin film.
+    """A soap bubble: a film, not a bead of glass.
 
     This is the one place iridescence runs at full strength, because on a
     bubble it is not a stylistic flourish — it is the physically correct
     appearance of a film a few hundred nanometres thick, and it is the motif
     the whole aesthetic is built around.
+
+    **IOR is ~1, and that is the entire point.** The obvious setting is 1.33,
+    water — but that describes a *solid drop* of water, and Cycles renders it
+    as one: a ball lens that concentrates whatever is behind it into a hard
+    bright core. On screen they come out as opaque white beads.
+
+    A real bubble is two air-water interfaces a fraction of a wavelength
+    apart. Light crossing the first is bent back by the second, so the net
+    bulk refraction is nothing at all; what is left is the thin-film
+    interference between them and a faint edge reflection. Setting IOR to
+    unity models exactly that, and the bubble becomes what it should be —
+    almost invisible except for its rainbow and its rim.
     """
     mat, tree, existed = _material(name)
     if existed:
@@ -251,9 +263,11 @@ def bubble(name: str = "FA_Bubble") -> bpy.types.Material:
     bsdf.location = (150, 0)
     bsdf.inputs["Base Color"].default_value = GLOSS_WHITE
     bsdf.inputs["Roughness"].default_value = 0.0
-    bsdf.inputs["IOR"].default_value = 1.31
+    # Just above 1: enough Fresnel for the rim to catch light, far too little
+    # to lens. Exactly 1.0 removes the edge entirely and the bubble vanishes.
+    bsdf.inputs["IOR"].default_value = 1.04
     bsdf.inputs["Transmission Weight"].default_value = 1.0
-    bsdf.inputs["Thin Film IOR"].default_value = 1.4
+    bsdf.inputs["Thin Film IOR"].default_value = 1.45
 
     # Film thickness varies over the sphere: real bubbles drain downward and
     # band. A gradient in object space gives that banding for free.

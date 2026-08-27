@@ -55,6 +55,64 @@ def configure(
 
     _configure_colour(scene)
 
+    # No compositor bloom here, deliberately, though the aesthetic wants it.
+    #
+    # Blender 5 moved the compositor to `scene.compositing_node_group` and
+    # turned the Glare node's settings into input sockets. A group built that
+    # way through bpy links up correctly — every socket connected, no error —
+    # and then the render returns a blank white frame in two seconds, having
+    # never traced a path. Not worth shipping a feature that silently destroys
+    # the render on one Blender version to save two clicks on another.
+    #
+    # Add it by hand instead, in the Compositing workspace: a Glare node set
+    # to Bloom, threshold ~0.9, size ~8, strength ~0.35, between Render Layers
+    # and Composite. Gentle: heavy bloom reads as a 2008 game demo rather than
+    # a 2008 advertisement, and the icons still have to stay readable. AgX
+    # already rolls the highlights off well, so the scene is not obviously
+    # missing anything without it.
+
+
+def enable_gpu(preferred: tuple[str, ...] = ("OPTIX", "CUDA", "HIP", "METAL", "ONEAPI")) -> str:
+    """Switch Cycles to GPU rendering. Returns the backend actually enabled.
+
+    A 300-frame loop is the difference between an overnight job and an
+    unfinishable one, so this is worth getting right rather than leaving to
+    whatever the .blend was saved with.
+
+    Backends are tried in preference order — OPTIX before CUDA because on
+    NVIDIA hardware it is materially faster for exactly the things this scene
+    is made of, transmission and volume. Returns "CPU" when nothing is
+    available, rather than raising: falling back and saying so is more useful
+    than refusing to render.
+    """
+    preferences = bpy.context.preferences.addons.get("cycles")
+    if preferences is None:
+        return "CPU"
+
+    cycles_prefs = preferences.preferences
+    for backend in preferred:
+        try:
+            cycles_prefs.compute_device_type = backend
+        except TypeError:
+            continue
+
+        cycles_prefs.get_devices()
+        usable = [d for d in cycles_prefs.devices if d.type == backend]
+        if not usable:
+            continue
+
+        for device in cycles_prefs.devices:
+            # Keep the CPU in the pool alongside the GPU: with the GPU doing
+            # the bulk, spare cores still shave time off each tile rather than
+            # sitting idle for hours.
+            device.use = device.type in (backend, "CPU")
+
+        bpy.context.scene.cycles.device = "GPU"
+        return backend
+
+    bpy.context.scene.cycles.device = "CPU"
+    return "CPU"
+
 
 def _configure_colour(scene: bpy.types.Scene) -> None:
     """Filmic-family view transform with a lifted, glossy look.

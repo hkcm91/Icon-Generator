@@ -3,15 +3,17 @@
 A Blender project that puts the icon families this repo generates into an
 animated, seamlessly looping 3D scene.
 
-Concepts and the research behind them: **[BRAINSTORM.md](BRAINSTORM.md)**.
-Nothing is settled yet — one reference scene is built to prove the pipeline.
+The scene is **Aquarium Dock**: nine icons suspended in sunlit water, caustics
+crawling over them, light shafts falling from the surface, bubbles rising past.
+16:9 desktop, delivered as a seamlessly looping MP4.
 
-![Aquarium Dock, first pass](docs/aquarium-r1.png)
+How that was chosen, and the five concepts not taken:
+**[BRAINSTORM.md](BRAINSTORM.md)**.
 
-*Aquarium Dock at 640×360, 64 samples, placeholder tiles. Deliberately an
-early pass: the underwater volume, the gel tiles and the loop are working;
-caustics are not yet landing visibly on the faces and the waterline is still
-just a band. What it demonstrates is that the pipeline runs end to end.*
+![Aquarium Dock](docs/aquarium-r2.png)
+
+*820×461, 96 samples, placeholder tiles — real icons go in `icons/`. Rendered
+on 4 CPU cores; a final frame is 2560×1440 at 256 samples.*
 
 ---
 
@@ -35,21 +37,28 @@ shape from a spec rather than letting a tool re-decide it every run.
 
 ```bash
 cd blender
-pip install -r requirements.txt          # the bpy wheel, no Blender install needed
+pip install -r requirements.txt   # the bpy wheel, no Blender install needed
 
-python build.py --scene aquarium                    # write scenes/aquarium.blend
-python build.py --scene aquarium --preview          # ...and render a check frame
-python build.py --scene aquarium --resolution 1080x2400 --tiles 5   # phone
+python build.py                   # write scenes/aquarium.blend
+python build.py --preview         # ...and render a check frame to out/
+python test_fa.py                 # 10 tests, a few seconds
 ```
 
-With a real Blender installed, the same file runs under it:
+Then produce the wallpaper itself:
 
 ```bash
-blender --background --python build.py -- --scene aquarium
+python render_loop.py             # render 300 frames, verify, encode to MP4
 ```
 
-`build.py --help` lists everything. The useful knobs are `--frames` (loop
-length), `--tiles`, `--resolution` and `--seed`.
+Defaults are the chosen configuration: Aquarium Dock, 2560×1440, 9 icons, a
+300-frame loop at 30fps. `build.py --help` lists the rest; the useful knobs
+are `--frames`, `--tiles`, `--resolution` and `--seed`.
+
+With a real Blender installed, the same files run under it:
+
+```bash
+blender --background --python build.py -- --preview
+```
 
 ## Getting your icons in
 
@@ -76,13 +85,15 @@ varies by machine, and the hero slot is the one you spent an hour lighting.
 
 ```
 build.py              CLI. Builds a scene, verifies the loop, optionally previews.
+render_loop.py        Renders the frame sequence, checks the seam, encodes the MP4.
+test_fa.py            Tests for the things that fail silently.
 fa/loop.py            Seamless-loop primitives. Read this one first.
 fa/geometry.py        The icon tile, from the same superellipse as spec.ts.
 fa/materials.py       The Frutiger Aero material library.
 fa/environment.py     World, lights, volume, bokeh, camera.
 fa/icons.py           Finds exported PNGs and turns them into tiles.
-fa/render.py          Render settings and the loop-safe encode rules.
-fa/scenes/aquarium.py Reference scene.
+fa/render.py          Render settings, GPU selection, loop-safe encode rules.
+fa/scenes/aquarium.py The scene.
 icons/                Drop exported PNGs here. Gitignored.
 scenes/               Built .blend files. Gitignored.
 out/                  Renders. Gitignored.
@@ -112,10 +123,25 @@ Three things in `fa/loop.py` are worth knowing before writing a scene:
   rewinds. `circular_noise_offset()` returns to its start having travelled
   continuously the whole way.
 
-`verify_loop()` runs on every build and fails it on a discontinuity. It checks
-the honest invariant — *nothing visible jumps at the seam* — so a wrap is
-allowed when the object has provably shrunk to nothing, and reported when it
-has not. It has already caught one real bug during development.
+The loop is verified twice, and the second one is the one that counts.
+
+`verify_loop()` runs on every build and fails it on a discontinuity in the
+baked curves. It checks the honest invariant — *nothing visible jumps at the
+seam* — so a wrap is allowed when the object has provably shrunk to nothing,
+and reported when it has not.
+
+But curves are only what was baked. They cannot see a shader wired up wrong, a
+volume that has not converged, or anything evaluated per frame at render time.
+So `render_loop.py` measures the seam **on the rendered pixels**, comparing the
+wrap against the largest step inside the loop:
+
+```
+[fa] loop seam: wrap delta 0.014806, interior peak 0.014864 (1.00x)
+[fa] rendered loop verified seamless
+```
+
+A ratio near 1.0 means the wrap is indistinguishable from ordinary motion.
+That is the actual claim a wallpaper makes, measured on the actual artefact.
 
 ## Render budget
 
@@ -123,14 +149,17 @@ Measured on this project's 4-core CPU box, Cycles, the Aquarium Dock scene:
 
 | Output | Settings | Time |
 |---|---|---|
-| Preview still | 640×360, 64 samples | ~40 s |
+| Preview still | 640×360, 64 samples | ~50 s |
+| Preview still | 820×461, 96 samples | ~1 min 54 s |
 | Final frame | 2560×1440, 256 samples | ~45 min (extrapolated) |
 | Full 10 s loop | 300 frames | days — not viable on CPU |
 
-Final renders want a GPU. Cycles on a mid-range discrete card runs roughly
-20–40× a 4-core CPU, which puts a 300-frame loop in the region of 5–10 hours —
-an overnight job, not an interactive one. Budget accordingly, and use
-`--preview` for every iteration.
+Final renders want a GPU. `render_loop.py` enables one automatically, trying
+OPTIX before CUDA (on NVIDIA hardware OPTIX is materially faster for exactly
+what this scene is made of — transmission and volume) and keeping the CPU in
+the pool alongside it. Cycles on a mid-range discrete card runs roughly 20–40×
+a 4-core CPU, putting a 300-frame loop in the region of 5–10 hours: an
+overnight job, not an interactive one. Use `--preview` for every iteration.
 
 If frames are too slow, the first dial is `scatter_density` in
 `add_atmosphere`. The volume is the most expensive thing in the scene by a
@@ -143,16 +172,17 @@ display it is available and is the right choice for look development.
 
 ## Encoding the loop
 
-Render an image sequence, never straight to video: a crashed video render
-leaves an unusable file, a sequence leaves every frame it finished.
+`render_loop.py` handles this, but the reasoning is worth knowing.
 
-```python
-from fa import render
-render.configure_sequence(scene, Path("out/frames"))
-print(render.ffmpeg_command(Path("out/frames"), Path("out/loop.mp4"), fps=30, frames=300))
-```
+It renders an image sequence and encodes separately, never straight to video:
+a crashed video render leaves an unusable file and hours of nothing, a
+sequence leaves every frame it finished. Hence `--resume` (skip frames already
+on disk), `--encode-only` (re-encode without re-rendering) and `--start/--end`
+(split the job across machines). It refuses to encode a sequence with gaps,
+because ffmpeg will happily skip missing frames and hand back a loop with a
+jump cut in it.
 
-Two settings in that command are load-bearing:
+Two settings in the ffmpeg command are load-bearing:
 
 - **Never encode frame L+1.** The loop is frames 1..L. An extra frame
   duplicates frame 1 at the end and shows as one stalled frame every loop —
@@ -163,6 +193,21 @@ Two settings in that command are load-bearing:
 
 `-pix_fmt yuv420p` is also not optional — the hardware decoders in Wallpaper
 Engine, Lively and Android will refuse a 4:4:4 file outright.
+
+The resulting MP4 drops straight into
+[Lively Wallpaper](https://livelywallpaper.io/wallpaper-types/) or Wallpaper
+Engine as a video wallpaper. Both pause playback under fullscreen apps, so the
+idle cost is lower than a 1440p loop sounds.
+
+## What is deliberately not automated
+
+**Compositor bloom.** The aesthetic wants it, and `configure()` explains at
+length why it is not there: a Glare node built through `bpy` on Blender 5
+links up correctly, reports no error, and then renders a blank white frame in
+two seconds having never traced a path. Add it by hand in the Compositing
+workspace — Glare set to Bloom, threshold ~0.9, size ~8, strength ~0.35,
+between Render Layers and Composite. AgX already rolls highlights off well, so
+nothing looks obviously missing without it.
 
 ## Why the tile matches the app's geometry
 

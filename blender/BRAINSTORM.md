@@ -1,9 +1,13 @@
 # Frutiger Aero live wallpaper — concepts and research
 
-Nothing here is decided. This is the menu and the constraints, written down so
-the choice can be made on evidence rather than vibes. The pipeline in this
-directory is built to serve any of the six concepts below; picking one is a
-scene module, not a rewrite.
+> **Decided: Aquarium Dock, 16:9 desktop, 9 icons, delivered as a
+> pre-rendered video loop.** Build it with `python build.py --scene aquarium`
+> — those are the defaults. The rest of this document is kept as the record of
+> why, and as the menu if a second wallpaper is ever wanted.
+
+This was the menu and the constraints, written down so the choice could be
+made on evidence rather than vibes. The pipeline is built to serve any of the
+six concepts below; picking one is a scene module, not a rewrite.
 
 ---
 
@@ -55,18 +59,28 @@ is made of.
 Ranked by how well they use *these specific icons*, not by how pretty the
 still would be.
 
-### 1. Aquarium Dock — *built, see `fa/scenes/aquarium.py`*
+### 1. Aquarium Dock — **chosen**, see `fa/scenes/aquarium.py`
 
 Icons hang suspended in still, sunlit water. Caustics crawl across their
-faces, bubbles rise past them, aurora sky through the waterline overhead.
+faces, bubbles rise past them, light shafts fall from the surface overhead.
 
 - **Why it works:** the painted highlights become literal. Zero conflict
   between artwork and environment.
 - **Risk:** volumetrics plus transmission is the most expensive combination in
-  the project. Needs the render budget in §4 taken seriously.
-- **Effort:** done to a working base. Needs caustics landing visibly on the
-  tiles, a stronger rim, and the waterline treated as a feature.
+  the project. The render budget in §4 is the real constraint.
 - **Best for:** desktop, 16:9 and ultrawide.
+
+Built out and shipped. What changed from the first pass, all of it findable in
+the git history: the caustic projector became a spot rather than an area light
+(a wide source cannot cast a sharp gobo), scattering and absorption were given
+separate densities (one density forces a choice between colourless and foggy),
+the camera was moved below the tiles to look up into the light, and the
+bubbles were re-shaded as films rather than beads of glass.
+
+The aurora is not in the final scene. Below the waterline the background has
+to *start* dark for anything to have contrast against it, which leaves no
+bright sky to put an aurora in. It stays available in
+`environment.build_world(aurora=True)` for whichever concept is shot in air.
 
 ### 2. Bubble Column
 
@@ -199,18 +213,22 @@ rules; §4 of the README explains them.
 
 ---
 
-## 4. Open questions
+## 4. Decisions taken
 
-These change what gets built, and are worth answering before more scene work:
+1. **Concept:** Aquarium Dock.
+2. **Target:** 16:9 desktop, 2560×1440, delivered as an MP4 loop.
+3. **Icon count:** 9, laid on a shallow arc rather than a grid. The arc gives
+   every tile a slightly different angle to the key light, so the specular
+   highlight walks along the row instead of appearing on all nine at once —
+   the difference between a rendered image and a contact sheet.
+4. **Interactivity:** none, so the video-loop path holds and the materials are
+   implemented once.
 
-1. **Which concept?** My ranking: Aquarium Dock if the wallpaper should be
-   beautiful, Aero Shelf if it should be *usable* under desktop icons. They
-   are not far apart in cost and could both be built.
-2. **Desktop, phone, or both?** It drives aspect ratio, which drives
-   composition. Building one scene and cropping it does not work — a 16:9 arc
-   of nine tiles has nothing to show in 9:19.5.
-3. **How many icons on screen?** A hero shot of 5–9 reads far better than a
-   grid of 21, but showcasing a generated *family* argues for the grid. These
-   want different scenes.
-4. **Does it need to react to anything?** Clock, audio, cursor, gyro. Any yes
-   moves the decision toward Three.js and a second material implementation.
+Still open, and cheap to change later:
+
+- **Loop length.** 300 frames / 10s is the default. Longer costs render time
+  linearly and makes the repetition less noticeable; `--frames` is the only
+  change needed and the loop verifier covers any value.
+- **A phone cut.** Would be a sibling scene module, not a crop — a 16:9 arc of
+  nine tiles has nothing to show in 9:19.5. The Bubble Column concept was
+  designed for that shape.
