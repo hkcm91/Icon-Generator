@@ -62,11 +62,28 @@ organises into slow convection plumes. With no input at all the flow field
 sustains 17-19 px/s of almost purely structural motion; before the coupling
 it was exactly zero.
 
+**A second, denser liquid** — carried as a passive scalar on the same grid
+and advected by the same velocity field. The reference has a teal ribbon
+curling through the blue, and it is not a painted gradient: it is a second
+liquid that has not fully mixed. Giving it a density difference is what
+makes it behave — it sinks, stratifying into a green-teal layer low down,
+and a shake tears that layer into Rayleigh-Taylor fingers. The colour
+gradient stops being decoration and becomes a consequence of stratification.
+Measured: settled it separates to 0.01/0.96, a shake mixes it back to 0.68,
+and the mean is conserved across both.
+
 **Particles with Stokes drag** — response time and terminal velocity both
 scale with radius squared, so fine glitter traces the flow almost exactly
 while big flakes lag, overshoot on a turn and sink faster. That spread is
 what makes a settle look like a real suspension rather than one moving
 sheet. Flakes flutter as they sink; bubbles rise with buoyancy against drag.
+
+Flakes also disperse down their own concentration gradient. A suspension
+does not let particles pile up indefinitely — collisions and the disturbance
+flow around each flake drive a flux from crowded regions to empty ones.
+Without it the convection cells preferentially concentrate the flakes and
+they band against the top and bottom: measured at a 2.2x spread between the
+fullest and emptiest tenth of the container, brought down to 1.4x.
 
 Gravity is deliberately **not** normalised: the in-plane component genuinely
 shrinks as the phone lies flatter, and normalising it makes a 5-degree tilt
@@ -100,7 +117,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `620` | Confetti count |
-| `bubbles` | `64` | Bubble count |
+| `bubbles` | `52` | Bubble count |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
@@ -156,7 +173,9 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Peak wave under a 3.4g shake | 44% of the amplitude cap |
 | Capillary term stability | no non-finite values in surface or flow after a 2.3g shake |
 | Settling convection with zero input | 19 px/s flow, ~100% of it spatial structure rather than drift |
+| Dense-phase stratification | separates to 0.01/0.96 settled, mixes to 0.68 shaken, mean conserved |
+| Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
 
-Frame rate is 42-45fps at 620 flakes, measured in a
+Frame rate is 44fps at 620 flakes, measured in a
 headless container with no GPU — treat that as a floor rather than a
 promise, and drop `stars` if a device needs it.

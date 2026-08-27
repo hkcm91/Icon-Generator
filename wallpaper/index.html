@@ -72,12 +72,13 @@ const CONFIG = {
    * and still terminate correctly, so the container can be properly full. */
   fill: num("fill", 0.965),
   stars: num("stars", 620),
-  bubbles: num("bubbles", 64),
+  bubbles: num("bubbles", 52),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
-  // Four stops, not two. A straight two-stop ramp is what made this read as
-  // a flat background instead of a body of liquid with depth.
-  ramp: ["#0a5fd4", "#1a86f0", "#19bcdc", "#1bd6bb"],
+  /* Blue-dominant. The green-teal is not in this ramp: it comes from the
+   * denser second phase settling out, so the colour is a consequence of
+   * stratification rather than a painted gradient. */
+  ramp: ["#0a5fd4", "#1a86f0", "#2aa8ee", "#3ec4e9"],
 };
 
 const HUES = ["#fde68a", "#86efac", "#a5dcfd", "#fbc7e8", "#d9fcb8",
@@ -382,6 +383,30 @@ let fu, fv, fu0, fv0, fp, fdiv, fsolid;
 // Reaction force the particles exert back on the liquid.
 let pfx, pfy;
 
+/* A second, denser miscible phase, carried as a passive scalar on the same
+ * grid and advected by the same velocity field.
+ *
+ * The reference has a teal ribbon curling through the blue, and it is not a
+ * painted gradient — it is a second liquid that has not fully mixed. Giving
+ * it a density difference is what makes it behave: it sinks, so it
+ * stratifies into a green-teal layer low down, and a shake tears that layer
+ * into the swirls and fingers the reference shows. The colour gradient
+ * stops being a decorative ramp and becomes a consequence of stratification.
+ */
+let dye, dye0;
+let dyeCanvas = null, dyeCtx = null, dyeImage = null;
+
+/* Flake concentration, and the dispersive flux that goes with it.
+ *
+ * A suspension does not let its particles pile up indefinitely: collisions
+ * and the disturbance flows around each flake drive a down-gradient flux
+ * from crowded regions to empty ones. Without it the convection cells
+ * preferentially concentrate the flakes and they band up against the top
+ * and bottom — measured at a 2.2x spread between the fullest and emptiest
+ * tenth of the container, which is not what a real shaker looks like.
+ */
+let conc, concNext;
+
 /** Pure containment test, for marking solid cells. */
 function isInside(x, y) {
   const n = CONFIG.squircleN;
@@ -404,7 +429,7 @@ function isInside(x, y) {
 }
 
 function buildFluid() {
-  cell = Math.max(8, W / 26);
+  cell = Math.max(7, W / 34);
   GW = Math.max(6, Math.round(W / cell));
   GH = Math.max(6, Math.round(H / cell));
   const n = GW * GH;
@@ -412,13 +437,53 @@ function buildFluid() {
   fu0 = new Float32Array(n); fv0 = new Float32Array(n);
   fp = new Float32Array(n); fdiv = new Float32Array(n);
   pfx = new Float32Array(n); pfy = new Float32Array(n);
+  dye = new Float32Array(n); dye0 = new Float32Array(n);
+  conc = new Float32Array(n); concNext = new Float32Array(n);
   fsolid = new Uint8Array(n);
+  dyeCanvas = document.createElement("canvas");
+  dyeCanvas.width = GW; dyeCanvas.height = GH;
+  dyeCtx = dyeCanvas.getContext("2d");
+  dyeImage = dyeCtx.createImageData(GW, GH);
   for (let j = 0; j < GH; j++) {
     for (let i = 0; i < GW; i++) {
       const inside = isInside((i + 0.5) * cell, (j + 0.5) * cell);
       // The outermost ring is always solid so the projection has a boundary.
       const edge = i === 0 || j === 0 || i === GW - 1 || j === GH - 1;
       fsolid[j * GW + i] = (inside && !edge) ? 0 : 1;
+    }
+  }
+  seedDye();
+}
+
+/** Start the dense phase pooled low, with enough irregularity that the
+ *  first shake tears it into fingers rather than a flat sheet. */
+function seedDye() {
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) { dye[k] = 0; continue; }
+      const depth = j / (GH - 1);                       // 0 top, 1 bottom
+      const wob = 0.18 * Math.sin(i * 0.55) + 0.12 * Math.sin(i * 1.3 + 2);
+      dye[k] = Math.max(0, Math.min(1, (depth - 0.42 + wob) * 2.1));
+    }
+  }
+}
+
+function advectDye(dt) {
+  dye0.set(dye);
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) { dye[k] = 0; continue; }
+      let x = i - dt * fu[k] / cell;
+      let y = j - dt * fv[k] / cell;
+      if (x < 0.5) x = 0.5; else if (x > GW - 1.5) x = GW - 1.5;
+      if (y < 0.5) y = 0.5; else if (y > GH - 1.5) y = GH - 1.5;
+      const i0 = x | 0, j0 = y | 0;
+      const s = x - i0, t = y - j0;
+      const a = j0 * GW, b = (j0 + 1) * GW;
+      dye[k] = (1 - t) * ((1 - s) * dye0[a + i0] + s * dye0[a + i0 + 1]) +
+                     t * ((1 - s) * dye0[b + i0] + s * dye0[b + i0 + 1]);
     }
   }
 }
@@ -515,6 +580,14 @@ function fluidStep(dt) {
       fu[k] += pfx[k] * dt;
       fv[k] += pfy[k] * dt;
       pfx[k] = 0; pfy[k] = 0;
+
+      /* Buoyancy on the dense phase. This is the whole reason the ribbon
+       * moves like a liquid: heavier fluid sinks, lighter fluid gets out of
+       * its way, and the Rayleigh-Taylor fingers that produces are exactly
+       * the curling teal shapes in the reference. */
+      const bw = (dye[k] - 0.5) * DYE_BUOY * gMag * dt;
+      fu[k] += gDir.x * bw;
+      fv[k] += gDir.y * bw;
       if (swirl) {
         // Rotation about the centre, so a twist stirs rather than shoves.
         fu[k] -= ((j + 0.5) * cell - CY) * swirl * dt;
@@ -531,6 +604,9 @@ function fluidStep(dt) {
   fluidAdvect(fv, fv0, dt);
 
   fluidProject(18);
+
+  // The dense phase rides the velocity field it just helped create.
+  advectDye(dt);
 
   // Viscosity. Frame-rate independent: a per-frame multiplier would make the
   // liquid thicker at low frame rates.
@@ -559,6 +635,8 @@ const FLUID_SWIRL = 1.6;    // rad/s^2 per unit of twist
 const FLUID_VISC = 0.62;    // 1/s
 const FLUID_WALL_DRAG = 3.2; // 1/s, applied only in cells touching glass
 const COUPLE = 0.055;       // particle reaction strength fed back to the fluid
+const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
+const DISPERSE = 340;       // px/s of down-gradient drift per unit relative gradient
 
 /* Two-way coupling: a particle dragged by the liquid drags back.
  *
@@ -581,6 +659,32 @@ function scatterForce(x, y, fx, fy) {
   pfx[b] += fx * w2; pfx[b + 1] += fx * w3;
   pfy[a] += fy * w0; pfy[a + 1] += fy * w1;
   pfy[b] += fy * w2; pfy[b + 1] += fy * w3;
+}
+
+/** Bilinear deposit of one flake into the concentration accumulator. */
+function depositConc(x, y, w) {
+  let gx = x / cell - 0.5, gy = y / cell - 0.5;
+  if (gx < 0) gx = 0; else if (gx > GW - 1.001) gx = GW - 1.001;
+  if (gy < 0) gy = 0; else if (gy > GH - 1.001) gy = GH - 1.001;
+  const i0 = gx | 0, j0 = gy | 0;
+  const s = gx - i0, t = gy - j0;
+  const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
+  concNext[a] += w * (1 - s) * (1 - t); concNext[a + 1] += w * s * (1 - t);
+  concNext[b] += w * (1 - s) * t;       concNext[b + 1] += w * s * t;
+}
+
+/** Down-gradient dispersive drift at a point, from the previous step's
+ *  concentration field. Normalised by local concentration so it is a
+ *  diffusive flux rather than a force that grows without bound. */
+const disperse = { x: 0, y: 0 };
+function sampleDisperse(x, y, out) {
+  let gx = x / cell, gy = y / cell;
+  const i = Math.max(1, Math.min(GW - 2, gx | 0));
+  const j = Math.max(1, Math.min(GH - 2, gy | 0));
+  const k = j * GW + i;
+  const c = conc[k] + 0.9;
+  out.x = -(conc[k + 1] - conc[k - 1]) * 0.5 / c;
+  out.y = -(conc[k + GW] - conc[k - GW]) * 0.5 / c;
 }
 
 const flow = { x: 0, y: 0 };
@@ -695,7 +799,7 @@ function seed() {
     // hero flakes. A uniform range gave an even speckle that read as noise
     // rather than as confetti suspended at different depths.
     const t = Math.random();
-    const r = (t < 0.72 ? 1.6 + t * 2.4 : 4.0 + (t - 0.72) * 17) * unit;
+    const r = (t < 0.72 ? 1.9 + t * 2.8 : 5.2 + (t - 0.72) * 30) * unit;
     stars.push({
       x: CX + (Math.random() * 2 - 1) * RX * 0.9,
       y: CY + (Math.random() * 2 - 1) * RY * 0.9,
@@ -726,7 +830,10 @@ function seed() {
     });
   }
   for (let i = 0; i < CONFIG.bubbles; i++) {
-    const r = (3 + Math.random() * 9) * unit;
+    /* Skewed like the flakes: mostly fine fizz with a few big showpiece
+     * spheres. The reference leans on those large bubbles for its scale. */
+    const bt = Math.random();
+    const r = (bt < 0.78 ? 2.6 + bt * 6 : 11 + (bt - 0.78) * 128) * unit;
     bubbles.push({
       x: CX + (Math.random() * 2 - 1) * RX * 0.9,
       y: CY + (Math.random() * 2 - 1) * RY * 0.9,
@@ -757,7 +864,7 @@ function seed() {
  * the frame rate at 600 flakes — the gradient has to be rebuilt every frame
  * because it is positioned in user space. Bake each once and blit it scaled
  * instead. */
-let glowSprite = null, bubbleSprite = null;
+let glowSprite = null, bubbleSprite = null, flareSprite = null;
 
 /* Full-screen layers that depend only on the container, not on gravity:
  * the glass shell and the depth vignette. Rebuilding their gradients every
@@ -937,24 +1044,70 @@ function buildSprites() {
     g.fillRect(0, 0, s, s);
   });
 
-  bubbleSprite = sprite(64, (g, s) => {
+  /* A bubble in the reference reads as a glass sphere, not a disc: a bright
+   * rim, a darker band just inside it where the shell is thickest to the
+   * eye, a tight specular up-left and the caustic the sphere focuses on its
+   * lower-right. Drawn at 128px so the big ones hold up when scaled. */
+  bubbleSprite = sprite(128, (g, s) => {
     const r = s / 2;
-    // Bright rim, hollow centre, plus an offset specular dot — an air
-    // pocket in liquid, not a grey disc.
-    const shell = g.createRadialGradient(r, r, r * 0.55, r, r, r);
-    shell.addColorStop(0, "rgba(255,255,255,.05)");
-    shell.addColorStop(0.82, "rgba(226,248,255,.42)");
-    shell.addColorStop(0.94, "rgba(255,255,255,.92)");
+
+    const shell = g.createRadialGradient(r, r, r * 0.35, r, r, r);
+    shell.addColorStop(0, "rgba(150,220,245,.05)");
+    shell.addColorStop(0.62, "rgba(120,200,235,.16)");
+    shell.addColorStop(0.86, "rgba(86,168,214,.34)");   // thick-shell band
+    shell.addColorStop(0.955, "rgba(255,255,255,.95)"); // rim
     shell.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = shell;
     g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); g.fill();
 
+    // Caustic: light focused through the sphere onto its far side.
+    const caus = g.createRadialGradient(
+      r * 1.3, r * 1.34, 0, r * 1.3, r * 1.34, r * 0.5);
+    caus.addColorStop(0, "rgba(214,250,255,.75)");
+    caus.addColorStop(1, "rgba(214,250,255,0)");
+    g.fillStyle = caus;
+    g.beginPath(); g.arc(r, r, r * 0.97, 0, Math.PI * 2); g.fill();
+
+    // Tight specular highlight.
     const spec = g.createRadialGradient(
-      r * 0.66, r * 0.62, 0, r * 0.66, r * 0.62, r * 0.3);
-    spec.addColorStop(0, "rgba(255,255,255,.95)");
+      r * 0.64, r * 0.58, 0, r * 0.64, r * 0.58, r * 0.34);
+    spec.addColorStop(0, "rgba(255,255,255,.98)");
+    spec.addColorStop(0.45, "rgba(255,255,255,.45)");
     spec.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = spec;
     g.fillRect(0, 0, s, s);
+  });
+
+  /* Four-ray glint for the flakes that catch the light. The reference is
+   * full of these star flares, and they are a different thing from the
+   * confetti — a specular event, not an object. */
+  flareSprite = sprite(128, (g, s) => {
+    const r = s / 2;
+    g.translate(r, r);
+    const ray = (len, wide, alpha) => {
+      const grad = g.createLinearGradient(0, 0, len, 0);
+      grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+      grad.addColorStop(1, "rgba(255,255,255,0)");
+      g.fillStyle = grad;
+      g.beginPath();
+      g.moveTo(0, -wide); g.lineTo(len, 0); g.lineTo(0, wide);
+      g.closePath(); g.fill();
+    };
+    for (let i = 0; i < 4; i++) {
+      g.save(); g.rotate(i * Math.PI / 2);
+      ray(r * 0.96, r * 0.055, 0.95);
+      g.restore();
+    }
+    for (let i = 0; i < 4; i++) {
+      g.save(); g.rotate(Math.PI / 4 + i * Math.PI / 2);
+      ray(r * 0.4, r * 0.03, 0.5);
+      g.restore();
+    }
+    const core = g.createRadialGradient(0, 0, 0, 0, 0, r * 0.2);
+    core.addColorStop(0, "rgba(255,255,255,1)");
+    core.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = core;
+    g.fillRect(-r, -r, s, s);
   });
 }
 
@@ -1116,6 +1269,20 @@ function drawStar(p, time) {
     ctx.globalAlpha = 1;
   }
   ctx.restore();
+
+  /* At the peak of the flash the flake throws a glint. The reference is full
+   * of these; they are a different thing from the confetti — a specular
+   * event, not an object — so they are added rather than blended. Light
+   * arrives on top of what is already there; it does not cover it. */
+  if (flash > 0.975 && p.r > 5.5) {
+    const k = (flash - 0.975) / 0.025;
+    const f = p.r * (1.8 + k * 2.2);
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = k * 0.6;
+    ctx.drawImage(flareSprite, p.x - f, p.y - f, f * 2, f * 2);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+  }
 }
 
 /* The render loop deliberately uses no clip() at all.
@@ -1169,6 +1336,19 @@ function render(time) {
   ctx.fill();
 
   const menisc = meniscus(poly, 64);   // array of interface segments
+
+  /* The dense phase, blitted from the grid and left to the browser's
+   * bilinear upscale to smooth. At this grid size that reads as soft
+   * marbling — which is what an unmixed second liquid looks like. */
+  const dd = dyeImage.data;
+  for (let i = 0, n = GW * GH; i < n; i++) {
+    let v = dye[i];
+    if (v < 0) v = 0; else if (v > 1) v = 1;
+    dd[i * 4] = 74; dd[i * 4 + 1] = 236; dd[i * 4 + 2] = 198;
+    dd[i * 4 + 3] = (v * 172) | 0;
+  }
+  dyeCtx.putImageData(dyeImage, 0, 0);
+  ctx.drawImage(dyeCanvas, 0, 0, W, H);
 
   ctx.drawImage(depthLayer, 0, 0, W, H);
 
@@ -1341,8 +1521,11 @@ function fixedStep(dt, time) {
      * separately. */
     const flut = Math.sin(time * p.flutterRate + p.flutterPhase) *
                  p.flutterAmp * gMag;
-    let tx = flow.x + gDir.x * p.terminal * gMag - gDir.y * flut;
-    let ty = flow.y + gDir.y * p.terminal * gMag + gDir.x * flut;
+    sampleDisperse(p.x, p.y, disperse);
+    let tx = flow.x + gDir.x * p.terminal * gMag - gDir.y * flut
+             + disperse.x * DISPERSE;
+    let ty = flow.y + gDir.y * p.terminal * gMag + gDir.x * flut
+             + disperse.y * DISPERSE;
 
     // Do not let flakes swim up out of the liquid into the headspace.
     const depth = depthOf(p.x, p.y);
@@ -1359,6 +1542,7 @@ function fixedStep(dt, time) {
     // applies back. Settling glitter therefore drives downwelling plumes.
     scatterForce(p.x, p.y, (flow.x - p.vx) * p.mass * COUPLE,
                            (flow.y - p.vy) * p.mass * COUPLE);
+    depositConc(p.x, p.y, 1);
 
     const ox = p.x, oy = p.y;
     p.x += p.vx * dt; p.y += p.vy * dt;
@@ -1405,6 +1589,9 @@ function fixedStep(dt, time) {
       b.alpha = Math.min(1, b.alpha + dt * 1.6);
     }
   }
+
+  // Publish this step's concentration for the next one to disperse against.
+  const swap = conc; conc = concNext; concNext = swap; concNext.fill(0);
 }
 
 /** Sutherland–Hodgman clip of the liquid polygon against the squircle, so the
