@@ -27,7 +27,7 @@ import bpy
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from aero import materials, render, spec as spec_mod, tile as tile_mod  # noqa: E402
+from aero import deepfield, materials, render, spec as spec_mod, tile as tile_mod  # noqa: E402
 from aero.loop import LoopClock, bake, bake_socket  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -43,7 +43,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", default=str(HERE / "specs" / "aqua-default.json"))
     parser.add_argument("--icons", default=None, help="directory of exported icon PNGs")
-    parser.add_argument("--scene", default="studio", choices=["studio"])
+    parser.add_argument("--scene", default="deepfield", choices=["deepfield", "studio"])
+    parser.add_argument(
+        "--framing",
+        default=None,
+        choices=["phone", "desktop"],
+        help="which camera to render deepfield from; inferred from --target if omitted",
+    )
     parser.add_argument("--target", default="contact", choices=sorted(render.TARGETS))
     parser.add_argument("--engine", default="cycles", choices=["cycles", "eevee"])
     parser.add_argument("--samples", type=int, default=48)
@@ -52,6 +58,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--columns", type=int, default=3, help="tiles across in studio")
     parser.add_argument("--rows", type=int, default=1)
+    parser.add_argument("--bubbles", type=int, default=90)
+    parser.add_argument("--rays", type=int, default=7)
+    parser.add_argument("--far-tiles", type=int, default=12)
+    parser.add_argument("--seed", type=int, default=20260826)
     parser.add_argument("--still", action="store_true", help="render one frame")
     parser.add_argument("--animation", action="store_true", help="render the whole loop")
     parser.add_argument("--video", action="store_true", help="encode to MP4 instead of PNGs")
@@ -214,7 +224,25 @@ def main() -> None:
     clock = LoopClock(frames=args.frames, fps=args.fps)
 
     scene = reset_scene()
-    build_studio(args, container, clock)
+    if args.scene == "deepfield":
+        # Portrait targets get the phone camera, landscape ones the desktop
+        # camera, unless told otherwise — rendering a portrait composition into
+        # a 16:9 frame is the mistake this inference exists to prevent.
+        target = render.TARGETS[args.target]
+        framing = args.framing or ("phone" if target.height >= target.width else "desktop")
+        deepfield.build(
+            container,
+            clock,
+            icons=tile_mod.find_icons(args.icons) if args.icons else [],
+            framing=framing,
+            bubbles=args.bubbles,
+            rays=args.rays,
+            far_tiles=args.far_tiles,
+            seed=args.seed,
+        )
+        print(f"built deepfield, framing={framing}")
+    else:
+        build_studio(args, container, clock)
 
     render.apply_loop(scene, clock.frames, clock.fps)
     render.apply_target(scene, args.target, args.percent)

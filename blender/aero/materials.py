@@ -51,6 +51,7 @@ def aero_glass(
     rim: tuple[float, float, float, float] = AQUA_BRIGHT,
     roughness: float = 0.06,
     density: float = 1.6,
+    rim_strength: float = 2.5,
 ) -> bpy.types.Material:
     """
     Thick aqua glass with a Fresnel rim glow.
@@ -91,7 +92,7 @@ def aero_glass(
     ramp.inputs["From Min"].default_value = 0.25
     ramp.inputs["From Max"].default_value = 1.0
     ramp.inputs["To Min"].default_value = 0.0
-    ramp.inputs["To Max"].default_value = 2.5
+    ramp.inputs["To Max"].default_value = rim_strength
     ramp.clamp = True
     links.new(fresnel.outputs["Facing"], ramp.inputs["Value"])
 
@@ -277,6 +278,298 @@ def caustic_phase(material: bpy.types.Material):
     """The 0..1 phase output socket driving the caustics. Keyframe this."""
     node = material.node_tree.nodes.get("CausticPhase")
     return None if node is None else node.outputs["Value"]
+
+
+def water_volume(
+    name: str = "WaterColumn",
+    tint: tuple[float, float, float, float] = (0.106, 0.404, 0.573, 1.0),
+    density: float = 0.032,
+    anisotropy: float = 0.35,
+) -> bpy.types.Material:
+    """
+    The medium everything else is seen through.
+
+    This is the single most important material in the scene and the one that
+    does the compositional work: distance fog is what turns the far field into
+    colour rather than shape, so the icon tiles drifting at the back become
+    unreadable *by physics* rather than by being blurred in post. It is also
+    what makes god rays visible at all — a light shaft is only the medium it
+    passes through.
+
+    Forward anisotropy matters more than it sounds. Water scatters light
+    forward, so shafts brighten as they point toward the camera, which is the
+    difference between beams that look lit and beams that look painted on.
+    """
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+
+    output = _new(nodes, "ShaderNodeOutputMaterial", (400, 0))
+    volume = _new(nodes, "ShaderNodeVolumePrincipled", (150, 0))
+    _set(volume, "Color", tint)
+    _set(volume, "Density", density)
+    _set(volume, "Anisotropy", anisotropy)
+    _set(volume, ("Emission Strength",), 0.0)
+    links.new(volume.outputs["Volume"], output.inputs["Volume"])
+    return material
+
+
+def god_ray(
+    name: str = "GodRay",
+    colour: tuple[float, float, float, float] = (0.706, 0.910, 1.0, 1.0),
+    strength: float = 1.1,
+) -> bpy.types.Material:
+    """
+    A light shaft, as a card rather than as light.
+
+    Real volumetric shafts need a textured light shining through a medium, and
+    they cost accordingly — the volume has to be marched for every sample of
+    every frame. At the scale a wallpaper is viewed, nobody can tell the
+    difference between that and an emissive card with the right falloff, and
+    the card renders in both engines, has no noise, and loops by animating one
+    number.
+
+    The falloff is the whole trick: bright at the top where the shaft leaves
+    the surface, gone before it reaches the bottom of frame, and feathered to
+    nothing at both vertical edges so the card never shows its own silhouette.
+    """
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+
+    output = _new(nodes, "ShaderNodeOutputMaterial", (600, 0))
+    coords = _new(nodes, "ShaderNodeTexCoord", (-600, 0))
+    separate = _new(nodes, "ShaderNodeSeparateXYZ", (-440, 0))
+    links.new(coords.outputs["UV"], separate.inputs["Vector"])
+
+    # Vertical: full where the shaft leaves the surface, gone well before the
+    # bottom of frame. Smoothstepped so the top of the card doesn't show a line
+    # either.
+    vertical = _new(nodes, "ShaderNodeMapRange", (-280, 90))
+    vertical.interpolation_type = "SMOOTHSTEP"
+    vertical.inputs["From Min"].default_value = 0.18
+    vertical.inputs["From Max"].default_value = 1.0
+    vertical.inputs["To Min"].default_value = 0.0
+    vertical.inputs["To Max"].default_value = 1.0
+    vertical.clamp = True
+    links.new(separate.outputs["Y"], vertical.inputs["Value"])
+
+    # Horizontal: a smooth hump, so the card has no visible left or right edge.
+    centred = _new(nodes, "ShaderNodeMath", (-280, -140))
+    centred.operation = "SUBTRACT"
+    centred.inputs[1].default_value = 0.5
+    links.new(separate.outputs["X"], centred.inputs[0])
+
+    absolute = _new(nodes, "ShaderNodeMath", (-120, -140))
+    absolute.operation = "ABSOLUTE"
+    links.new(centred.outputs["Value"], absolute.inputs[0])
+
+    hump = _new(nodes, "ShaderNodeMath", (40, -140))
+    hump.operation = "SUBTRACT"
+    hump.inputs[0].default_value = 0.5
+    links.new(absolute.outputs["Value"], hump.inputs[1])
+
+    # Smoothstep, not a power curve. A power curve still has a finite slope
+    # where it reaches zero, and a finite slope at the edge of an emissive card
+    # is a visible straight line down the frame — precisely the tell that gives
+    # away a fake light shaft. Smoothstep leaves at zero gradient, so the card
+    # has no findable edge. (Map Range carries the interpolation modes; the
+    # Math node has no smoothstep.)
+    feather = _new(nodes, "ShaderNodeMapRange", (200, -220))
+    feather.interpolation_type = "SMOOTHSTEP"
+    feather.inputs["From Min"].default_value = 0.0
+    feather.inputs["From Max"].default_value = 0.5
+    feather.inputs["To Min"].default_value = 0.0
+    feather.inputs["To Max"].default_value = 1.0
+    feather.clamp = True
+    links.new(hump.outputs["Value"], feather.inputs["Value"])
+
+    combined = _new(nodes, "ShaderNodeMath", (200, 60))
+    combined.operation = "MULTIPLY"
+    links.new(vertical.outputs["Result"], combined.inputs[0])
+    links.new(feather.outputs["Result"], combined.inputs[1])
+
+    # Kept at or below 1. A Mix Shader clamps its Fac, so scaling past 1 does
+    # not brighten the shaft — it flattens the falloff into a solid slab with
+    # hard edges, which is what a light shaft must never have.
+    scaled = _new(nodes, "ShaderNodeMath", (360, 60))
+    scaled.operation = "MULTIPLY"
+    scaled.inputs[1].default_value = 0.85
+    links.new(combined.outputs["Value"], scaled.inputs[0])
+
+    emission = _new(nodes, "ShaderNodeEmission", (360, -60))
+    emission.inputs["Color"].default_value = colour
+    emission.inputs["Strength"].default_value = strength
+
+    transparent = _new(nodes, "ShaderNodeBsdfTransparent", (360, -220))
+    mix = _new(nodes, "ShaderNodeMixShader", (480, 0))
+    links.new(scaled.outputs["Value"], mix.inputs["Fac"])
+    links.new(transparent.outputs["BSDF"], mix.inputs[1])
+    links.new(emission.outputs["Emission"], mix.inputs[2])
+    links.new(mix.outputs["Shader"], output.inputs["Surface"])
+    return material
+
+
+def bubble(
+    name: str = "Bubble",
+    colour: tuple[float, float, float, float] = (0.827, 0.969, 1.0, 1.0),
+    strength: float = 2.2,
+) -> bpy.types.Material:
+    """
+    A bubble as a camera-facing disc: bright rim, near-empty middle.
+
+    Modelling bubbles as glass spheres is the obvious approach and the wrong
+    one here. Every one of them would need transmission rays, and at the depth
+    of field this scene runs they resolve to a soft ring of light regardless —
+    so the ring is what gets built. A hundred of these cost less than one
+    sphere.
+    """
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+
+    output = _new(nodes, "ShaderNodeOutputMaterial", (600, 0))
+    coords = _new(nodes, "ShaderNodeTexCoord", (-600, 0))
+
+    # Radial distance from the centre of the quad.
+    centre = _new(nodes, "ShaderNodeVectorMath", (-440, 0))
+    centre.operation = "SUBTRACT"
+    centre.inputs[1].default_value = (0.5, 0.5, 0.0)
+    links.new(coords.outputs["UV"], centre.inputs[0])
+
+    length = _new(nodes, "ShaderNodeVectorMath", (-280, 0))
+    length.operation = "LENGTH"
+    links.new(centre.outputs["Vector"], length.inputs[0])
+
+    # Ring: bright just inside the edge, dark in the middle, nothing outside.
+    ring = _new(nodes, "ShaderNodeValToRGB", (-120, 0))
+    ring.color_ramp.interpolation = "B_SPLINE"
+    elements = ring.color_ramp.elements
+    elements[0].position = 0.0
+    elements[0].color = (0.06, 0.06, 0.06, 1.0)
+    elements[1].position = 0.42
+    elements[1].color = (1.0, 1.0, 1.0, 1.0)
+    tail = elements.new(0.5)
+    tail.color = (0.0, 0.0, 0.0, 1.0)
+    links.new(length.outputs["Value"], ring.inputs["Fac"])
+
+    emission = _new(nodes, "ShaderNodeEmission", (200, 60))
+    emission.inputs["Color"].default_value = colour
+    emission.inputs["Strength"].default_value = strength
+
+    transparent = _new(nodes, "ShaderNodeBsdfTransparent", (200, -140))
+
+    # The fade handle, keyframed per bubble so the restart happens at zero
+    # opacity and cannot be seen. It gates the ring rather than the emission
+    # strength: fading strength alone would leave a black disc behind.
+    opacity = _new(nodes, "ShaderNodeValue", (200, -280))
+    opacity.name = "BubbleFade"
+    opacity.label = "BubbleFade"
+    opacity.outputs["Value"].default_value = 1.0
+
+    gate = _new(nodes, "ShaderNodeMath", (400, -200))
+    gate.operation = "MULTIPLY"
+    links.new(ring.outputs["Color"], gate.inputs[0])
+    links.new(opacity.outputs["Value"], gate.inputs[1])
+
+    mix = _new(nodes, "ShaderNodeMixShader", (560, 0))
+    links.new(gate.outputs["Value"], mix.inputs["Fac"])
+    links.new(transparent.outputs["BSDF"], mix.inputs[1])
+    links.new(emission.outputs["Emission"], mix.inputs[2])
+    links.new(mix.outputs["Shader"], output.inputs["Surface"])
+    return material
+
+
+def radial_glow(
+    name: str = "Glow",
+    colour: tuple[float, float, float, float] = (1.0, 0.988, 0.937, 1.0),
+    strength: float = 24.0,
+    falloff: float = 2.6,
+) -> bpy.types.Material:
+    """
+    A soft round light source on a quad — the sun seen through the surface.
+
+    The obvious version of this is a bright plane, and a bright plane has four
+    corners. Depth of field blurs them but does not remove them: a rectangle
+    thrown out of focus is still a rectangle, just a soft one, and it reads
+    instantly as a mistake. The brightness has to fall off radially *in the
+    material* so there is no edge to blur in the first place.
+    """
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+
+    output = _new(nodes, "ShaderNodeOutputMaterial", (600, 0))
+    coords = _new(nodes, "ShaderNodeTexCoord", (-600, 0))
+
+    centre = _new(nodes, "ShaderNodeVectorMath", (-440, 0))
+    centre.operation = "SUBTRACT"
+    centre.inputs[1].default_value = (0.5, 0.5, 0.0)
+    links.new(coords.outputs["UV"], centre.inputs[0])
+
+    length = _new(nodes, "ShaderNodeVectorMath", (-280, 0))
+    length.operation = "LENGTH"
+    links.new(centre.outputs["Vector"], length.inputs[0])
+
+    # 1 at the centre, 0 at radius 0.5 — the inscribed circle, so the quad's
+    # corners are already dark before its edge is reached.
+    fade = _new(nodes, "ShaderNodeMapRange", (-120, 0))
+    fade.interpolation_type = "SMOOTHSTEP"
+    fade.inputs["From Min"].default_value = 0.5
+    fade.inputs["From Max"].default_value = 0.0
+    fade.inputs["To Min"].default_value = 0.0
+    fade.inputs["To Max"].default_value = 1.0
+    fade.clamp = True
+    links.new(length.outputs["Value"], fade.inputs["Value"])
+
+    concentrate = _new(nodes, "ShaderNodeMath", (60, 0))
+    concentrate.operation = "POWER"
+    concentrate.inputs[1].default_value = falloff
+    links.new(fade.outputs["Result"], concentrate.inputs[0])
+
+    emission = _new(nodes, "ShaderNodeEmission", (260, 80))
+    emission.inputs["Color"].default_value = colour
+    emission.inputs["Strength"].default_value = strength
+
+    transparent = _new(nodes, "ShaderNodeBsdfTransparent", (260, -120))
+    mix = _new(nodes, "ShaderNodeMixShader", (440, 0))
+    links.new(concentrate.outputs["Value"], mix.inputs["Fac"])
+    links.new(transparent.outputs["BSDF"], mix.inputs[1])
+    links.new(emission.outputs["Emission"], mix.inputs[2])
+    links.new(mix.outputs["Shader"], output.inputs["Surface"])
+    return material
+
+
+def water_surface(
+    name: str = "Surface",
+    scale: float = 0.6,
+    strength: float = 6.0,
+) -> bpy.types.Material:
+    """
+    The underside of the water, which is the brightest thing in the frame.
+
+    Built on the same caustic network as the backdrop — seen from below, the
+    surface *is* a caustic pattern, just a much brighter one. The difference is
+    the range: the dark end goes to near-black rather than deep teal, because
+    what is being looked at between the bright filaments is the sky refracting
+    at a shallow angle, which is dark, not blue.
+    """
+    material = caustic_backdrop(
+        name=name,
+        shallow=(1.0, 1.0, 1.0, 1.0),
+        deep=(0.055, 0.243, 0.365, 1.0),
+        scale=scale,
+        strength=strength,
+    )
+    return material
 
 
 def aqua_world(

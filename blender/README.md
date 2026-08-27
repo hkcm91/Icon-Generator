@@ -25,19 +25,35 @@ Two ways, and they do the same thing:
 ```bash
 # Blender as a Python module — works headless, no GUI, no GPU
 pip install bpy
-python3 build_scene.py --target contact --still --out out/hero
+python3 build_scene.py --target preview --percent 45 --still --out out/look
 
 # An installed Blender — this is the one you want for final renders
 blender --background --python build_scene.py -- --engine eevee --target phone --animation --video --out out/loop.mp4
+```
+
+The two deliverables, once you have a GPU under it:
+
+```bash
+# phone — portrait, 1440x3120, ten seconds
+blender --background --python build_scene.py -- \
+  --engine eevee --target phone --icons ~/icons --animation --video --out out/loop-phone.mp4
+
+# desktop — the same scene through the other camera
+blender --background --python build_scene.py -- \
+  --engine eevee --target desktop --icons ~/icons --animation --video --out out/loop-desktop.mp4
 ```
 
 Useful flags:
 
 | Flag | Does |
 | --- | --- |
+| `--scene` | `deepfield` (the wallpaper) or `studio` (look-dev rig) |
+| `--framing` | `phone` or `desktop` camera; inferred from `--target`'s aspect if omitted |
 | `--spec PATH` | container spec, or a project JSON with a `spec` key |
 | `--icons DIR` | directory of exported icon PNGs, applied to the tile faces in sorted order |
 | `--target` | `contact`, `preview`, `phone`, `phone-1080`, `phone-pan`, `desktop`, `desktop-1440` |
+| `--bubbles` / `--rays` / `--far-tiles` | population counts in the deepfield scene |
+| `--seed` | scatter seed; same seed, same scene, forever |
 | `--engine` | `cycles` (CPU, works anywhere) or `eevee` (needs a GPU, ~100× faster) |
 | `--frames` / `--fps` | loop length; 300 @ 30 is ten seconds |
 | `--columns` / `--rows` | tile grid in the studio scene |
@@ -92,6 +108,33 @@ For anything that travels one way and is replaced by a successor — bubbles,
 drifting particles — use `clock.rise()` for the travel and `LoopClock.fade()`
 for the opacity envelope, so the restart happens at zero alpha.
 
+## The scene
+
+`--scene deepfield` is the wallpaper: a column of water with the surface
+overhead and bright, the deep falling away below, shafts raking down, bubbles
+rising, and tiles from the icon set drifting in the far field.
+
+It is composed around one rule. **The icon grid sits in the darkest, quietest
+band of the frame.** Bright aqua icons on a bright aqua background stop being
+objects and become texture, so the wallpaper has to be the same world seen from
+somewhere darker — and being underwater is the cheapest honest way to get a
+bright top and a dark middle. Every number in `deepfield.py` is downstream of
+that.
+
+The far-field tiles are the part with the most obvious way to fail: squircles
+behind squircles is camouflage. Three things stop it, and all three are needed
+— the tiles sit far enough back that the medium has eaten their contrast, the
+aperture throws them past recognition, and their angular size is deliberately
+held well under the real grid's. If they ever start reading as tiles, pull
+`--far-tiles` down or push the depth range out; do not "fix" it by blurring
+harder, because that fights the DOF that is already doing the work.
+
+Two cameras, one scene. Rendering a portrait master and cropping it for desktop
+is the usual advice and it is wrong here: the composition is a *vertical* value
+gradient, and a 16:9 crop either loses the bright surface or drags it down into
+the icon band. The desktop camera is rolled and shifted so the brightness
+gathers right, because desktop icons cluster left.
+
 ## Layout
 
 ```
@@ -99,18 +142,34 @@ build_scene.py     CLI: build, save, render
 aero/spec.py       ContainerSpec — mirrors src/core/spec.ts
 aero/geometry.py   the contour — ported from src/core/geometry.ts
 aero/tile.py       that contour, extruded, bevelled, with a glyph plate
-aero/materials.py  aqua glass, caustic backdrop, glyph face, world
+aero/deepfield.py  the wallpaper scene: water, surface, shafts, bubbles, far field
+aero/materials.py  glass, caustics, medium, shafts, bubbles, glow
 aero/loop.py       phase helpers and keyframe baking
 aero/render.py     engines, output targets, video settings
 specs/             container specs
+tests/             geometry and loop self-checks — no Blender needed
 out/               build artifacts — gitignored
 ```
 
+## Checks
+
+```bash
+python3 tests/test_geometry.py   # contour is deterministic and stays in its box
+python3 tests/test_loop.py       # frame N+1 lands exactly on frame 1
+```
+
+Both run on plain Python. `spec.py`, `geometry.py` and `loop.py` import nothing
+from `bpy` on purpose, so the parts that have to agree with the TypeScript — and
+the phase maths the whole loop rests on — can be checked anywhere.
+
 ## Status
 
-`--scene studio` is the look-dev rig: tiles, glass, key and fill, a caustic
-backdrop, and the loop clock. It is the part every candidate wallpaper concept
-needs, which is why it was built before the concept was chosen.
+Built and rendering, in both framings. What is *not* done is the art direction:
+the current numbers give the right value structure and the right motion, but the
+palette, the shaft density and the far-field population all want an eye on them
+at full resolution, which means EEVEE on a GPU rather than CPU previews. Start
+there:
 
-The wallpaper scene itself is not built yet. See `docs/AERO-WALLPAPER.md` for
-the concepts under consideration and what each one adds on top of this rig.
+```bash
+python3 build_scene.py --save-blend out/aero.blend   # then open it
+```

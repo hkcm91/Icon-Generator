@@ -109,18 +109,51 @@ def bake(obj, data_path: str, fn, frames: int, index: int = -1) -> None:
             point.interpolation = "LINEAR"
 
 
-def bake_socket(socket, fn, frames: int) -> None:
+def bake_socket(socket, fn, frames: int, step: int = 1) -> None:
     """
     Bake a shader socket's `default_value` across the loop.
 
     Same idea as `bake`, but node sockets are keyframed on themselves rather
-    than through a data path on an object. Interpolation is left alone: the
-    only thing baked this way is a linear phase ramp, and forcing LINEAR here
-    would need the node tree's action, which is a different lookup again.
+    than through a data path on an object.
+
+    `step` samples every Nth frame instead of every one. A scene with a hundred
+    fading particles is a hundred curves, and at 300 frames each that is thirty
+    thousand keyframes to build, save and evaluate for a signal that is a
+    smooth envelope. Sampling it every few frames is indistinguishable and
+    costs a fraction. Keep step at 1 for anything with a hard edge in it.
+
+    The closing key lands on `frames + 1`, which is never rendered — it exists
+    so the curve interpolates correctly through the last rendered frame instead
+    of flattening off early.
     """
-    for frame in range(1, frames + 1):
+    for frame in list(range(1, frames + 1, step)) + [frames + 1]:
         socket.default_value = fn(frame)
         socket.keyframe_insert(data_path="default_value", frame=frame)
+
+
+def bake_linear(obj, data_path: str, start, end, frames: int, index: int = -1) -> None:
+    """
+    Two keyframes for a value that moves at a constant rate across the loop.
+
+    Anything travelling in a straight line — a rising bubble, a drifting
+    particle — needs exactly two keys and linear interpolation. Baking three
+    hundred of them instead describes the same straight line with a hundred and
+    fifty times the data.
+
+    The second key is at `frames + 1`, the frame that is deliberately not
+    rendered, so the last rendered frame sits one step short of the start
+    value and the wrap is seamless rather than doubled.
+    """
+    for frame, value in ((1, start), (frames + 1, end)):
+        if index >= 0:
+            getattr_path(obj, data_path)[index] = value
+        else:
+            set_path(obj, data_path, value)
+        obj.keyframe_insert(data_path=data_path, index=index, frame=frame)
+
+    for fcurve in fcurves_of(obj):
+        for point in fcurve.keyframe_points:
+            point.interpolation = "LINEAR"
 
 
 def fcurves_of(obj) -> list:

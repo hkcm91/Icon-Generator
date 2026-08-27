@@ -2,9 +2,11 @@
 
 The icon set exists. This is the scene it lives in.
 
-Nothing here is decided yet. This is the shortlist, the constraints that
-generated it, and what each option would cost. The rig that all of them need is
-already built and rendering — see [`blender/README.md`](../blender/README.md).
+**Decided: Deep Field, with icon tiles as its far field. Video loop, phone and
+desktop, one scene through two cameras.** It is built — see
+[`blender/README.md`](../blender/README.md) for how to run it. The rest of this
+document is the reasoning that got there, kept because the constraint in the
+next section governs every future change to the scene.
 
 ## The trap, first
 
@@ -149,15 +151,30 @@ launcher in question actually does that, since it doubles the pixels.
 Ten seconds at 30fps is the working default. Long enough that the loop is not
 obvious, short enough to render and to ship.
 
-## Open decisions
+## What was decided, and what it cost
 
-1. **Which concept**, or which combination.
-2. **Phone, desktop, or both.** It changes the composition, not just the
-   resolution: a 16:9 desktop frame has no dead middle band to hide the icon
-   grid in.
-3. **Video or interactive.** Video is one pipeline ending in an MP4.
-   Interactive is a second pipeline and roughly the same work again, and it is
-   only worth it for concept E.
+**Concept A with B's far field.** Deep Field supplies the value structure; the
+drifting bokeh in the middle distance is icon tiles from the set rather than
+abstract shapes.
+
+**Phone and desktop, one scene, two cameras.** Not one master cropped twice.
+The composition is a vertical value gradient tuned so the middle band is dark,
+and a 16:9 crop out of a portrait frame either throws away the bright surface
+or drags it into the icon band. Two cameras cost a second render and keep both
+compositions correct.
+
+**Video.** One seamless MP4 that every target accepts.
+
+## Still open
+
+- **Art direction.** The scene has the right value structure and the right
+  motion. The palette, shaft density and far-field population have only been
+  judged on small CPU previews and want an eye on them at full resolution.
+- **The far-field camouflage test.** The tiles are held well under the icon
+  grid's angular size, but that has not yet been checked the only way that
+  counts: a real home screen, real icons, this wallpaper behind them.
+- **Loop length.** Ten seconds at 30fps is the working default and has not been
+  tested against how quickly the eye catches the repeat.
 
 ## Sources
 
