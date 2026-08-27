@@ -178,6 +178,37 @@ horizon sits at eye level however deep it is; pushed far enough back for fog to
 soften that, its caustics resolve into rings rather than a net, and it greyed
 the dock band from 0.78 saturation to 0.37 on the way.
 
+### The bubbles were eyeballs
+
+Worth recording because every element was individually defensible. The first
+bubble had a transparent centre — which against dark water reads as a black
+disc — a saturated coloured annulus around it, and a small round white
+highlight floating at 0.23 of the radius, well inside the ring. Pupil, iris,
+catchlight. Nobody set out to draw an eye.
+
+What separates a bubble from an eye is where the highlight sits: a sphere's
+specular lies *on the surface*, so it appears as a short arc riding the rim,
+not as a disc in the middle. That plus a thin rim, strongly brighter down one
+side, over an interior that is almost entirely the water behind it. A thick
+even annulus around a filled centre is an iris however it is coloured.
+
+Two bugs surfaced while fixing it, both invisible in the wallpaper and obvious
+the moment one bubble was rendered on its own at 300px:
+
+- A **B-spline colour ramp** does not pass through its control points and does
+  not settle to the end stop outside them, so a "black / white / black" rim
+  spline leaked grey across the whole quad and drew a pale square box around
+  every bubble. The mask is now built from clamped Map Range ramps that always
+  run low-to-high, so what happens outside the range is not a matter of taste.
+- **Mapping raw `atan2` onto a hue range** puts a discontinuity along the
+  negative x axis, which showed as a hard line running out of each bubble's
+  centre. Hue is now driven by the *cosine* of the angle, which is periodic and
+  closes on itself.
+
+Render one in isolation before trusting any of these masks. At wallpaper scale
+a bubble is twenty pixels, and both of those defects were completely legible at
+three hundred.
+
 ### Three decisions worth not re-litigating
 
 **View transform is Standard, not AgX.** AgX is Blender's default and the right

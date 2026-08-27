@@ -46,32 +46,61 @@ def _typed(sockets, name: str, kind: str):
     raise KeyError(f"no {kind} socket named {name!r}")
 
 
+def _smoothstep(nodes, links, value_socket, low: float, high: float, location):
+    """
+    A clamped 0 -> 1 smoothstep node, wired to `value_socket`.
+
+    Always low-to-high with clamping on, because the alternative — inverted
+    ranges and B-spline colour ramps — is where this material's two worst bugs
+    came from, and neither was visible until a bubble was rendered on its own
+    at three hundred pixels.
+    """
+    node = _new(nodes, "ShaderNodeMapRange", location)
+    node.interpolation_type = "SMOOTHSTEP"
+    node.inputs["From Min"].default_value = low
+    node.inputs["From Max"].default_value = high
+    node.inputs["To Min"].default_value = 0.0
+    node.inputs["To Max"].default_value = 1.0
+    node.clamp = True
+    links.new(value_socket, node.inputs["Value"])
+    return node
+
+
 # --- materials ---------------------------------------------------------------
 
 
 def iridescent_bubble(
     name: str = "AeroBubble",
     strength: float = 2.6,
-    hue_spread: float = 0.42,
-    hue_base: float = 0.48,
+    hue_spread: float = 0.30,
+    hue_base: float = 0.50,
+    light_angle: float = 2.36,  # up and to the left, matching the key
 ) -> bpy.types.Material:
     """
-    A bubble with a hue that travels around its rim and a hard specular dot.
+    A soap bubble: a bright rim, a specular arc *on* that rim, and a faint
+    interior so it is not a hole.
 
-    The plain white ring this replaces was correct and characterless. What
-    makes a bubble read as *this* aesthetic rather than as a physics diagram is
-    two things, and neither is subtle:
+    The previous version made eyeballs. Not approximately — exactly. It had a
+    transparent centre, which against dark water reads as a black disc; a
+    saturated coloured annulus around it; and a small round white highlight
+    floating at 0.23 of the radius, well inside the ring. Pupil, iris,
+    catchlight. Every element was individually defensible and together they
+    spelled something nobody wanted on their home screen.
 
-    Iridescence. A soap film is a thin-film interferometer, so its rim runs
-    through hue as the film thickness varies around it. Sampling the angle
-    around the centre and driving hue with it is a cheap stand-in for that, and
-    at the size these render it is indistinguishable from the real thing.
+    What actually distinguishes a bubble from an eye is where the highlight
+    sits. A sphere's specular reflection lies *on the surface*, so at this
+    viewing angle it appears as a short bright arc riding the rim — not as a
+    disc in the middle, which is what a wet cornea does and a soap film never
+    does. So the highlight here is the rim masked to a narrow angular window.
 
-    A specular dot. One small hard highlight, up and to the left, where the key
-    light reflects off the sphere. It costs four nodes and it is the single
-    strongest cue that the thing is a sphere and not a printed circle — every
-    glossy icon of the era has the same dot in the same place, which is not a
-    coincidence.
+    Three further changes keep it from drifting back:
+
+      - the rim is asymmetric, brightest opposite the key, because a thin
+        transparent shell lenses light toward its far edge;
+      - a faint wash across the whole disc, so the interior is a pale film
+        rather than a void with a ring drawn round it;
+      - much less saturation in the hue sweep. A strongly coloured annulus is
+        an iris; real iridescence is a subtle shift across part of the rim.
     """
     material = bpy.data.materials.new(name)
     material.use_nodes = True
@@ -79,101 +108,166 @@ def iridescent_bubble(
     links = material.node_tree.links
     nodes.clear()
 
-    output = _new(nodes, "ShaderNodeOutputMaterial", (900, 0))
-    coords = _new(nodes, "ShaderNodeTexCoord", (-900, 0))
+    output = _new(nodes, "ShaderNodeOutputMaterial", (1100, 0))
+    coords = _new(nodes, "ShaderNodeTexCoord", (-1100, 0))
 
-    centred = _new(nodes, "ShaderNodeVectorMath", (-740, 0))
+    centred = _new(nodes, "ShaderNodeVectorMath", (-940, 0))
     centred.operation = "SUBTRACT"
     centred.inputs[1].default_value = (0.5, 0.5, 0.0)
     links.new(coords.outputs["UV"], centred.inputs[0])
 
-    radius = _new(nodes, "ShaderNodeVectorMath", (-580, 80))
+    radius = _new(nodes, "ShaderNodeVectorMath", (-780, 120))
     radius.operation = "LENGTH"
     links.new(centred.outputs["Vector"], radius.inputs[0])
 
-    # The rim: a bright annulus just inside the edge.
-    ring = _new(nodes, "ShaderNodeValToRGB", (-400, 80))
-    ring.color_ramp.interpolation = "EASE"
-    elements = ring.color_ramp.elements
-    elements[0].position = 0.0
-    elements[0].color = (0.0, 0.0, 0.0, 1.0)
-    elements[1].position = 0.5
-    elements[1].color = (0.0, 0.0, 0.0, 1.0)
-    inner = elements.new(0.28)
-    inner.color = (0.06, 0.06, 0.06, 1.0)
-    crest = elements.new(0.43)
-    crest.color = (1.0, 1.0, 1.0, 1.0)
-    links.new(radius.outputs["Value"], ring.inputs["Fac"])
-
-    # Hue from the angle around the centre.
-    separate = _new(nodes, "ShaderNodeSeparateXYZ", (-580, -180))
+    separate = _new(nodes, "ShaderNodeSeparateXYZ", (-780, -200))
     links.new(centred.outputs["Vector"], separate.inputs["Vector"])
 
-    angle = _new(nodes, "ShaderNodeMath", (-400, -180))
+    angle = _new(nodes, "ShaderNodeMath", (-620, -200))
     angle.operation = "ARCTAN2"
     links.new(separate.outputs["Y"], angle.inputs[0])
     links.new(separate.outputs["X"], angle.inputs[1])
 
-    to_hue = _new(nodes, "ShaderNodeMapRange", (-220, -180))
-    to_hue.inputs["From Min"].default_value = -math.pi
-    to_hue.inputs["From Max"].default_value = math.pi
+    # --- the mask ------------------------------------------------------------
+    #
+    # Built from clamped Map Range ramps rather than colour ramps. A B-spline
+    # colour ramp does not pass through its own control points and does not
+    # settle to the end stop's value outside them, so the "black at 0.30, white
+    # at 0.44, black at 0.50" spline was leaking about 0.2 of grey across the
+    # entire quad — which rendered as a pale square box around every bubble.
+    # Every ramp below runs low-to-high with clamping on, so what happens
+    # outside its range is not a matter of opinion.
+
+    inner = _smoothstep(nodes, links, radius.outputs["Value"], 0.395, 0.455, (-600, 300))
+    outer = _smoothstep(nodes, links, radius.outputs["Value"], 0.468, 0.500, (-600, 160))
+
+    outer_flip = _new(nodes, "ShaderNodeMath", (-430, 160))
+    outer_flip.operation = "SUBTRACT"
+    outer_flip.inputs[0].default_value = 1.0
+    links.new(outer.outputs["Result"], outer_flip.inputs[1])
+
+    rim = _new(nodes, "ShaderNodeMath", (-270, 230))
+    rim.operation = "MULTIPLY"
+    links.new(inner.outputs["Result"], rim.inputs[0])
+    links.new(outer_flip.outputs["Value"], rim.inputs[1])
+
+    # Brighter opposite the key: a thin shell lenses light to its far edge.
+    lean = _new(nodes, "ShaderNodeMath", (-440, -200))
+    lean.operation = "SUBTRACT"
+    lean.inputs[1].default_value = light_angle + 3.14159265
+    links.new(angle.outputs["Value"], lean.inputs[0])
+
+    lean_cos = _new(nodes, "ShaderNodeMath", (-280, -200))
+    lean_cos.operation = "COSINE"
+    links.new(lean.outputs["Value"], lean_cos.inputs[0])
+
+    lean_mix = _new(nodes, "ShaderNodeMapRange", (-120, -200))
+    lean_mix.inputs["From Min"].default_value = -1.0
+    lean_mix.inputs["From Max"].default_value = 1.0
+    lean_mix.inputs["To Min"].default_value = 0.12
+    lean_mix.inputs["To Max"].default_value = 1.0
+    lean_mix.clamp = True
+    links.new(lean_cos.outputs["Value"], lean_mix.inputs["Value"])
+
+    rim_shaded = _new(nodes, "ShaderNodeMath", (60, 230))
+    rim_shaded.operation = "MULTIPLY"
+    links.new(rim.outputs["Value"], rim_shaded.inputs[0])
+    links.new(lean_mix.outputs["Result"], rim_shaded.inputs[1])
+
+    # The specular arc: the same rim, masked to the sector facing the light.
+    # On the rim rather than inside it — that placement is the whole difference
+    # between a bubble and an eye.
+    spec_angle = _new(nodes, "ShaderNodeMath", (-440, -420))
+    spec_angle.operation = "SUBTRACT"
+    spec_angle.inputs[1].default_value = light_angle
+    links.new(angle.outputs["Value"], spec_angle.inputs[0])
+
+    spec_cos = _new(nodes, "ShaderNodeMath", (-280, -420))
+    spec_cos.operation = "COSINE"
+    links.new(spec_angle.outputs["Value"], spec_cos.inputs[0])
+
+    spec_window = _smoothstep(nodes, links, spec_cos.outputs["Value"], 0.55, 0.97, (-120, -420))
+
+    arc = _new(nodes, "ShaderNodeMath", (60, -420))
+    arc.operation = "MULTIPLY"
+    links.new(rim.outputs["Value"], arc.inputs[0])
+    links.new(spec_window.outputs["Result"], arc.inputs[1])
+
+    arc_hot = _new(nodes, "ShaderNodeMath", (220, -420))
+    arc_hot.operation = "MULTIPLY"
+    arc_hot.inputs[1].default_value = 1.35
+    links.new(arc.outputs["Value"], arc_hot.inputs[0])
+
+    # A faint film across the disc, so the interior is glass and not a hole.
+    disc = _smoothstep(nodes, links, radius.outputs["Value"], 0.44, 0.50, (-600, 430))
+    fill = _new(nodes, "ShaderNodeMath", (-430, 430))
+    fill.operation = "MULTIPLY_ADD"
+    fill.inputs[1].default_value = -0.022
+    fill.inputs[2].default_value = 0.022
+    links.new(disc.outputs["Result"], fill.inputs[0])
+
+    body = _new(nodes, "ShaderNodeMath", (240, 330))
+    body.operation = "ADD"
+    links.new(rim_shaded.outputs["Value"], body.inputs[0])
+    links.new(fill.outputs["Value"], body.inputs[1])
+
+    mask = _new(nodes, "ShaderNodeMath", (400, 230))
+    mask.operation = "ADD"
+    links.new(body.outputs["Value"], mask.inputs[0])
+    links.new(arc_hot.outputs["Value"], mask.inputs[1])
+
+    clamped = _new(nodes, "ShaderNodeMath", (560, 230))
+    clamped.operation = "MINIMUM"
+    clamped.inputs[1].default_value = 1.0
+    links.new(mask.outputs["Value"], clamped.inputs[0])
+
+    # --- colour --------------------------------------------------------------
+    # Hue driven by the cosine of the angle, not the angle itself. Mapping raw
+    # atan2 output onto a hue range puts a discontinuity along the negative x
+    # axis — hue jumps from one end of the range to the other — and it showed
+    # as a hard line running out of the centre of every bubble. A cosine is
+    # periodic, so the sweep closes on itself and there is no seam to find.
+    hue_wave = _new(nodes, "ShaderNodeMath", (-440, -60))
+    hue_wave.operation = "COSINE"
+    links.new(angle.outputs["Value"], hue_wave.inputs[0])
+
+    to_hue = _new(nodes, "ShaderNodeMapRange", (-280, -60))
+    to_hue.inputs["From Min"].default_value = -1.0
+    to_hue.inputs["From Max"].default_value = 1.0
     to_hue.inputs["To Min"].default_value = hue_base - hue_spread / 2
     to_hue.inputs["To Max"].default_value = hue_base + hue_spread / 2
-    links.new(angle.outputs["Value"], to_hue.inputs["Value"])
+    to_hue.clamp = True
+    links.new(hue_wave.outputs["Value"], to_hue.inputs["Value"])
 
-    tint = _new(nodes, "ShaderNodeCombineColor", (-40, -180))
+    tint = _new(nodes, "ShaderNodeCombineColor", (-100, -60))
     tint.mode = "HSV"
-    tint.inputs["Green"].default_value = 0.55  # saturation
-    tint.inputs["Blue"].default_value = 1.0  # value
+    tint.inputs["Green"].default_value = 0.22
+    tint.inputs["Blue"].default_value = 1.0
     links.new(to_hue.outputs["Result"], tint.inputs["Red"])
 
-    # The specular dot, up and left of centre.
-    dot_offset = _new(nodes, "ShaderNodeVectorMath", (-740, -420))
-    dot_offset.operation = "SUBTRACT"
-    dot_offset.inputs[1].default_value = (0.34, 0.66, 0.0)
-    links.new(coords.outputs["UV"], dot_offset.inputs[0])
-
-    dot_radius = _new(nodes, "ShaderNodeVectorMath", (-580, -420))
-    dot_radius.operation = "LENGTH"
-    links.new(dot_offset.outputs["Vector"], dot_radius.inputs[0])
-
-    dot = _new(nodes, "ShaderNodeMapRange", (-400, -420))
-    dot.interpolation_type = "SMOOTHSTEP"
-    dot.inputs["From Min"].default_value = 0.11
-    dot.inputs["From Max"].default_value = 0.02
-    dot.inputs["To Min"].default_value = 0.0
-    dot.inputs["To Max"].default_value = 1.0
-    dot.clamp = True
-    links.new(dot_radius.outputs["Value"], dot.inputs["Value"])
-
-    mask = _new(nodes, "ShaderNodeMath", (-40, 80))
-    mask.operation = "MAXIMUM"
-    links.new(ring.outputs["Color"], mask.inputs[0])
-    links.new(dot.outputs["Result"], mask.inputs[1])
-
-    # The dot is white; the rim carries the hue.
-    colour = _new(nodes, "ShaderNodeMix", (180, -80))
+    # The arc is white; the rest carries the faint hue.
+    colour = _new(nodes, "ShaderNodeMix", (240, -60))
     colour.data_type = "RGBA"
     _typed(colour.inputs, "B", "RGBA").default_value = (1.0, 1.0, 1.0, 1.0)
-    links.new(dot.outputs["Result"], _typed(colour.inputs, "Factor", "VALUE"))
+    links.new(arc_hot.outputs["Value"], _typed(colour.inputs, "Factor", "VALUE"))
     links.new(tint.outputs["Color"], _typed(colour.inputs, "A", "RGBA"))
 
-    emission = _new(nodes, "ShaderNodeEmission", (420, 60))
+    emission = _new(nodes, "ShaderNodeEmission", (620, -60))
     emission.inputs["Strength"].default_value = strength
     links.new(_typed(colour.outputs, "Result", "RGBA"), emission.inputs["Color"])
 
-    fade = _new(nodes, "ShaderNodeValue", (180, -320))
+    fade = _new(nodes, "ShaderNodeValue", (560, -300))
     fade.name = "BubbleFade"
     fade.label = "BubbleFade"
     fade.outputs["Value"].default_value = 1.0
 
-    gate = _new(nodes, "ShaderNodeMath", (420, -220))
+    gate = _new(nodes, "ShaderNodeMath", (760, -200))
     gate.operation = "MULTIPLY"
-    links.new(mask.outputs["Value"], gate.inputs[0])
+    links.new(clamped.outputs["Value"], gate.inputs[0])
     links.new(fade.outputs["Value"], gate.inputs[1])
 
-    transparent = _new(nodes, "ShaderNodeBsdfTransparent", (420, -400))
-    mix = _new(nodes, "ShaderNodeMixShader", (700, 0))
+    transparent = _new(nodes, "ShaderNodeBsdfTransparent", (760, -400))
+    mix = _new(nodes, "ShaderNodeMixShader", (940, 0))
     links.new(gate.outputs["Value"], mix.inputs["Fac"])
     links.new(transparent.outputs["BSDF"], mix.inputs[1])
     links.new(emission.outputs["Emission"], mix.inputs[2])
