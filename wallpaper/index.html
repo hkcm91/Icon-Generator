@@ -64,13 +64,13 @@ const CONFIG = {
   // product-shot framing rather than a wallpaper.
   mode: params.get("mode") === "pouch" ? "pouch" : "full",
   squircleN: num("n", 4),          // 2 = circle, 4 = squircle, 8 = near square
-  /* A real glitter shaker is filled almost to the top — the reference toy
-   * shows barely any waterline. But the ullage has to clear the corner
-   * radius: at 0.95 the surface sat 42px down with a 47px corner, so the
-   * waterline ran through the rounded corners and the meniscus was chopped
-   * off by the glass, which read as a clipping artefact across the top.
-   * It also left less headspace than the wave could swing through. */
-  fill: num("fill", 0.9),
+  /* A real glitter shaker is filled almost to the top. That used to be
+   * unsafe: the waterline ran through the rounded corners and the meniscus,
+   * stroked across the full span, was chopped off by the glass. Now that the
+   * meniscus is trimmed to its true contact points and split into segments,
+   * the surface can sit in the corner arc — or press against the ceiling —
+   * and still terminate correctly, so the container can be properly full. */
+  fill: num("fill", 0.965),
   stars: num("stars", 620),
   bubbles: num("bubbles", 64),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
@@ -379,6 +379,8 @@ canvas.addEventListener("pointercancel", endDrag);
  */
 let GW = 0, GH = 0, cell = 1;
 let fu, fv, fu0, fv0, fp, fdiv, fsolid;
+// Reaction force the particles exert back on the liquid.
+let pfx, pfy;
 
 /** Pure containment test, for marking solid cells. */
 function isInside(x, y) {
@@ -409,6 +411,7 @@ function buildFluid() {
   fu = new Float32Array(n); fv = new Float32Array(n);
   fu0 = new Float32Array(n); fv0 = new Float32Array(n);
   fp = new Float32Array(n); fdiv = new Float32Array(n);
+  pfx = new Float32Array(n); pfy = new Float32Array(n);
   fsolid = new Uint8Array(n);
   for (let j = 0; j < GH; j++) {
     for (let i = 0; i < GW; i++) {
@@ -505,9 +508,13 @@ function fluidStep(dt) {
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
-      if (fsolid[k]) continue;
+      if (fsolid[k]) { pfx[k] = 0; pfy[k] = 0; continue; }
       fu[k] += fx * dt;
       fv[k] += fy * dt;
+      // Reaction from the particles, accumulated during the previous step.
+      fu[k] += pfx[k] * dt;
+      fv[k] += pfy[k] * dt;
+      pfx[k] = 0; pfy[k] = 0;
       if (swirl) {
         // Rotation about the centre, so a twist stirs rather than shoves.
         fu[k] -= ((j + 0.5) * cell - CY) * swirl * dt;
@@ -551,6 +558,30 @@ const FLUID_DRIVE = 2600;   // px/s^2 per g of container acceleration
 const FLUID_SWIRL = 1.6;    // rad/s^2 per unit of twist
 const FLUID_VISC = 0.62;    // 1/s
 const FLUID_WALL_DRAG = 3.2; // 1/s, applied only in cells touching glass
+const COUPLE = 0.055;       // particle reaction strength fed back to the fluid
+
+/* Two-way coupling: a particle dragged by the liquid drags back.
+ *
+ * One-way advection is the usual shortcut and it misses the most
+ * characteristic thing a glitter shaker does — settling flakes pull liquid
+ * down with them, the displaced liquid has to rise somewhere, and the
+ * suspension organises itself into slow convection plumes. Newton's third
+ * law is what produces that; without it a settle is just parallel falling.
+ */
+function scatterForce(x, y, fx, fy) {
+  let gx = x / cell - 0.5, gy = y / cell - 0.5;
+  if (gx < 0) gx = 0; else if (gx > GW - 1.001) gx = GW - 1.001;
+  if (gy < 0) gy = 0; else if (gy > GH - 1.001) gy = GH - 1.001;
+  const i0 = gx | 0, j0 = gy | 0;
+  const s = gx - i0, t = gy - j0;
+  const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
+  const w0 = (1 - s) * (1 - t), w1 = s * (1 - t);
+  const w2 = (1 - s) * t, w3 = s * t;
+  pfx[a] += fx * w0; pfx[a + 1] += fx * w1;
+  pfx[b] += fx * w2; pfx[b + 1] += fx * w3;
+  pfy[a] += fy * w0; pfy[a + 1] += fy * w1;
+  pfy[b] += fy * w2; pfy[b + 1] += fy * w3;
+}
 
 const flow = { x: 0, y: 0 };
 function sampleFlow(x, y, out) {
@@ -600,11 +631,14 @@ function stepWaves(dt) {
   const sdt = dt / sub;
   const damp = Math.exp(-0.9 * sdt);
   const c2 = c * c;
-  /* Bound the crest by the ullage that actually exists, not by a fixed
-   * fraction of the container. A cap larger than the headspace lets the
-   * surface climb clean out through the top of the vessel. */
-  const headspace = Math.max(4, upExtent - level);
-  const maxAmp = Math.min(upExtent * 0.16, headspace * 0.92);
+  /* Asymmetric bounds, because the container is not symmetric about the
+   * surface. Upward the crest may reach the ceiling and press against it —
+   * in a nearly full vessel that is exactly what happens, and the air pocket
+   * simply migrates elsewhere; the render trims the surface to the glass, so
+   * the waterline correctly breaks where liquid meets the top wall. Downward
+   * there is the whole body of liquid to draw from. */
+  const ceiling = Math.max(4, upExtent - level) + upExtent * 0.05;
+  const trough = upExtent * 0.34;
 
   // Sloshing: acceleration along the surface tilts it, exactly as an
   // effective gravity would. This replaces the random splashes, which
@@ -643,10 +677,8 @@ function stepWaves(dt) {
     }
     for (let i = 0; i < N; i++) {
       h[i] += wv[i] * sdt;
-      // Cap the wave. Unclamped, a hard shake drove the crest far enough to
-      // drop the waterline to mid-screen and expose a huge empty band.
-      if (h[i] > maxAmp) { h[i] = maxAmp; wv[i] *= 0.4; }
-      else if (h[i] < -maxAmp) { h[i] = -maxAmp; wv[i] *= 0.4; }
+      if (h[i] > ceiling) { h[i] = ceiling; wv[i] *= 0.4; }
+      else if (h[i] < -trough) { h[i] = -trough; wv[i] *= 0.4; }
     }
   }
 }
@@ -689,6 +721,8 @@ function seed() {
       flutterRate: 1.4 + Math.random() * 2.6,
       flutterPhase: Math.random() * Math.PI * 2,
       flutterAmp: (6 + Math.random() * 14) * unit,
+      // Mass proxy for the reaction it exerts back on the liquid.
+      mass: (r / unit) * (r / unit),
     });
   }
   for (let i = 0; i < CONFIG.bubbles; i++) {
@@ -701,6 +735,8 @@ function seed() {
       // Buoyancy against drag: bigger bubbles genuinely climb faster.
       tau: 0.03 + (r / unit) * (r / unit) * 0.0018,
       rise: (16 + (r / unit) * (r / unit) * 1.1) * unit,
+      // Displaced-liquid mass: a rising bubble pushes liquid up behind it.
+      mass: (r / unit) * (r / unit) * 0.55,
       phase: Math.random() * Math.PI * 2,
       wobble: (5 + Math.random() * 9) * unit,
       // Bubbles used to teleport from the surface back to the bottom in one
@@ -988,12 +1024,6 @@ function liquidPolygon() {
  * it, so the ends curl up instead of stopping dead.
  */
 function meniscus(poly, steps) {
-  let a = 0;
-  while (a <= steps && !isInside(poly[a].x, poly[a].y)) a++;
-  let b = steps;
-  while (b >= 0 && !isInside(poly[b].x, poly[b].y)) b--;
-  if (a > b) return [];
-
   const wall = (from, to) => {
     // `from` is inside, `to` is out; bisect for the contact point.
     let lo = from, hi = to;
@@ -1004,26 +1034,43 @@ function meniscus(poly, steps) {
     return lo;
   };
 
-  const pts = [];
-  if (a > 0) pts.push(wall(poly[a], poly[a - 1]));
-  for (let i = a; i <= b; i++) pts.push({ x: poly[i].x, y: poly[i].y });
-  if (b < steps) pts.push(wall(poly[b], poly[b + 1]));
-  if (pts.length < 2) return pts;
+  const climb = Math.min(RX, RY) * 0.03;
+  const reach = Math.min(RX, RY) * 0.13;
+  const segs = [];
+  let i = 0;
 
-  // Capillary climb: the liquid wets the glass, so the surface curls upward
-  // over roughly a millimetre of wall rather than meeting it flat.
-  const climb = Math.min(RX, RY) * 0.035;
-  const reach = Math.min(RX, RY) * 0.16;
-  const first = pts[0], last = pts[pts.length - 1];
-  for (const p of pts) {
-    const d = Math.min(Math.hypot(p.x - first.x, p.y - first.y),
-                       Math.hypot(p.x - last.x, p.y - last.y));
-    if (d >= reach) continue;
-    const t = 1 - d / reach;
-    const lift = climb * t * t;
-    p.x += up.x * lift; p.y += up.y * lift;
+  /* Every contiguous run of surface that is actually inside the vessel is a
+   * separate stretch of air-liquid interface. In a nearly full container the
+   * crest presses against the ceiling and the waterline genuinely breaks
+   * into pieces around the trapped air; taking only the first run would drop
+   * the rest of it. */
+  while (i <= steps) {
+    while (i <= steps && !isInside(poly[i].x, poly[i].y)) i++;
+    if (i > steps) break;
+    const a = i;
+    while (i <= steps && isInside(poly[i].x, poly[i].y)) i++;
+    const b = i - 1;
+
+    const pts = [];
+    if (a > 0) pts.push(wall(poly[a], poly[a - 1]));
+    for (let k = a; k <= b; k++) pts.push({ x: poly[k].x, y: poly[k].y });
+    if (b < steps) pts.push(wall(poly[b], poly[b + 1]));
+    if (pts.length < 2) continue;
+
+    // Capillary climb: the liquid wets the glass, so each end curls upward
+    // over a short stretch of wall rather than meeting it flat.
+    const first = pts[0], last = pts[pts.length - 1];
+    for (const p of pts) {
+      const d = Math.min(Math.hypot(p.x - first.x, p.y - first.y),
+                         Math.hypot(p.x - last.x, p.y - last.y));
+      if (d >= reach) continue;
+      const t = 1 - d / reach;
+      const lift = climb * t * t;
+      p.x += up.x * lift; p.y += up.y * lift;
+    }
+    segs.push(pts);
   }
-  return pts;
+  return segs;
 }
 
 function polygonArea(pts) {
@@ -1121,7 +1168,7 @@ function render(time) {
   ctx.closePath();
   ctx.fill();
 
-  const menisc = meniscus(poly, 64);
+  const menisc = meniscus(poly, 64);   // array of interface segments
 
   ctx.drawImage(depthLayer, 0, 0, W, H);
 
@@ -1157,29 +1204,60 @@ function render(time) {
    * the line carried on past the glass and was chopped off by the corner
    * knockout — reading as a hard clip straight across the top of the frame.
    */
-  const surface = () => {
-    ctx.beginPath();
-    ctx.moveTo(menisc[0].x, menisc[0].y);
-    for (let i = 1; i < menisc.length; i++) ctx.lineTo(menisc[i].x, menisc[i].y);
-  };
-  if (menisc.length >= 2) {
+  /* The interface is a band, not a line.
+   *
+   * The pouch has depth, so the air-liquid surface is a real surface seen
+   * almost edge-on: it presents a band whose height is roughly the pouch's
+   * thickness foreshortened, brightened along its lower edge by light
+   * piping through the wedge of liquid under the meniscus. Drawn as a
+   * hairline it read as a stroke somebody had drawn on top of the picture.
+   */
+  const band = Math.max(5, Math.min(RX, RY) * 0.030);
   ctx.lineCap = "round";
-  ctx.strokeStyle = "rgba(255,255,255,.22)";
-  ctx.lineWidth = Math.max(6, RX * 0.05);
-  surface(); ctx.stroke();
+  ctx.lineJoin = "round";
 
-  ctx.strokeStyle = "rgba(255,255,255,.92)";
-  ctx.lineWidth = Math.max(1.6, RX * 0.007);
-  surface(); ctx.stroke();
+  for (const seg of menisc) {
+    const path = (off) => {
+      ctx.beginPath();
+      ctx.moveTo(seg[0].x + up.x * off, seg[0].y + up.y * off);
+      for (let i = 1; i < seg.length; i++) {
+        ctx.lineTo(seg[i].x + up.x * off, seg[i].y + up.y * off);
+      }
+    };
 
-  ctx.strokeStyle = "rgba(140,195,220,.45)";
-  ctx.lineWidth = Math.max(1, RX * 0.003);
-  ctx.save();
-  ctx.translate(up.x * ctx.lineWidth * 1.6, up.y * ctx.lineWidth * 1.6);
-  surface(); ctx.stroke();
-  ctx.restore();
-  ctx.lineCap = "butt";
+    // Body of the band: the lit wedge of liquid held under the surface.
+    ctx.beginPath();
+    ctx.moveTo(seg[0].x, seg[0].y);
+    for (let i = 1; i < seg.length; i++) ctx.lineTo(seg[i].x, seg[i].y);
+    for (let i = seg.length - 1; i >= 0; i--) {
+      ctx.lineTo(seg[i].x - up.x * band, seg[i].y - up.y * band);
+    }
+    ctx.closePath();
+    const mid = seg[(seg.length / 2) | 0];
+    const g = ctx.createLinearGradient(
+      mid.x, mid.y, mid.x - up.x * band, mid.y - up.y * band);
+    g.addColorStop(0, "rgba(255,255,255,.72)");
+    g.addColorStop(0.45, "rgba(214,244,255,.34)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // Soft bloom above, into the air.
+    ctx.strokeStyle = "rgba(255,255,255,.30)";
+    ctx.lineWidth = band * 0.9;
+    path(band * 0.45); ctx.stroke();
+
+    // The bright rim itself, and a thin shaded edge just above it.
+    ctx.strokeStyle = "rgba(255,255,255,.95)";
+    ctx.lineWidth = Math.max(1.4, RX * 0.006);
+    path(0); ctx.stroke();
+
+    ctx.strokeStyle = "rgba(126,180,208,.5)";
+    ctx.lineWidth = Math.max(1, RX * 0.0035);
+    path(band * 0.42); ctx.stroke();
   }
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "miter";
 
   // Glass shell, casing edge and corner knockout, all baked at resize.
   ctx.drawImage(glassLayer, 0, 0, W, H);
@@ -1277,6 +1355,11 @@ function fixedStep(dt, time) {
     p.vx += (tx - p.vx) * k;
     p.vy += (ty - p.vy) * k;
 
+    // Third law: whatever drag the liquid applied to the flake, the flake
+    // applies back. Settling glitter therefore drives downwelling plumes.
+    scatterForce(p.x, p.y, (flow.x - p.vx) * p.mass * COUPLE,
+                           (flow.y - p.vy) * p.mass * COUPLE);
+
     const ox = p.x, oy = p.y;
     p.x += p.vx * dt; p.y += p.vy * dt;
     // Spin tracks the flow it sits in, so flakes turn with an eddy.
@@ -1294,6 +1377,11 @@ function fixedStep(dt, time) {
     const k = 1 - Math.exp(-dt / b.tau);
     b.vx += (tx - b.vx) * k;
     b.vy += (ty - b.vy) * k;
+
+    if (b.alpha > 0) {
+      scatterForce(b.x, b.y, (flow.x - b.vx) * b.mass * COUPLE,
+                             (flow.y - b.vy) * b.mass * COUPLE);
+    }
 
     const ox = b.x, oy = b.y;
     b.x += b.vx * dt; b.y += b.vy * dt;

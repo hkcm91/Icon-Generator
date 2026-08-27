@@ -41,8 +41,26 @@ bisected to its true contact point on the glass and given a capillary climb
 there, rather than being stroked across the full tangent span — near the top
 the container has already curved inward, and a surface drawn past that got
 chopped off by the glass, reading as a clipping artefact across the frame.
-The crest is bounded by the ullage that actually exists, so it cannot climb
-out through the top of the container.
+
+Because the shaker is nearly full, the interface is split into segments: the
+crest may press against the ceiling, and where it does there is no
+air-liquid boundary at all, so the waterline genuinely breaks around the
+trapped air and the pocket migrates to whichever corner is highest. The
+crest bound is asymmetric for the same reason — upward it stops at the
+ceiling, downward there is a whole body of liquid to draw from.
+
+It is drawn as a band rather than a line. The pouch has depth, so the
+surface is seen almost edge-on and presents a band lit along its lower edge
+by light piping through the wedge of liquid beneath it. A hairline read as a
+stroke drawn on top of the picture.
+
+**Two-way coupling** — particles push back on the liquid, not just the other
+way around. One-way advection is the usual shortcut and it misses the most
+characteristic thing a glitter shaker does: settling flakes drag liquid down
+with them, the displaced liquid rises somewhere else, and the suspension
+organises into slow convection plumes. With no input at all the flow field
+sustains 17-19 px/s of almost purely structural motion; before the coupling
+it was exactly zero.
 
 **Particles with Stokes drag** — response time and terminal velocity both
 scale with radius squared, so fine glitter traces the flow almost exactly
@@ -78,7 +96,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a discrete squircle on a backdrop |
-| `fill` | `0.90` | Fraction of the container holding liquid. The ullage is what sloshes — at `1` nothing moves, and above ~0.93 the waterline runs into the corner radius |
+| `fill` | `0.965` | Fraction of the container holding liquid. The ullage is what sloshes — at `1` nothing moves |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `620` | Confetti count |
@@ -137,7 +155,8 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Flow decay after the drive stops | RMS 570 → 26 px/s in 3s |
 | Peak wave under a 3.4g shake | 44% of the amplitude cap |
 | Capillary term stability | no non-finite values in surface or flow after a 2.3g shake |
+| Settling convection with zero input | 19 px/s flow, ~100% of it spatial structure rather than drift |
 
-Frame rate is 45fps at 620 flakes and 51fps at 300, measured in a
+Frame rate is 42-45fps at 620 flakes, measured in a
 headless container with no GPU — treat that as a floor rather than a
 promise, and drop `stars` if a device needs it.
