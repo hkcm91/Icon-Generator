@@ -56,18 +56,23 @@ const CONFIG = {
   // product-shot framing rather than a wallpaper.
   mode: params.get("mode") === "pouch" ? "pouch" : "full",
   squircleN: num("n", 4),          // 2 = circle, 4 = squircle, 8 = near square
-  fill: num("fill", 0.86),         // fraction of the container holding liquid
-  stars: num("stars", 260),
-  bubbles: num("bubbles", 46),
+  // A real glitter shaker is filled almost to the top — the reference toy
+  // shows no waterline at all. Leave only a thin ullage so a shake still has
+  // something to slosh; any more and the headspace reads as missing liquid.
+  fill: num("fill", 0.95),
+  stars: num("stars", 620),
+  bubbles: num("bubbles", 64),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   damping: num("damping", 0.985),
   waveSpeed: num("wave", 0.22),
   columns: 96,
-  top: "#1a7af2",                  // matches LIQUID_TOP in liquid_shaker.py
-  bottom: "#1bd4bd",               // matches LIQUID_BOTTOM
+  // Four stops, not two. A straight two-stop ramp is what made this read as
+  // a flat background instead of a body of liquid with depth.
+  ramp: ["#0a5fd4", "#1a86f0", "#19bcdc", "#1bd6bb"],
 };
 
-const HUES = ["#fadd6b", "#73ed8c", "#9edcfd", "#fcc7ea", "#d9fcb8"];
+const HUES = ["#fde68a", "#86efac", "#a5dcfd", "#fbc7e8", "#d9fcb8",
+              "#fff3b0", "#b6f4e2"];
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d", { alpha: false });
@@ -78,7 +83,7 @@ let W = 0, H = 0, DPR = 1;
 let CX = 0, CY = 0, RX = 0, RY = 0;   // container centre and half-extents
 
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 2.5);
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
   W = Math.floor(window.innerWidth);
   H = Math.floor(window.innerHeight);
   canvas.width = Math.floor(W * DPR);
@@ -95,6 +100,7 @@ function resize() {
     RX = RY = Math.min(W, H) * 0.5 * CONFIG.scale;
   }
   buildOutline();
+  buildLayers();
 }
 
 /* ---------------------------------------------------------------- geometry */
@@ -154,11 +160,16 @@ function buildOutline() {
   arc(R - r, T + r, 1, -1, true);    // top-right
 }
 
-function tracePath(target) {
-  target.beginPath();
+/** Append the outline as a subpath, without resetting what is already there. */
+function traceOutline(target) {
   target.moveTo(outline[0].x, outline[0].y);
   for (let i = 1; i < outline.length; i++) target.lineTo(outline[i].x, outline[i].y);
   target.closePath();
+}
+
+function tracePath(target) {
+  target.beginPath();
+  traceOutline(target);
 }
 
 /** Push a point back inside the container, reporting whether it moved. */
@@ -361,7 +372,15 @@ function stepWaves(dt) {
     v[i] += (l + r - 2 * h[i]) * c;
     v[i] *= CONFIG.damping;
   }
-  for (let i = 0; i < N; i++) h[i] += v[i] * dt * 60;
+  // Cap the wave. Unclamped, a hard shake drove the crest far enough to
+  // drop the waterline to mid-screen and expose a huge empty band — the
+  // liquid looked like it had drained away.
+  const maxAmp = upExtent * 0.14;
+  for (let i = 0; i < N; i++) {
+    h[i] += v[i] * dt * 60;
+    if (h[i] > maxAmp) { h[i] = maxAmp; v[i] *= 0.5; }
+    else if (h[i] < -maxAmp) { h[i] = -maxAmp; v[i] *= 0.5; }
+  }
 }
 
 /* --------------------------------------------------------------- particles */
@@ -370,16 +389,26 @@ const stars = [], bubbles = [];
 
 function seed() {
   stars.length = 0; bubbles.length = 0;
+  const unit = Math.min(W, H) / 720;
   for (let i = 0; i < CONFIG.stars; i++) {
+    // Skewed size distribution: mostly fine glitter with a scatter of big
+    // hero flakes. A uniform range gave an even speckle that read as noise
+    // rather than as confetti suspended at different depths.
+    const t = Math.random();
+    const r = (t < 0.72 ? 1.6 + t * 2.4 : 4.0 + (t - 0.72) * 17) * unit;
     stars.push({
-      x: CX + (Math.random() * 2 - 1) * RX * 0.8,
-      y: CY + (Math.random() * 2 - 1) * RY * 0.8,
+      x: CX + (Math.random() * 2 - 1) * RX * 0.9,
+      y: CY + (Math.random() * 2 - 1) * RY * 0.9,
       vx: 0, vy: 0,
-      r: (2.2 + Math.random() * 3.4) * (Math.min(W, H) / 720),
+      r,
       spin: Math.random() * Math.PI * 2,
       spinRate: (Math.random() - 0.5) * 0.06,
+      hueIdx: (Math.random() * HUES.length) | 0,
+      shape: Math.random() > 0.3 ? 0 : 1,   // 0 star, 1 shard
       hue: HUES[(Math.random() * HUES.length) | 0],
-      star: Math.random() > 0.28,
+      // Holographic flakes catch the light intermittently as they turn.
+      flashPhase: Math.random() * Math.PI * 2,
+      flashRate: 0.6 + Math.random() * 1.8,
       // Per-flake sink rate. Kept tiny on purpose: the whole appeal of a
       // glitter shaker is that the flakes hang in suspension for a long
       // time, and anything faster piles them on the floor within seconds.
@@ -388,13 +417,221 @@ function seed() {
   }
   for (let i = 0; i < CONFIG.bubbles; i++) {
     bubbles.push({
-      x: CX + (Math.random() * 2 - 1) * RX * 0.8,
-      y: CY + (Math.random() * 2 - 1) * RY * 0.8,
+      x: CX + (Math.random() * 2 - 1) * RX * 0.9,
+      y: CY + (Math.random() * 2 - 1) * RY * 0.9,
       vx: 0, vy: 0,
-      r: (3 + Math.random() * 6) * (Math.min(W, H) / 720),
+      r: (3 + Math.random() * 9) * unit,
       phase: Math.random() * Math.PI * 2,
     });
   }
+  buildSprites();
+}
+
+/* Offscreen sprites for the soft glows.
+ *
+ * A per-particle radial gradient is the obvious way to do this and it tanks
+ * the frame rate at 600 flakes — the gradient has to be rebuilt every frame
+ * because it is positioned in user space. Bake each once and blit it scaled
+ * instead. */
+let glowSprite = null, bubbleSprite = null;
+
+/* Full-screen layers that depend only on the container, not on gravity:
+ * the glass shell and the depth vignette. Rebuilding their gradients every
+ * frame cost five full-screen fills and dropped the wallpaper to 18fps.
+ * Baked once per resize, they are one blit each. */
+let glassLayer = null, depthLayer = null;
+
+function sprite(size, paint) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  paint(c.getContext("2d"), size);
+  return c;
+}
+
+function layer(paint) {
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.floor(W * DPR));
+  c.height = Math.max(1, Math.floor(H * DPR));
+  const g = c.getContext("2d");
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  paint(g);
+  return c;
+}
+
+/* Soft band hugging the inside of the container edge.
+ *
+ * The obvious implementation is a radial gradient in normalised container
+ * space, and it is wrong: normalising by RX and RY turns the falloff into a
+ * huge oval on a portrait screen instead of something that follows the
+ * rounded rectangle. Stroking the outline itself and blurring it tracks the
+ * real silhouette at any aspect. Blur is only paid at resize, never in the
+ * render loop; where ctx.filter is missing, stacked strokes approximate it.
+ */
+function softEdge(g, colour, width, blur, alpha) {
+  const supportsFilter = typeof g.filter === "string";
+  g.save();
+  g.globalAlpha = alpha;
+  g.strokeStyle = colour;
+  g.lineJoin = "round";
+  if (supportsFilter) {
+    g.filter = `blur(${Math.max(1, blur)}px)`;
+    // Double width: half the stroke lands outside the shape and is trimmed
+    // by the corner knockout, leaving a band on the inside.
+    g.lineWidth = width * 2;
+    tracePath(g);
+    g.stroke();
+    g.filter = "none";
+  } else {
+    const steps = 14;
+    g.globalAlpha = alpha / steps * 1.9;
+    for (let i = 0; i < steps; i++) {
+      g.lineWidth = width * 2 * (1 - i / steps);
+      tracePath(g);
+      g.stroke();
+    }
+  }
+  g.restore();
+}
+
+function buildLayers() {
+  const short = Math.min(RX, RY);
+
+  depthLayer = layer((g) => {
+    // Liquid in a thick pouch is darker where the light path through it is
+    // longest — at the edges. Without this the body is a flat wash and the
+    // whole thing reads as a background gradient rather than as liquid.
+    softEdge(g, "#04285f", short * 0.30, short * 0.22, 0.5);
+  });
+
+  glassLayer = layer((g) => {
+    g.save();
+    tracePath(g);
+    g.clip();
+    // (clip here is free — this layer is built once, not per frame)
+
+    // Broad sweep from the top-left.
+    const spec = g.createLinearGradient(
+      CX - RX, CY - RY, CX + RX * 0.5, CY + RY * 0.35);
+    spec.addColorStop(0, "rgba(255,255,255,.42)");
+    spec.addColorStop(0.22, "rgba(255,255,255,.10)");
+    spec.addColorStop(0.5, "rgba(255,255,255,0)");
+    g.fillStyle = spec;
+    g.fillRect(CX - RX, CY - RY, RX * 2, RY * 2);
+
+    // Tighter secondary catch bottom-right.
+    const spec2 = g.createLinearGradient(
+      CX + RX, CY + RY, CX + RX * 0.1, CY + RY * 0.45);
+    spec2.addColorStop(0, "rgba(255,255,255,.26)");
+    spec2.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = spec2;
+    g.fillRect(CX - RX, CY - RY, RX * 2, RY * 2);
+
+    g.restore();
+
+    // Rim brightening that sells the thickness of the shell — again
+    // following the outline rather than an inscribed ellipse.
+    softEdge(g, "#ffffff", short * 0.075, short * 0.045, 0.55);
+
+    /* Knock out everything beyond the squircle with the page background.
+     * This is what lets the render loop drop its per-frame clip(): the
+     * liquid can be drawn as a plain full-screen fill and this layer trims
+     * the corners on the way past. */
+    g.fillStyle = "#eef1f4";
+    g.beginPath();
+    g.rect(0, 0, W, H);
+    traceOutline(g);
+    g.fill("evenodd");
+
+    tracePath(g);
+    g.lineWidth = Math.max(2, RX * 0.02);
+    g.strokeStyle = "rgba(255,255,255,.95)";
+    g.stroke();
+    g.lineWidth = Math.max(1, RX * 0.005);
+    g.strokeStyle = "rgba(150,200,225,.5)";
+    g.stroke();
+  });
+}
+
+/* One baked sprite per hue and shape, plus white copies for the specular
+ * flash. Tessellating a ten-point star path 620 times a frame — twice, with
+ * the flash — is what held this at 32fps; blitting a sprite does not touch
+ * the path rasteriser at all. */
+const flakeSprites = [];
+const flashSprites = [];
+const FLAKE_PX = 48;
+
+function flakePath(g, cx, cy, R, isStar) {
+  g.beginPath();
+  if (isStar) {
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? R : R * 0.44;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      i === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+    }
+  } else {
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3;
+      const r = R * (0.55 + 0.45 * ((i * 7) % 5) / 4);
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      i === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+    }
+  }
+  g.closePath();
+}
+
+function buildFlakeSprites() {
+  flakeSprites.length = 0; flashSprites.length = 0;
+  const c = FLAKE_PX / 2, R = FLAKE_PX / 2 - 1;
+  for (let hi = 0; hi < HUES.length; hi++) {
+    for (let shape = 0; shape < 2; shape++) {
+      flakeSprites.push(sprite(FLAKE_PX, (g) => {
+        g.fillStyle = HUES[hi];
+        flakePath(g, c, c, R, shape === 0);
+        g.fill();
+      }));
+    }
+  }
+  for (let shape = 0; shape < 2; shape++) {
+    flashSprites.push(sprite(FLAKE_PX, (g) => {
+      g.fillStyle = "#ffffff";
+      flakePath(g, c, c, R, shape === 0);
+      g.fill();
+    }));
+  }
+}
+
+function buildSprites() {
+  buildFlakeSprites();
+  glowSprite = sprite(64, (g, s) => {
+    const r = s / 2;
+    const grad = g.createRadialGradient(r, r, 0, r, r, r);
+    grad.addColorStop(0, "rgba(255,255,255,.85)");
+    grad.addColorStop(0.35, "rgba(255,255,255,.22)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, s, s);
+  });
+
+  bubbleSprite = sprite(64, (g, s) => {
+    const r = s / 2;
+    // Bright rim, hollow centre, plus an offset specular dot — an air
+    // pocket in liquid, not a grey disc.
+    const shell = g.createRadialGradient(r, r, r * 0.55, r, r, r);
+    shell.addColorStop(0, "rgba(255,255,255,.05)");
+    shell.addColorStop(0.82, "rgba(226,248,255,.42)");
+    shell.addColorStop(0.94, "rgba(255,255,255,.92)");
+    shell.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = shell;
+    g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); g.fill();
+
+    const spec = g.createRadialGradient(
+      r * 0.66, r * 0.62, 0, r * 0.66, r * 0.62, r * 0.3);
+    spec.addColorStop(0, "rgba(255,255,255,.95)");
+    spec.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = spec;
+    g.fillRect(0, 0, s, s);
+  });
 }
 
 /* ------------------------------------------------------------------ render */
@@ -463,115 +700,133 @@ function polygonArea(pts) {
   return Math.abs(a) * 0.5;
 }
 
-function drawStar(p) {
+function drawStar(p, time) {
+  // Fine glitter: at two or three pixels the rotation is invisible, so skip
+  // the transform — but still blit the sprite. Substituting a fillRect here
+  // is faster again and looks it: hard little squares read as cheap dither,
+  // where the downscaled sprite reads as soft glitter.
+  if (p.r < 2.2) {
+    const d = p.r * 2;
+    ctx.drawImage(flakeSprites[p.hueIdx * 2 + p.shape],
+                  p.x - p.r, p.y - p.r, d, d);
+    return;
+  }
+
+  // Big flakes carry a glow; the fine glitter does not, which keeps the
+  // blit count down and reads as depth of field.
+  if (p.r > 6) {
+    const g = p.r * 4.2;
+    ctx.globalAlpha = 0.30;
+    ctx.drawImage(glowSprite, p.x - g, p.y - g, g * 2, g * 2);
+    ctx.globalAlpha = 1;
+  }
+
+  const s = p.r * 2;
   ctx.save();
   ctx.translate(p.x, p.y);
   ctx.rotate(p.spin);
-  ctx.fillStyle = p.hue;
-  ctx.beginPath();
-  if (p.star) {
-    for (let i = 0; i < 10; i++) {
-      const r = i % 2 === 0 ? p.r : p.r * 0.44;
-      const a = -Math.PI / 2 + i * Math.PI / 5;
-      const x = Math.cos(a) * r, y = Math.sin(a) * r;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
-  } else {
-    for (let i = 0; i < 6; i++) {
-      const a = i * Math.PI / 3;
-      const r = p.r * (0.55 + 0.45 * ((i * 7) % 5) / 4);
-      const x = Math.cos(a) * r, y = Math.sin(a) * r;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
+  ctx.drawImage(flakeSprites[p.hueIdx * 2 + p.shape], -p.r, -p.r, s, s);
+
+  // Specular flash as the flake turns edge-on to the light.
+  const flash = Math.sin(time * p.flashRate + p.flashPhase);
+  if (flash > 0.86) {
+    ctx.globalAlpha = (flash - 0.86) / 0.14;
+    ctx.drawImage(flashSprites[p.shape], -p.r, -p.r, s, s);
+    ctx.globalAlpha = 1;
   }
-  ctx.closePath();
-  ctx.fill();
   ctx.restore();
 }
 
-function render() {
-  ctx.fillStyle = "#f5f6f8";
-  ctx.fillRect(0, 0, W, H);
-
-  ctx.save();
-  tracePath(ctx);
-  ctx.clip();
-
-  // Liquid body, graded along the gravity axis so the blue always sits at the
-  // top of the pour no matter how the phone is held.
+/* The render loop deliberately uses no clip() at all.
+ *
+ * Canvas rasterises a clip against a 100-plus-point path on every use, and
+ * the three per-frame clips here (container, liquid body, meniscus glow)
+ * cost more than everything else combined — the scene ran at 47fps with
+ * zero particles on screen. The container clip is baked into glassLayer's
+ * corner knockout, the liquid clip is replaced by culling particles above
+ * the waterline, and the meniscus glow simply bleeds a little into the air,
+ * which is what a real meniscus does anyway. */
+function render(time) {
   const poly = liquidPolygon();
-  // Grade across the liquid itself, not the container. Spanning the whole
-  // squircle would leave a part-filled pouch sampling only the teal end.
+
+  /* Liquid body, graded along the gravity axis so the deep blue always sits
+   * at the top of the pour no matter how the phone is held. Filled across
+   * the whole screen rather than into the liquid polygon: the shaker is
+   * ~95% full, so painting the small headspace afterwards is far less
+   * overdraw than covering the screen twice. */
   const grad = ctx.createLinearGradient(
     CX + up.x * level, CY + up.y * level,
     CX - up.x * upExtent, CY - up.y * upExtent);
-  grad.addColorStop(0, CONFIG.top);
-  grad.addColorStop(1, CONFIG.bottom);
+  const ramp = CONFIG.ramp;
+  for (let i = 0; i < ramp.length; i++) {
+    grad.addColorStop(i / (ramp.length - 1), ramp[i]);
+  }
   ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  /* Headspace. Painted as pale tinted air rather than left as page
+   * background: white reads as a hole in the wallpaper, which is exactly
+   * what made the liquid look like it had drained away. */
+  const air = ctx.createLinearGradient(
+    CX + up.x * upExtent, CY + up.y * upExtent, CX, CY);
+  air.addColorStop(0, "#d3e7f2");
+  air.addColorStop(1, "#b7dbe9");
+  ctx.fillStyle = air;
   ctx.beginPath();
-  ctx.moveTo(poly[0].x, poly[0].y);
-  for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  const far = (span + upExtent) * 2;
+  ctx.moveTo(poly[0].x + up.x * far, poly[0].y + up.y * far);
+  for (let i = 0; i <= 64; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  ctx.lineTo(poly[64].x + up.x * far, poly[64].y + up.y * far);
   ctx.closePath();
   ctx.fill();
 
-  // Confetti and bubbles are clipped to the liquid so nothing floats in the
-  // empty headspace.
-  ctx.save();
-  ctx.clip();
-  for (const p of stars) drawStar(p);
+  ctx.drawImage(depthLayer, 0, 0, W, H);
+
+  // Light pooling just under the surface, the way it does in a real pouch.
+  const under = ctx.createLinearGradient(
+    CX + up.x * level, CY + up.y * level,
+    CX + up.x * (level - upExtent * 0.55),
+    CY + up.y * (level - upExtent * 0.55));
+  under.addColorStop(0, "rgba(255,255,255,.30)");
+  under.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = under;
+  ctx.fillRect(0, 0, W, H);
+
+  // Cull above the waterline rather than clipping to the liquid body.
   for (const b of bubbles) {
-    const bg = ctx.createRadialGradient(
-      b.x - b.r * 0.3, b.y - b.r * 0.3, b.r * 0.1, b.x, b.y, b.r);
-    bg.addColorStop(0, "rgba(255,255,255,.95)");
-    bg.addColorStop(0.55, "rgba(255,255,255,.18)");
-    bg.addColorStop(1, "rgba(255,255,255,.55)");
-    ctx.fillStyle = bg;
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-    ctx.fill();
+    if (depthOf(b.x, b.y) > 0) continue;
+    ctx.drawImage(bubbleSprite, b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
   }
-  ctx.restore();
+  for (const p of stars) {
+    if (depthOf(p.x, p.y) > 0) continue;
+    drawStar(p, time);
+  }
 
-  // Meniscus: the bright line where liquid meets air.
-  ctx.strokeStyle = "rgba(255,255,255,.75)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(poly[0].x, poly[0].y);
-  for (let i = 1; i <= 64; i++) ctx.lineTo(poly[i].x, poly[i].y);
-  ctx.stroke();
+  /* Meniscus. Three passes: a soft glow bleeding down into the liquid, the
+   * bright surface line itself, and a thin darker line above it. One flat
+   * stroke reads as a drawn border; this reads as a liquid surface. */
+  const surface = () => {
+    ctx.beginPath();
+    ctx.moveTo(poly[0].x, poly[0].y);
+    for (let i = 1; i <= 64; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  };
+  ctx.strokeStyle = "rgba(255,255,255,.22)";
+  ctx.lineWidth = Math.max(6, RX * 0.05);
+  surface(); ctx.stroke();
 
-  // Glass: inner shading round the rim, then a specular sweep top-left.
-  // Drawn in normalised container space so the vignette stays an ellipse
-  // that matches the screen. A circular radial gradient would band badly
-  // once RX and RY diverge, which they do the moment this goes full-bleed.
+  ctx.strokeStyle = "rgba(255,255,255,.92)";
+  ctx.lineWidth = Math.max(1.6, RX * 0.007);
+  surface(); ctx.stroke();
+
+  ctx.strokeStyle = "rgba(140,195,220,.45)";
+  ctx.lineWidth = Math.max(1, RX * 0.003);
   ctx.save();
-  ctx.translate(CX, CY);
-  ctx.scale(RX, RY);
-  const shade = ctx.createRadialGradient(0, 0, 0.55, 0, 0, 1.05);
-  shade.addColorStop(0, "rgba(255,255,255,0)");
-  shade.addColorStop(1, "rgba(120,190,220,.42)");
-  ctx.fillStyle = shade;
-  ctx.fillRect(-1, -1, 2, 2);
+  ctx.translate(up.x * ctx.lineWidth * 1.6, up.y * ctx.lineWidth * 1.6);
+  surface(); ctx.stroke();
   ctx.restore();
 
-  const spec = ctx.createLinearGradient(
-    CX - RX, CY - RY, CX + RX * 0.4, CY + RY * 0.5);
-  spec.addColorStop(0, "rgba(255,255,255,.55)");
-  spec.addColorStop(0.35, "rgba(255,255,255,.06)");
-  spec.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = spec;
-  ctx.fillRect(CX - RX, CY - RY, RX * 2, RY * 2);
-
-  ctx.restore();
-
-  // Casing edge.
-  tracePath(ctx);
-  ctx.lineWidth = Math.max(2, RX * 0.022);
-  ctx.strokeStyle = "rgba(255,255,255,.9)";
-  ctx.stroke();
-  ctx.lineWidth = Math.max(1, RX * 0.006);
-  ctx.strokeStyle = "rgba(150,200,225,.55)";
-  ctx.stroke();
+  // Glass shell, casing edge and corner knockout, all baked at resize.
+  ctx.drawImage(glassLayer, 0, 0, W, H);
 }
 
 /* -------------------------------------------------------------------- step */
@@ -716,7 +971,7 @@ function frame(now) {
   const dt = Math.min((now - last) / 1000 || 0.016, 0.05);
   last = now;
   step(dt);
-  render();
+  render(now / 1000);
 }
 
 function start() {
