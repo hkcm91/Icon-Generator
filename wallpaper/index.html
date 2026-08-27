@@ -64,10 +64,13 @@ const CONFIG = {
   // product-shot framing rather than a wallpaper.
   mode: params.get("mode") === "pouch" ? "pouch" : "full",
   squircleN: num("n", 4),          // 2 = circle, 4 = squircle, 8 = near square
-  // A real glitter shaker is filled almost to the top — the reference toy
-  // shows no waterline at all. Leave only a thin ullage so a shake still has
-  // something to slosh; any more and the headspace reads as missing liquid.
-  fill: num("fill", 0.95),
+  /* A real glitter shaker is filled almost to the top — the reference toy
+   * shows barely any waterline. But the ullage has to clear the corner
+   * radius: at 0.95 the surface sat 42px down with a 47px corner, so the
+   * waterline ran through the rounded corners and the meniscus was chopped
+   * off by the glass, which read as a clipping artefact across the top.
+   * It also left less headspace than the wave could swing through. */
+  fill: num("fill", 0.9),
   stars: num("stars", 620),
   bubbles: num("bubbles", 64),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
@@ -526,11 +529,28 @@ function fluidStep(dt) {
   // liquid thicker at low frame rates.
   const decay = Math.exp(-FLUID_VISC * dt);
   for (let i = 0; i < n; i++) { fu[i] *= decay; fv[i] *= decay; }
+
+  /* No-slip at the glass. The projection alone gives a free-slip wall, which
+   * lets the liquid skate along the container as if it were frictionless.
+   * A viscous glitter gel grips the glass, and the resulting boundary layer
+   * is what sheds the vortices that make a shake swirl rather than slosh
+   * back and forth. */
+  const wall = Math.exp(-FLUID_WALL_DRAG * dt);
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) continue;
+      if (fsolid[k - 1] || fsolid[k + 1] || fsolid[k - GW] || fsolid[k + GW]) {
+        fu[k] *= wall; fv[k] *= wall;
+      }
+    }
+  }
 }
 
 const FLUID_DRIVE = 2600;   // px/s^2 per g of container acceleration
 const FLUID_SWIRL = 1.6;    // rad/s^2 per unit of twist
 const FLUID_VISC = 0.62;    // 1/s
+const FLUID_WALL_DRAG = 3.2; // 1/s, applied only in cells touching glass
 
 const flow = { x: 0, y: 0 };
 function sampleFlow(x, y, out) {
@@ -568,11 +588,23 @@ function stepWaves(dt) {
    */
   const cross = 0.5 / Math.max(0.12, gMag);      // seconds to cross the span
   const c = N / cross;                            // cells per second
-  const sub = Math.min(8, Math.max(1, Math.ceil(c * dt / 0.4)));
+  /* Capillary stiffness. Real waves are gravity-capillary: omega^2 = gk +
+   * (sigma/rho)k^3, so short wavelengths are stiffened by surface tension
+   * rather than following the same law as long ones. The k^3 term is a
+   * fourth difference, and it doubles as the thing that keeps grid-scale
+   * noise from surviving in the waterline. */
+  const sigma = c * c * 0.035;
+  // The fourth-difference term has a much tighter CFL limit than the second.
+  const sub = Math.min(12, Math.max(1,
+    Math.ceil(Math.max(c * dt / 0.4, Math.sqrt(sigma * 16) * dt / 0.5))));
   const sdt = dt / sub;
   const damp = Math.exp(-0.9 * sdt);
   const c2 = c * c;
-  const maxAmp = upExtent * 0.14;
+  /* Bound the crest by the ullage that actually exists, not by a fixed
+   * fraction of the container. A cap larger than the headspace lets the
+   * surface climb clean out through the top of the vessel. */
+  const headspace = Math.max(4, upExtent - level);
+  const maxAmp = Math.min(upExtent * 0.16, headspace * 0.92);
 
   // Sloshing: acceleration along the surface tilts it, exactly as an
   // effective gravity would. This replaces the random splashes, which
@@ -601,7 +633,10 @@ function stepWaves(dt) {
     for (let i = 0; i < N; i++) {
       const l = h[i > 0 ? i - 1 : 0];
       const r = h[i < N - 1 ? i + 1 : N - 1];
-      wv[i] += (l + r - 2 * h[i]) * c2 * sdt;
+      const l2 = h[i > 1 ? i - 2 : 0];
+      const r2 = h[i < N - 2 ? i + 2 : N - 1];
+      wv[i] += (l + r - 2 * h[i]) * c2 * sdt;                       // gravity
+      wv[i] -= (l2 - 4 * l + 6 * h[i] - 4 * r + r2) * sigma * sdt;  // capillary
       wv[i] -= aTan * (i / (N - 1) - 0.5) * 2 * sdt;
       wv[i] += (surfDrive[i] - wv[i]) * 6 * sdt;
       wv[i] *= damp;
@@ -674,6 +709,9 @@ function seed() {
       fading: false,
     });
   }
+  /* Draw order is depth order: the big flakes are the ones nearest the
+   * front glass, so they belong on top of the fine glitter behind them. */
+  stars.sort((a, b) => a.r - b.r);
   buildSprites();
 }
 
@@ -941,6 +979,53 @@ function liquidPolygon() {
   return pts;
 }
 
+/* The stretch of surface that genuinely touches air, ending exactly where
+ * the liquid meets the glass, with a capillary climb at each contact.
+ *
+ * A free surface is bounded by its vessel: where the container has curved
+ * away, there is no air-liquid interface to draw. Bisecting to the wall
+ * gives the true contact point, and real liquid wets the glass and climbs
+ * it, so the ends curl up instead of stopping dead.
+ */
+function meniscus(poly, steps) {
+  let a = 0;
+  while (a <= steps && !isInside(poly[a].x, poly[a].y)) a++;
+  let b = steps;
+  while (b >= 0 && !isInside(poly[b].x, poly[b].y)) b--;
+  if (a > b) return [];
+
+  const wall = (from, to) => {
+    // `from` is inside, `to` is out; bisect for the contact point.
+    let lo = from, hi = to;
+    for (let i = 0; i < 12; i++) {
+      const m = { x: (lo.x + hi.x) / 2, y: (lo.y + hi.y) / 2 };
+      if (isInside(m.x, m.y)) lo = m; else hi = m;
+    }
+    return lo;
+  };
+
+  const pts = [];
+  if (a > 0) pts.push(wall(poly[a], poly[a - 1]));
+  for (let i = a; i <= b; i++) pts.push({ x: poly[i].x, y: poly[i].y });
+  if (b < steps) pts.push(wall(poly[b], poly[b + 1]));
+  if (pts.length < 2) return pts;
+
+  // Capillary climb: the liquid wets the glass, so the surface curls upward
+  // over roughly a millimetre of wall rather than meeting it flat.
+  const climb = Math.min(RX, RY) * 0.035;
+  const reach = Math.min(RX, RY) * 0.16;
+  const first = pts[0], last = pts[pts.length - 1];
+  for (const p of pts) {
+    const d = Math.min(Math.hypot(p.x - first.x, p.y - first.y),
+                       Math.hypot(p.x - last.x, p.y - last.y));
+    if (d >= reach) continue;
+    const t = 1 - d / reach;
+    const lift = climb * t * t;
+    p.x += up.x * lift; p.y += up.y * lift;
+  }
+  return pts;
+}
+
 function polygonArea(pts) {
   let a = 0;
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
@@ -1015,11 +1100,18 @@ function render(time) {
 
   /* Headspace. Painted as pale tinted air rather than left as page
    * background: white reads as a hole in the wallpaper, which is exactly
-   * what made the liquid look like it had drained away. */
+   * what made the liquid look like it had drained away.
+   *
+   * Graded across the air itself, from the inside of the top wall down to
+   * the waterline. Spanning the whole container instead left the thin band
+   * sampling one end of the ramp, so it rendered as a flat grey slab that
+   * read like a UI bar sitting on top of the wallpaper. */
   const air = ctx.createLinearGradient(
-    CX + up.x * upExtent, CY + up.y * upExtent, CX, CY);
-  air.addColorStop(0, "#d3e7f2");
-  air.addColorStop(1, "#b7dbe9");
+    CX + up.x * upExtent, CY + up.y * upExtent,
+    CX + up.x * level, CY + up.y * level);
+  air.addColorStop(0, "#c9dfec");    // inner top wall, slightly shadowed
+  air.addColorStop(0.45, "#eaf5fb");
+  air.addColorStop(1, "#a9d4e6");    // liquid showing through the meniscus
   ctx.fillStyle = air;
   ctx.beginPath();
   const far = (span + upExtent) * 2;
@@ -1028,6 +1120,8 @@ function render(time) {
   ctx.lineTo(poly[64].x + up.x * far, poly[64].y + up.y * far);
   ctx.closePath();
   ctx.fill();
+
+  const menisc = meniscus(poly, 64);
 
   ctx.drawImage(depthLayer, 0, 0, W, H);
 
@@ -1055,12 +1149,21 @@ function render(time) {
 
   /* Meniscus. Three passes: a soft glow bleeding down into the liquid, the
    * bright surface line itself, and a thin darker line above it. One flat
-   * stroke reads as a drawn border; this reads as a liquid surface. */
+   * stroke reads as a drawn border; this reads as a liquid surface.
+   *
+   * It is stroked over `menisc`, not the raw surface, because the raw
+   * surface runs the full tangent span whether or not the vessel is that
+   * wide there. Near the top the container has already curved inward, so
+   * the line carried on past the glass and was chopped off by the corner
+   * knockout — reading as a hard clip straight across the top of the frame.
+   */
   const surface = () => {
     ctx.beginPath();
-    ctx.moveTo(poly[0].x, poly[0].y);
-    for (let i = 1; i <= 64; i++) ctx.lineTo(poly[i].x, poly[i].y);
+    ctx.moveTo(menisc[0].x, menisc[0].y);
+    for (let i = 1; i < menisc.length; i++) ctx.lineTo(menisc[i].x, menisc[i].y);
   };
+  if (menisc.length >= 2) {
+  ctx.lineCap = "round";
   ctx.strokeStyle = "rgba(255,255,255,.22)";
   ctx.lineWidth = Math.max(6, RX * 0.05);
   surface(); ctx.stroke();
@@ -1075,6 +1178,8 @@ function render(time) {
   ctx.translate(up.x * ctx.lineWidth * 1.6, up.y * ctx.lineWidth * 1.6);
   surface(); ctx.stroke();
   ctx.restore();
+  ctx.lineCap = "butt";
+  }
 
   // Glass shell, casing edge and corner knockout, all baked at resize.
   ctx.drawImage(glassLayer, 0, 0, W, H);

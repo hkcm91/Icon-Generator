@@ -23,14 +23,26 @@ pressure projection. This is what carries the glitter. It is driven by the
 container's own acceleration, because in the non-inertial frame of a shaken
 vessel the liquid feels a body force of −a, and that is the actual physical
 cause of sloshing. Incompressibility turns a shove into a swirl for free:
-the fluid cannot pile up against a wall, so it has to roll.
+the fluid cannot pile up against a wall, so it has to roll. The walls are
+no-slip — a viscous glitter gel grips the glass, and that boundary layer is
+what sheds the vortices that make a shake swirl rather than merely slosh
+back and forth.
 
 **A free surface** — a one-dimensional height field in the gravity frame,
-so arbitrary tilt costs only a change of basis. Wave speed scales with the
-in-plane component of gravity, since that is what actually provides the
-restoring force. It is coupled to the fluid beneath it, which is what gives
-the waterline structure; driven by the tilt term alone it can only ever be a
-straight line.
+so arbitrary tilt costs only a change of basis. Waves are gravity-capillary:
+`omega^2 = gk + (sigma/rho)k^3`, so wave speed scales with the in-plane
+component of gravity (which is what provides the restoring force) while
+surface tension stiffens the short wavelengths. It is coupled to the fluid
+beneath it, which is what gives the waterline structure; driven by the tilt
+term alone it can only ever be a straight line.
+
+The surface is bounded by the vessel that holds it. The drawn meniscus is
+bisected to its true contact point on the glass and given a capillary climb
+there, rather than being stroked across the full tangent span — near the top
+the container has already curved inward, and a surface drawn past that got
+chopped off by the glass, reading as a clipping artefact across the frame.
+The crest is bounded by the ullage that actually exists, so it cannot climb
+out through the top of the container.
 
 **Particles with Stokes drag** — response time and terminal velocity both
 scale with radius squared, so fine glitter traces the flow almost exactly
@@ -66,7 +78,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a discrete squircle on a backdrop |
-| `fill` | `0.95` | Fraction of the container holding liquid. The thin ullage is what sloshes — at `1` nothing moves |
+| `fill` | `0.90` | Fraction of the container holding liquid. The ullage is what sloshes — at `1` nothing moves, and above ~0.93 the waterline runs into the corner radius |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `620` | Confetti count |
@@ -124,7 +136,8 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Settling over 20s of stillness | mean flake moves 112px with gravity |
 | Flow decay after the drive stops | RMS 570 → 26 px/s in 3s |
 | Peak wave under a 3.4g shake | 44% of the amplitude cap |
+| Capillary term stability | no non-finite values in surface or flow after a 2.3g shake |
 
-Frame rate is 44-49fps at 620 flakes and 57fps at 300, measured in a
+Frame rate is 45fps at 620 flakes and 51fps at 300, measured in a
 headless container with no GPU — treat that as a floor rather than a
 promise, and drop `stars` if a device needs it.
