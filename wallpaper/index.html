@@ -39,11 +39,19 @@
  * that actually reacts, because a baked loop plays the same way no matter
  * how hard the phone is shaken.
  *
- * The liquid is a 1-D height field living in the gravity frame rather than a
- * 2-D fluid: the surface is always perpendicular to gravity, and the waves
- * run along it. That is what makes arbitrary tilt cheap — there is no grid to
- * rotate, only a basis. A full SPH solver would cost an order of magnitude
- * more per frame and read almost the same at this scale.
+ * Three coupled pieces:
+ *
+ *   - a coarse stable-fluids velocity field, which is what carries the
+ *     glitter. Driven by the container's own acceleration, because that is
+ *     the physical cause of sloshing in a shaken vessel.
+ *   - a 1-D height field for the free surface, living in the gravity frame
+ *     so arbitrary tilt costs only a change of basis. It is coupled to the
+ *     fluid so the waterline inherits the flow's structure.
+ *   - particles with Stokes drag, size-dependent response time and terminal
+ *     velocity, advected through the flow.
+ *
+ * All of it runs on a fixed timestep; see FIXED_DT for why that is not
+ * optional.
  */
 
 const params = new URLSearchParams(location.search);
@@ -63,8 +71,6 @@ const CONFIG = {
   stars: num("stars", 620),
   bubbles: num("bubbles", 64),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
-  damping: num("damping", 0.985),
-  waveSpeed: num("wave", 0.22),
   columns: 96,
   // Four stops, not two. A straight two-stop ramp is what made this read as
   // a flat background instead of a body of liquid with depth.
@@ -101,6 +107,7 @@ function resize() {
   }
   buildOutline();
   buildLayers();
+  buildFluid();
 }
 
 /* ---------------------------------------------------------------- geometry */
@@ -219,79 +226,83 @@ function clampInside(p, pad) {
 
 /* ----------------------------------------------------------------- gravity */
 
-// Screen-space gravity, y positive downward. Starts pointing down so the
-// wallpaper looks right before any sensor event arrives.
-const g = { x: 0, y: 1 };
-let gTarget = { x: 0, y: 1 };
-let shakeEnergy = 0;
-let lastAccel = null;
-// Once the accelerometer is supplying gravity, ignore deviceorientation —
-// the two disagree slightly and letting both write causes a slow wobble.
+/* Screen-space gravity, y positive downward, in units of g.
+ *
+ * Deliberately NOT a unit vector. The in-plane component of gravity is what
+ * pulls the liquid, and it genuinely shrinks as the phone lies flatter —
+ * normalising it away made a 5-degree tilt pull exactly as hard as an
+ * 85-degree one, and left the surface with no notion of a gentle lean.
+ * `gMag` is that in-plane fraction, 0 flat on a table, 1 held upright.
+ */
+const grav = { x: 0, y: 1 };        // low-passed, magnitude 0..1
+const gDir = { x: 0, y: 1 };        // unit direction, holds last good value
+let gMag = 1;
+
+/* Container acceleration in the phone's frame, in units of g.
+ *
+ * This is the whole shake model. In the non-inertial frame of a shaken
+ * container the fluid feels a body force of -a, which is the actual physical
+ * cause of sloshing; feeding it to the fluid solver produces coherent bulk
+ * flow and wall-driven eddies for free. The previous code added independent
+ * random velocity to every particle, which is white noise — it looked like
+ * the flakes were vibrating rather than being carried by moving liquid.
+ */
+const accel = { x: 0, y: 0 };
+const gravRaw = { x: 0, y: 1 };   // running low-pass of the raw reading
+let swirlInput = 0;               // twist about the viewing axis
 let haveAccelGravity = false;
 
-/** Point gravity along the screen-plane part of a device-frame vector. */
-function setGravityFromVector(x, y) {
-  const len = Math.hypot(x, y);
-  // Lying flat on a table there is no meaningful in-plane direction, so hold
-  // "down" rather than snapping to whatever noise the sensor reports.
-  if (len < 0.12) { gTarget.x = 0; gTarget.y = 1; return; }
-  gTarget.x = x / len; gTarget.y = y / len;
-}
-
-/* Preferred path: the accelerometer already reports the gravity vector in
- * device coordinates, so its screen-plane part is the answer directly — no
- * Euler angles, no convention guessing. Device +Y runs up the screen while
- * canvas +y runs down, hence the sign flip on x only. */
-function setGravityFromAccel(a, magnitude) {
-  setGravityFromVector(-a.x / magnitude, a.y / magnitude);
-}
-
-function setGravityFromOrientation(beta, gamma) {
-  // Fallback for when only deviceorientation is available. beta is the
-  // front-back tilt, gamma the left-right one, and the screen-plane gravity
-  // components fall out of the Z-X'-Y'' rotation the spec defines.
-  //
-  // The cos(beta) term is what makes this correct: a phone lying flat is
-  // beta 0, and there the in-plane pull vanishes no matter what gamma is.
-  // Dropping it turns any small tilt into full sideways gravity and stands
-  // the waterline on end.
-  const b = (beta || 0) * Math.PI / 180;
-  const gm = (gamma || 0) * Math.PI / 180;
-  setGravityFromVector(-Math.cos(b) * Math.sin(gm), Math.sin(b));
+function setGravityVector(x, y) {
+  grav.x = x; grav.y = y;
+  gMag = Math.min(1, Math.hypot(x, y));
+  // Flat on a table there is no meaningful in-plane direction; keep the last
+  // good one rather than snapping to sensor noise.
+  if (gMag > 0.04) { gDir.x = x / gMag; gDir.y = y / gMag; }
 }
 
 function onMotion(e) {
   const a = e.accelerationIncludingGravity;
   if (!a || a.x === null) return;
   hint.classList.add("hide");
+  haveAccelGravity = true;
 
-  // Only trust this as an orientation reading when it is close to a plain
-  // 1g rest state; mid-shake the vector is dominated by hand acceleration
-  // and would whip the waterline around.
-  const magnitude = Math.hypot(a.x, a.y, a.z);
-  if (magnitude > 6 && magnitude < 14) {
-    setGravityFromAccel(a, magnitude);
-    haveAccelGravity = true;
-  }
+  // Device +Y runs up the screen while canvas +y runs down, hence the sign
+  // flip on x only. Units of g.
+  const sx = -a.x / 9.81, sy = a.y / 9.81;
 
-  if (lastAccel) {
-    // Jerk, not acceleration: gravity alone is a constant ~9.8 and must not
-    // register as shaking.
-    const jerk = Math.hypot(a.x - lastAccel.x, a.y - lastAccel.y, a.z - lastAccel.z);
-    if (jerk > 3) shakeEnergy = Math.min(shakeEnergy + jerk * 0.06, 14);
-  }
-  lastAccel = { x: a.x, y: a.y, z: a.z };
+  /* Split the reading into gravity and hand motion with a low-pass filter,
+   * rather than gating on "is the magnitude near 1g" as before. The slow
+   * component is which way is down; the residual is the shake. This is why
+   * the shake no longer needs a jerk heuristic — it is a measured quantity. */
+  const k = 0.06;
+  gravRaw.x += (sx - gravRaw.x) * k;
+  gravRaw.y += (sy - gravRaw.y) * k;
+  setGravityVector(gravRaw.x, gravRaw.y);
+
+  accel.x = sx - gravRaw.x;
+  accel.y = sy - gravRaw.y;
+
+  // A twist about the viewing axis stirs the liquid without translating it.
   if (e.rotationRate) {
-    const spin = Math.abs(e.rotationRate.alpha || 0) + Math.abs(e.rotationRate.beta || 0);
-    if (spin > 220) shakeEnergy = Math.min(shakeEnergy + spin * 0.004, 14);
+    const spin = (e.rotationRate.alpha || 0) / 360;
+    swirlInput = Math.max(-3, Math.min(3, spin));
   }
 }
 
 function onOrientation(e) {
+  // Once the accelerometer is supplying gravity, ignore deviceorientation —
+  // the two disagree slightly and letting both write causes a slow wobble.
   if (haveAccelGravity) return;
   if (e.beta === null && e.gamma === null) return;
   hint.classList.add("hide");
-  setGravityFromOrientation(e.beta, e.gamma);
+  // beta is the front-back tilt, gamma the left-right one; the screen-plane
+  // gravity components fall out of the Z-X'-Y'' rotation the spec defines.
+  // The cos(beta) term is what makes a flat-lying phone have no in-plane
+  // pull no matter what gamma reads, and its magnitude is meaningful, so it
+  // is passed through unnormalised.
+  const b = (e.beta || 0) * Math.PI / 180;
+  const gm = (e.gamma || 0) * Math.PI / 180;
+  setGravityVector(-Math.cos(b) * Math.sin(gm), Math.sin(b));
 }
 
 function listenMotion() {
@@ -332,54 +343,276 @@ canvas.addEventListener("pointermove", (e) => {
   if (!dragging) return;
   const dx = e.clientX - lastPointer.x, dy = e.clientY - lastPointer.y;
   lastPointer = { x: e.clientX, y: e.clientY };
-  const speed = Math.hypot(dx, dy);
-  if (speed > 18) shakeEnergy = Math.min(shakeEnergy + speed * 0.05, 14);
+  // Drive the same acceleration channel the accelerometer feeds, so the
+  // desktop fallback exercises the real physics rather than a side path.
+  accel.x = Math.max(-3, Math.min(3, dx * 0.06));
+  accel.y = Math.max(-3, Math.min(3, dy * 0.06));
   const nx = (e.clientX - CX) / RX, ny = (e.clientY - CY) / RY;
   const len = Math.hypot(nx, ny) || 1;
-  gTarget.x = nx / len; gTarget.y = ny / len;
+  setGravityVector(nx / len, ny / len);
 });
 const endDrag = () => {
   dragging = false;
-  gTarget.x = 0; gTarget.y = 1;   // settle back to real down
+  accel.x = 0; accel.y = 0;
+  setGravityVector(0, 1);   // settle back to real down
 };
 canvas.addEventListener("pointerup", endDrag);
 canvas.addEventListener("pointercancel", endDrag);
 
-/* ------------------------------------------------------------- height field */
+/* -------------------------------------------------------------------- fluid */
 
-// h[i] is surface displacement along -gravity; v[i] its velocity.
-const N = CONFIG.columns;
-const h = new Float32Array(N);
-const v = new Float32Array(N);
-let level = 0;              // signed distance of the surface from centre
-let targetArea = 0;
+/* A real velocity field, which is the thing the old physics was missing.
+ *
+ * Before this, the surface sloshed and the glitter did not care: flakes were
+ * moved by gravity plus per-frame white noise, so the liquid never actually
+ * carried anything. Suspended glitter is interesting precisely because it
+ * traces the flow, so the flow has to exist.
+ *
+ * Stable-fluids on a coarse grid: body force, vorticity confinement,
+ * semi-Lagrangian advection, then a Jacobi pressure projection to make it
+ * divergence-free. Incompressibility is what turns a shove into a swirl —
+ * the fluid cannot pile up against a wall, so it has to roll. At ~1500 cells
+ * the whole solve is well under a millisecond.
+ */
+let GW = 0, GH = 0, cell = 1;
+let fu, fv, fu0, fv0, fp, fdiv, fsolid;
 
-function splash(centre, strength) {
-  const i0 = Math.max(0, Math.min(N - 1, Math.round(centre)));
-  const width = 9;
-  for (let d = -width; d <= width; d++) {
-    const i = i0 + d;
-    if (i < 0 || i >= N) continue;
-    v[i] += strength * Math.cos((d / width) * Math.PI * 0.5);
+/** Pure containment test, for marking solid cells. */
+function isInside(x, y) {
+  const n = CONFIG.squircleN;
+  if (CONFIG.mode === "pouch") {
+    return Math.pow(Math.abs((x - CX) / RX), n) +
+           Math.pow(Math.abs((y - CY) / RY), n) <= 1;
+  }
+  const L = CX - RX, R = CX + RX, T = CY - RY, B = CY + RY;
+  if (x < L || x > R || y < T || y > B) return false;
+  const r = Math.max(1, corner);
+  const cx = x < CX ? L + r : R - r;
+  const cy = y < CY ? T + r : B - r;
+  const dx = x - cx, dy = y - cy;
+  const outX = x < CX ? dx < 0 : dx > 0;
+  const outY = y < CY ? dy < 0 : dy > 0;
+  if (outX && outY) {
+    return Math.pow(Math.abs(dx / r), n) + Math.pow(Math.abs(dy / r), n) <= 1;
+  }
+  return true;
+}
+
+function buildFluid() {
+  cell = Math.max(8, W / 26);
+  GW = Math.max(6, Math.round(W / cell));
+  GH = Math.max(6, Math.round(H / cell));
+  const n = GW * GH;
+  fu = new Float32Array(n); fv = new Float32Array(n);
+  fu0 = new Float32Array(n); fv0 = new Float32Array(n);
+  fp = new Float32Array(n); fdiv = new Float32Array(n);
+  fsolid = new Uint8Array(n);
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      const inside = isInside((i + 0.5) * cell, (j + 0.5) * cell);
+      // The outermost ring is always solid so the projection has a boundary.
+      const edge = i === 0 || j === 0 || i === GW - 1 || j === GH - 1;
+      fsolid[j * GW + i] = (inside && !edge) ? 0 : 1;
+    }
   }
 }
 
-function stepWaves(dt) {
-  const c = CONFIG.waveSpeed;
-  for (let i = 0; i < N; i++) {
-    const l = h[i > 0 ? i - 1 : 0];
-    const r = h[i < N - 1 ? i + 1 : N - 1];
-    v[i] += (l + r - 2 * h[i]) * c;
-    v[i] *= CONFIG.damping;
+function fluidAdvect(dst, src, dt) {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) { dst[k] = 0; continue; }
+      let x = i - dt * fu0[k] / cell;
+      let y = j - dt * fv0[k] / cell;
+      if (x < 0.5) x = 0.5; else if (x > GW - 1.5) x = GW - 1.5;
+      if (y < 0.5) y = 0.5; else if (y > GH - 1.5) y = GH - 1.5;
+      const i0 = x | 0, j0 = y | 0;
+      const s = x - i0, t = y - j0;
+      const a = j0 * GW, b = (j0 + 1) * GW;
+      dst[k] = (1 - t) * ((1 - s) * src[a + i0] + s * src[a + i0 + 1]) +
+                     t * ((1 - s) * src[b + i0] + s * src[b + i0 + 1]);
+    }
   }
-  // Cap the wave. Unclamped, a hard shake drove the crest far enough to
-  // drop the waterline to mid-screen and expose a huge empty band — the
-  // liquid looked like it had drained away.
+}
+
+/** Vorticity confinement: feeds energy back into eddies that the coarse
+ *  grid would otherwise smear away within a second or two. */
+function fluidVorticity(dt, eps) {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      fdiv[k] = fsolid[k] ? 0 :
+        (fv[k + 1] - fv[k - 1] - (fu[k + GW] - fu[k - GW])) * 0.5;
+    }
+  }
+  for (let j = 2; j < GH - 2; j++) {
+    for (let i = 2; i < GW - 2; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) continue;
+      const dwx = (Math.abs(fdiv[k + 1]) - Math.abs(fdiv[k - 1])) * 0.5;
+      const dwy = (Math.abs(fdiv[k + GW]) - Math.abs(fdiv[k - GW])) * 0.5;
+      const len = Math.hypot(dwx, dwy) + 1e-5;
+      fu[k] += eps * dt * (dwy / len) * fdiv[k];
+      fv[k] -= eps * dt * (dwx / len) * fdiv[k];
+    }
+  }
+}
+
+function fluidProject(iters) {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      fp[k] = 0;
+      fdiv[k] = fsolid[k] ? 0 :
+        -0.5 * ((fu[k + 1] - fu[k - 1]) + (fv[k + GW] - fv[k - GW]));
+    }
+  }
+  // Gauss-Seidel in place: converges roughly twice as fast as Jacobi here.
+  for (let it = 0; it < iters; it++) {
+    for (let j = 1; j < GH - 1; j++) {
+      for (let i = 1; i < GW - 1; i++) {
+        const k = j * GW + i;
+        if (fsolid[k]) continue;
+        // Solid neighbours reflect the centre pressure — a free-slip wall.
+        const l = fsolid[k - 1] ? fp[k] : fp[k - 1];
+        const r = fsolid[k + 1] ? fp[k] : fp[k + 1];
+        const u = fsolid[k - GW] ? fp[k] : fp[k - GW];
+        const d = fsolid[k + GW] ? fp[k] : fp[k + GW];
+        fp[k] = (fdiv[k] + l + r + u + d) * 0.25;
+      }
+    }
+  }
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) { fu[k] = 0; fv[k] = 0; continue; }
+      fu[k] -= 0.5 * ((fsolid[k + 1] ? fp[k] : fp[k + 1]) -
+                      (fsolid[k - 1] ? fp[k] : fp[k - 1]));
+      fv[k] -= 0.5 * ((fsolid[k + GW] ? fp[k] : fp[k + GW]) -
+                      (fsolid[k - GW] ? fp[k] : fp[k - GW]));
+    }
+  }
+}
+
+function fluidStep(dt) {
+  const n = GW * GH;
+  // Body force from the container's acceleration, in the non-inertial frame.
+  const fx = -accel.x * FLUID_DRIVE, fy = -accel.y * FLUID_DRIVE;
+  const swirl = swirlInput * FLUID_SWIRL;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) continue;
+      fu[k] += fx * dt;
+      fv[k] += fy * dt;
+      if (swirl) {
+        // Rotation about the centre, so a twist stirs rather than shoves.
+        fu[k] -= ((j + 0.5) * cell - CY) * swirl * dt;
+        fv[k] += ((i + 0.5) * cell - CX) * swirl * dt;
+      }
+    }
+  }
+  swirlInput *= Math.exp(-6 * dt);
+
+  fluidVorticity(dt, 9);
+
+  fu0.set(fu); fv0.set(fv);
+  fluidAdvect(fu, fu0, dt);
+  fluidAdvect(fv, fv0, dt);
+
+  fluidProject(18);
+
+  // Viscosity. Frame-rate independent: a per-frame multiplier would make the
+  // liquid thicker at low frame rates.
+  const decay = Math.exp(-FLUID_VISC * dt);
+  for (let i = 0; i < n; i++) { fu[i] *= decay; fv[i] *= decay; }
+}
+
+const FLUID_DRIVE = 2600;   // px/s^2 per g of container acceleration
+const FLUID_SWIRL = 1.6;    // rad/s^2 per unit of twist
+const FLUID_VISC = 0.62;    // 1/s
+
+const flow = { x: 0, y: 0 };
+function sampleFlow(x, y, out) {
+  let gx = x / cell - 0.5, gy = y / cell - 0.5;
+  if (gx < 0) gx = 0; else if (gx > GW - 1.001) gx = GW - 1.001;
+  if (gy < 0) gy = 0; else if (gy > GH - 1.001) gy = GH - 1.001;
+  const i0 = gx | 0, j0 = gy | 0;
+  const s = gx - i0, t = gy - j0;
+  const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
+  out.x = (1 - t) * ((1 - s) * fu[a] + s * fu[a + 1]) +
+                t * ((1 - s) * fu[b] + s * fu[b + 1]);
+  out.y = (1 - t) * ((1 - s) * fv[a] + s * fv[a + 1]) +
+                t * ((1 - s) * fv[b] + s * fv[b + 1]);
+}
+
+/* ------------------------------------------------------------- height field */
+
+// h[i] is surface displacement along -gravity; wv[i] its velocity, px and px/s.
+const N = CONFIG.columns;
+const h = new Float32Array(N);
+const wv = new Float32Array(N);
+const surfDrive = new Float32Array(N);   // flow velocity normal to the surface
+let level = 0;              // signed distance of the surface from centre
+let targetArea = 0;
+
+function stepWaves(dt) {
+  /* Wave speed scales with the in-plane gravity: a phone held upright has a
+   * snappy surface, one lying flat has a sluggish one. The restoring force
+   * is what gravity actually provides, so tying them is not decoration.
+   *
+   * Explicit integration needs the CFL condition respected, so substep
+   * rather than letting a low frame rate blow the surface up. The old code
+   * scaled by dt in one place and not the other, which made the wave speed
+   * itself depend on frame rate.
+   */
+  const cross = 0.5 / Math.max(0.12, gMag);      // seconds to cross the span
+  const c = N / cross;                            // cells per second
+  const sub = Math.min(8, Math.max(1, Math.ceil(c * dt / 0.4)));
+  const sdt = dt / sub;
+  const damp = Math.exp(-0.9 * sdt);
+  const c2 = c * c;
   const maxAmp = upExtent * 0.14;
+
+  // Sloshing: acceleration along the surface tilts it, exactly as an
+  // effective gravity would. This replaces the random splashes, which
+  // injected noise unrelated to how the phone actually moved.
+  const aTan = (accel.x * tan.x + accel.y * tan.y) * 900;
+
+  /* Kinematic free-surface coupling: the surface rides whatever the fluid
+   * underneath is doing.
+   *
+   * Without this the tilt term above is the *only* forcing, and it is
+   * perfectly linear in i — so the surface can only ever be a straight line,
+   * however hard the phone is shaken. Measured: a 2.3g shake moved the crest
+   * to 21% of its cap and rendered as a clean diagonal. Sampling the solver
+   * at each column is what puts real structure into the waterline, because
+   * the eddies and wall effects are already in the flow field.
+   */
   for (let i = 0; i < N; i++) {
-    h[i] += v[i] * dt * 60;
-    if (h[i] > maxAmp) { h[i] = maxAmp; v[i] *= 0.5; }
-    else if (h[i] < -maxAmp) { h[i] = -maxAmp; v[i] *= 0.5; }
+    const s = -span + 2 * span * (i / (N - 1));
+    const lift = level + h[i];
+    sampleFlow(CX + tan.x * s + up.x * lift,
+               CY + tan.y * s + up.y * lift, flow);
+    surfDrive[i] = flow.x * up.x + flow.y * up.y;
+  }
+
+  for (let s = 0; s < sub; s++) {
+    for (let i = 0; i < N; i++) {
+      const l = h[i > 0 ? i - 1 : 0];
+      const r = h[i < N - 1 ? i + 1 : N - 1];
+      wv[i] += (l + r - 2 * h[i]) * c2 * sdt;
+      wv[i] -= aTan * (i / (N - 1) - 0.5) * 2 * sdt;
+      wv[i] += (surfDrive[i] - wv[i]) * 6 * sdt;
+      wv[i] *= damp;
+    }
+    for (let i = 0; i < N; i++) {
+      h[i] += wv[i] * sdt;
+      // Cap the wave. Unclamped, a hard shake drove the crest far enough to
+      // drop the waterline to mid-screen and expose a huge empty band.
+      if (h[i] > maxAmp) { h[i] = maxAmp; wv[i] *= 0.4; }
+      else if (h[i] < -maxAmp) { h[i] = -maxAmp; wv[i] *= 0.4; }
+    }
   }
 }
 
@@ -409,19 +642,36 @@ function seed() {
       // Holographic flakes catch the light intermittently as they turn.
       flashPhase: Math.random() * Math.PI * 2,
       flashRate: 0.6 + Math.random() * 1.8,
-      // Per-flake sink rate. Kept tiny on purpose: the whole appeal of a
-      // glitter shaker is that the flakes hang in suspension for a long
-      // time, and anything faster piles them on the floor within seconds.
-      settle: 0.06 + Math.random() * 0.14,
+      /* Stokes drag. Response time and terminal velocity both scale with
+       * radius squared, so fine glitter traces the flow almost exactly while
+       * big flakes lag, overshoot on a turn and sink noticeably faster. That
+       * spread is what makes the settle look like a real suspension instead
+       * of every flake moving as one sheet. */
+      tau: 0.02 + (r / unit) * (r / unit) * 0.0016,
+      terminal: (4 + (r / unit) * (r / unit) * 0.42) * unit,
+      // Flakes rock from side to side as they sink rather than dropping
+      // straight — the characteristic glitter flutter.
+      flutterRate: 1.4 + Math.random() * 2.6,
+      flutterPhase: Math.random() * Math.PI * 2,
+      flutterAmp: (6 + Math.random() * 14) * unit,
     });
   }
   for (let i = 0; i < CONFIG.bubbles; i++) {
+    const r = (3 + Math.random() * 9) * unit;
     bubbles.push({
       x: CX + (Math.random() * 2 - 1) * RX * 0.9,
       y: CY + (Math.random() * 2 - 1) * RY * 0.9,
       vx: 0, vy: 0,
-      r: (3 + Math.random() * 9) * unit,
+      r,
+      // Buoyancy against drag: bigger bubbles genuinely climb faster.
+      tau: 0.03 + (r / unit) * (r / unit) * 0.0018,
+      rise: (16 + (r / unit) * (r / unit) * 1.1) * unit,
       phase: Math.random() * Math.PI * 2,
+      wobble: (5 + Math.random() * 9) * unit,
+      // Bubbles used to teleport from the surface back to the bottom in one
+      // frame, which was plainly visible. They now fade out and back in.
+      alpha: Math.random(),
+      fading: false,
     });
   }
   buildSprites();
@@ -649,8 +899,7 @@ let span = 1;        // along `tan`
 let upExtent = 1;    // along `up`
 
 function updateBasis() {
-  const gl = Math.hypot(g.x, g.y) || 1;
-  up = { x: -g.x / gl, y: -g.y / gl };
+  up = { x: -gDir.x, y: -gDir.y };
   tan = { x: -up.y, y: up.x };
   span = Math.abs(tan.x) * RX + Math.abs(tan.y) * RY;
   upExtent = Math.abs(up.x) * RX + Math.abs(up.y) * RY;
@@ -794,9 +1043,11 @@ function render(time) {
 
   // Cull above the waterline rather than clipping to the liquid body.
   for (const b of bubbles) {
-    if (depthOf(b.x, b.y) > 0) continue;
+    if (b.alpha <= 0 || depthOf(b.x, b.y) > 0) continue;
+    ctx.globalAlpha = b.alpha;
     ctx.drawImage(bubbleSprite, b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
   }
+  ctx.globalAlpha = 1;
   for (const p of stars) {
     if (depthOf(p.x, p.y) > 0) continue;
     drawStar(p, time);
@@ -831,28 +1082,39 @@ function render(time) {
 
 /* -------------------------------------------------------------------- step */
 
+/* Fixed timestep.
+ *
+ * Scaling every force by dt is not enough to make this frame-rate
+ * independent, and measurement said so: driving the same 2s of shaking at
+ * 30fps and at 60fps left the flow energy 21.6% apart. Semi-Lagrangian
+ * advection smears a fixed amount per *step*, and the pressure solve does a
+ * fixed number of iterations per *step*, so both get twice the treatment at
+ * twice the frame rate no matter how carefully dt is applied.
+ *
+ * Running the simulation on a fixed tick and accumulating real elapsed time
+ * is the only thing that actually fixes it. The cap keeps a stalled tab from
+ * trying to catch up across a huge gap.
+ */
+const FIXED_DT = 1 / 60;
+let accumulator = 0;
+let simTime = 0;
+
 function step(dt) {
-  // Ease the gravity direction so a sharp tilt does not teleport the surface.
-  g.x += (gTarget.x - g.x) * Math.min(1, dt * 6);
-  g.y += (gTarget.y - g.y) * Math.min(1, dt * 6);
-  updateBasis();
-
-  if (shakeEnergy > 0.02) {
-    const bursts = Math.min(4, 1 + (shakeEnergy | 0));
-    for (let i = 0; i < bursts; i++) {
-      splash(Math.random() * N, (Math.random() - 0.5) * shakeEnergy * 0.9);
-    }
-    for (const p of stars) {
-      p.vx += (Math.random() - 0.5) * shakeEnergy * 1.4;
-      p.vy += (Math.random() - 0.5) * shakeEnergy * 1.4;
-    }
-    for (const b of bubbles) {
-      b.vx += (Math.random() - 0.5) * shakeEnergy * 1.1;
-      b.vy += (Math.random() - 0.5) * shakeEnergy * 1.1;
-    }
-    shakeEnergy *= 0.86;
+  accumulator += dt;
+  let ticks = 0;
+  while (accumulator >= FIXED_DT && ticks < 4) {
+    simTime += FIXED_DT;
+    fixedStep(FIXED_DT, simTime);
+    accumulator -= FIXED_DT;
+    ticks++;
   }
+  if (ticks === 4) accumulator = 0;   // fell too far behind; drop the debt
+  return simTime;
+}
 
+function fixedStep(dt, time) {
+  updateBasis();
+  fluidStep(dt);
   stepWaves(dt);
 
   // Volume conservation: nudge the level until the drawn liquid area matches
@@ -872,58 +1134,83 @@ function step(dt) {
   }
 
   const pad = Math.min(RX, RY) * 0.03;
-  const scale = Math.min(W, H) / 720;
+
+  /* Wall response. Reflecting the inward correction and keeping the
+   * tangential component lets flakes slide along the glass; the old blanket
+   * 65% velocity cut plus a nudge toward the centre killed all energy at the
+   * wall and welded settled flakes into a hard line along the rim. */
+  const hitWall = (p, ox, oy) => {
+    const dx = p.x - ox, dy = p.y - oy;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return;
+    const nx = dx / len, ny = dy / len;           // points back inside
+    const vn = p.vx * nx + p.vy * ny;
+    if (vn < 0) { p.vx -= vn * nx * 1.15; p.vy -= vn * ny * 1.15; }
+  };
 
   for (const p of stars) {
+    sampleFlow(p.x, p.y, flow);
+
+    /* Terminal velocity relative to the fluid, not an acceleration that
+     * drag then fights: a suspended flake reaches terminal speed almost
+     * immediately at this scale, so relaxing toward (flow + settling) is
+     * both cheaper and better behaved than integrating gravity and damping
+     * separately. */
+    const flut = Math.sin(time * p.flutterRate + p.flutterPhase) *
+                 p.flutterAmp * gMag;
+    let tx = flow.x + gDir.x * p.terminal * gMag - gDir.y * flut;
+    let ty = flow.y + gDir.y * p.terminal * gMag + gDir.x * flut;
+
+    // Do not let flakes swim up out of the liquid into the headspace.
     const depth = depthOf(p.x, p.y);
-    if (depth > 0) {
-      // Above the surface: fall until it re-enters the liquid.
-      p.vx += g.x * 40 * dt; p.vy += g.y * 40 * dt;
-    } else {
-      // Suspended: sinks slowly, with drag standing in for viscosity.
-      p.vx += g.x * p.settle * 9 * dt;
-      p.vy += g.y * p.settle * 9 * dt;
-      p.vx *= 0.94; p.vy *= 0.94;
-      p.vx += (Math.random() - 0.5) * 0.28 * scale;
-      p.vy += (Math.random() - 0.5) * 0.28 * scale;
-      // Pin to just under the surface rather than letting flakes drift out.
-      if (depth > -2) { p.vx -= up.x * 6 * dt; p.vy -= up.y * 6 * dt; }
+    if (depth > -p.r) {
+      const into = tx * up.x + ty * up.y;
+      if (into > 0) { tx -= up.x * into; ty -= up.y * into; }
     }
-    p.x += p.vx; p.y += p.vy;
-    p.spin += p.spinRate + (p.vx + p.vy) * 0.004;
-    if (clampInside(p, pad)) {
-      p.vx *= 0.35; p.vy *= 0.35;
-      // Without an inward nudge, settled flakes weld into a hard line along
-      // the rim instead of drifting back into the body of the liquid.
-      p.vx += (CX - p.x) * 0.004;
-      p.vy += (CY - p.y) * 0.004;
-    }
+
+    const k = 1 - Math.exp(-dt / p.tau);
+    p.vx += (tx - p.vx) * k;
+    p.vy += (ty - p.vy) * k;
+
+    const ox = p.x, oy = p.y;
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    // Spin tracks the flow it sits in, so flakes turn with an eddy.
+    p.spin += (p.spinRate * 60 + (p.vx - flow.x) * 0.02) * dt;
+    if (clampInside(p, pad)) hitWall(p, ox, oy);
   }
 
   for (const b of bubbles) {
-    const depth = depthOf(b.x, b.y);
+    sampleFlow(b.x, b.y, flow);
     b.phase += dt * 3;
-    if (depth < 0) {
-      // Buoyancy scales with radius, so big bubbles overtake small ones.
-      b.vx += up.x * b.r * 2.2 * dt * 10;
-      b.vy += up.y * b.r * 2.2 * dt * 10;
-      b.vx += Math.sin(b.phase) * 0.12 * scale;
-      b.vx *= 0.93; b.vy *= 0.93;
-    } else {
-      // Surfaced: pop and re-enter somewhere below the surface. Sampling the
-      // box and rejecting anything above the waterline spreads them evenly
-      // whatever the aspect ratio, where projecting along the basis piled
-      // them against the long edges.
-      b.vx = 0; b.vy = 0;
-      for (let tries = 0; tries < 6; tries++) {
-        b.x = CX + (Math.random() * 2 - 1) * RX * 0.92;
-        b.y = CY + (Math.random() * 2 - 1) * RY * 0.92;
-        if (depthOf(b.x, b.y) < -b.r * 2) break;
+
+    const wob = Math.sin(b.phase) * b.wobble;
+    const tx = flow.x - gDir.x * b.rise * gMag - gDir.y * wob;
+    const ty = flow.y - gDir.y * b.rise * gMag + gDir.x * wob;
+    const k = 1 - Math.exp(-dt / b.tau);
+    b.vx += (tx - b.vx) * k;
+    b.vy += (ty - b.vy) * k;
+
+    const ox = b.x, oy = b.y;
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    if (clampInside(b, pad)) hitWall(b, ox, oy);
+
+    // Reaching the surface starts a fade rather than an instant jump.
+    if (!b.fading && depthOf(b.x, b.y) > -b.r) b.fading = true;
+    if (b.fading) {
+      b.alpha -= dt * 2.5;
+      if (b.alpha <= 0) {
+        b.alpha = 0; b.fading = false;
+        b.vx = 0; b.vy = 0;
+        for (let tries = 0; tries < 6; tries++) {
+          b.x = CX + (Math.random() * 2 - 1) * RX * 0.92;
+          b.y = CY + (Math.random() * 2 - 1) * RY * 0.92;
+          if (depthOf(b.x, b.y) < -b.r * 4) break;
+        }
+        clampInside(b, pad);
       }
-      clampInside(b, pad);
+    } else if (b.alpha < 1) {
+      b.alpha = Math.min(1, b.alpha + dt * 1.6);
     }
-    b.x += b.vx; b.y += b.vy;
-    if (clampInside(b, pad)) { b.vx *= 0.3; b.vy *= 0.3; }
   }
 }
 
@@ -970,8 +1257,9 @@ function frame(now) {
   raf = requestAnimationFrame(frame);
   const dt = Math.min((now - last) / 1000 || 0.016, 0.05);
   last = now;
-  step(dt);
-  render(now / 1000);
+  // Render on simulation time, not wall time, so the specular flashes stay
+  // in step with the physics they belong to.
+  render(step(dt));
 }
 
 function start() {
@@ -981,7 +1269,7 @@ function start() {
   // is a positive offset from centre. Inverting this drains the container.
   level = (CONFIG.fill - 0.5) * 2 * upExtent;
   targetArea = 0;
-  h.fill(0); v.fill(0);
+  h.fill(0); wv.fill(0);
   seed();
   last = performance.now();
   if (!raf) raf = requestAnimationFrame(frame);

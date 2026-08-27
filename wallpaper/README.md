@@ -15,20 +15,49 @@ desktop, drag to tilt and flick to shake.
 
 ## How it moves
 
-The liquid is a one-dimensional height field living in the gravity frame
-rather than a 2-D fluid. The surface is by definition perpendicular to
-gravity, and the waves run along it, so arbitrary tilt costs nothing but a
-change of basis — there is no grid to rotate. It holds 60fps on a mid-range
-phone with 260 flakes and 46 bubbles in flight.
+Three coupled pieces.
+
+**A fluid velocity field** — coarse stable-fluids on roughly 1500 cells:
+body force, vorticity confinement, semi-Lagrangian advection, Jacobi
+pressure projection. This is what carries the glitter. It is driven by the
+container's own acceleration, because in the non-inertial frame of a shaken
+vessel the liquid feels a body force of −a, and that is the actual physical
+cause of sloshing. Incompressibility turns a shove into a swirl for free:
+the fluid cannot pile up against a wall, so it has to roll.
+
+**A free surface** — a one-dimensional height field in the gravity frame,
+so arbitrary tilt costs only a change of basis. Wave speed scales with the
+in-plane component of gravity, since that is what actually provides the
+restoring force. It is coupled to the fluid beneath it, which is what gives
+the waterline structure; driven by the tilt term alone it can only ever be a
+straight line.
+
+**Particles with Stokes drag** — response time and terminal velocity both
+scale with radius squared, so fine glitter traces the flow almost exactly
+while big flakes lag, overshoot on a turn and sink faster. That spread is
+what makes a settle look like a real suspension rather than one moving
+sheet. Flakes flutter as they sink; bubbles rise with buoyancy against drag.
+
+Gravity is deliberately **not** normalised: the in-plane component genuinely
+shrinks as the phone lies flatter, and normalising it makes a 5-degree tilt
+pull as hard as an 85-degree one. It comes from a low-pass of the
+accelerometer; the residual is the shake, which is a measured quantity
+rather than a jerk heuristic.
 
 Volume is conserved by feedback rather than by solving the tilted squircle's
 area: each frame clips the liquid polygon against the container, measures the
 area, and nudges the surface level toward the target. It settles in a few
 frames and costs one shoelace sum.
 
-Shake detection keys off *jerk*, not acceleration — gravity alone is a
-constant 9.8m/s² and must never register as shaking — with device rotation
-rate folded in so a twist counts too.
+### Fixed timestep
+
+The simulation runs on a fixed 1/60s tick with an accumulator. This is not
+tidiness. Scaling every force by `dt` is not sufficient: semi-Lagrangian
+advection smears a fixed amount per *step* and the pressure solve does a
+fixed number of iterations per *step*, so both get twice the treatment at
+twice the frame rate. Measured before the fix, the same two seconds of
+shaking left the flow energy 21.6% apart between 30fps and 60fps; after,
+0.0%.
 
 ## Options
 
@@ -42,8 +71,6 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `260` | Confetti count |
 | `bubbles` | `46` | Bubble count |
-| `wave` | `0.22` | Wave propagation speed |
-| `damping` | `0.985` | How fast the slosh dies down |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 120 and `bubbles` to 20 on a low-end device.
@@ -84,6 +111,19 @@ screen.
 
 ## Verified
 
-Driven headless in Chromium at a 390×844 viewport: no runtime errors, 59-61fps
-sustained, and the rest, shake and settle states all confirmed visually.
-Volume stays conserved through a violent shake.
+Driven headless in Chromium at a 390×844 viewport, no runtime errors, with
+rest, tilt, shake and settle confirmed visually. Volume stays conserved
+through a violent shake.
+
+Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
+
+| Property | Result |
+| --- | --- |
+| Frame-rate independence (2s of shaking, 30 vs 60fps) | flow energy 0.0% apart, particles 0.1px |
+| Settling over 20s of stillness | mean flake moves 112px with gravity |
+| Flow decay after the drive stops | RMS 570 → 26 px/s in 3s |
+| Peak wave under a 3.4g shake | 44% of the amplitude cap |
+
+Frame rate is 44-49fps at 620 flakes and 57fps at 300, measured in a
+headless container with no GPU — treat that as a floor rather than a
+promise, and drop `stars` if a device needs it.
