@@ -80,18 +80,27 @@ crosses the full thickness of liquid before it reaches the eye, and putting
 those flakes under the tint layer is that absorption, for free. Tilting also
 shifts the layers against each other, since the viewing angle changes.
 
-**Bubbles** are drawn as lit spheres, not rings. A rim with nothing inside
-it is a drawn circle, which is exactly how they read before: hollow white
-loops tangling into each other. A gas bubble in tinted liquid has a body —
-it refracts the surroundings into a compressed image so it sits lighter than
-the liquid, it is lit like any sphere with a shadow side, it
-total-internal-reflects a hard ring at the very edge, and it focuses a
-caustic on the side away from the light. Four passes, one for each.
+**Bubbles** are clear. An air bubble is thinnest through the middle, so you
+look straight through it and see the liquid and glitter behind barely
+changed; everything that makes it visible happens at the rim, where the film
+turns edge-on, the ray path lengthens, it refracts a dark band, and past the
+critical angle it total-internal-reflects a hard bright ring. Almost all of
+the contrast belongs in the outer fifth of the radius.
+
+Two earlier attempts got this wrong in opposite directions — first a rim
+with nothing inside it, which is just a drawn circle, then a lit-sphere fill
+which produced an opaque milky marble, brightest exactly where a bubble is
+clearest. The caustic sits opposite the specular, on the side away from the
+light; sweeping it across the bottom put it on the wrong side of the sphere.
 
 They rise, deform, merge and pop. A bubble climbing through liquid is
 flattened perpendicular to its motion, but only by a few percent at these
 speeds — rendering that at the earlier strength turned every one into an
-egg. Bubbles that touch merge with gas volume conserved, drawn
+egg. New bubbles nucleate small and grow only by merging, which is the loop that
+keeps the population in balance: respawning small with a fast rise drained
+the shaker to a median radius of 3px, and respawning large ran it away the
+other way to a median of 21px and 194 interpenetrating pairs. Bubbles that
+touch merge with gas volume conserved, drawn
 together on the way up by wake attraction — a bubble in another's wake meets
 less resistance and catches it, which is why bubbles form chains in a real
 liquid and why the large ones exist at all. Without wake attraction two
@@ -228,7 +237,8 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Dense-phase stratification | separates to 0.01/0.96 settled, mixes to 0.68 shaken, mean conserved |
 | Inversion (roll 180°) | `level` matches its expected value at 0°, 90° and 180°; volume conserved to 0.1% |
 | Net fluid drift | 12.7 px/s before the momentum fix, 0.99 after |
-| Bubble overlap | 0 interpenetrating pairs after 20s |
+| Bubble population at rest | median 3px with 6-10 large, stable over 80s |
+| Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
 | Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
 
 Frame rate measured here is misleading and worth explaining. Profiled

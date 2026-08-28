@@ -688,7 +688,7 @@ const FLUID_VISC = 0.62;    // 1/s
 const FLUID_WALL_DRAG = 3.2; // 1/s, applied only in cells touching glass
 const COUPLE = 0.055;       // particle reaction strength fed back to the fluid
 const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
-const DISPERSE = 340;       // px/s of down-gradient drift per unit relative gradient
+const DISPERSE = 1100;       // px/s of down-gradient drift per unit relative gradient
 const WAKE = 150;           // px/s^2 of wake attraction between near bubbles
 
 /* Two-way coupling: a particle dragged by the liquid drags back.
@@ -864,6 +864,26 @@ function stepWaves(dt) {
 const stars = [], bubbles = [];
 let bubbleUnit = 1, maxBubble = 1;
 
+/* Sizes. The shaker is seeded with a spread including the large trapped-air
+ * bubbles it starts with, but a *new* bubble nucleates small and grows only
+ * by merging — which is the loop that keeps the population in balance.
+ *
+ * Both halves of that matter. Respawning small with a fast rise drained the
+ * shaker: large bubbles surfaced and came back as fizz, leaving a median
+ * radius of 3px. Respawning large ran it away the other direction, since
+ * coalescence only ever grows a bubble and nothing removed the big ones
+ * fast enough — median 21px and 194 interpenetrating pairs. Small births
+ * plus a rise slow enough for them to survive and merge is the balance.
+ */
+function bubbleSeedRadius() {
+  const bt = Math.random();
+  return (bt < 0.72 ? 3 + bt * 7 : 12 + (bt - 0.72) * 110) * bubbleUnit;
+}
+
+function bubbleBirthRadius() {
+  return (3 + Math.random() * 5) * bubbleUnit;
+}
+
 /** Buoyancy against drag: both rise speed and response time follow from the
  *  radius, so a bubble's whole behaviour is set by its size alone. */
 function setBubbleSize(b, r) {
@@ -876,7 +896,7 @@ function setBubbleSize(b, r) {
    * a large bubble rise at 526 px/s and cross the whole screen in 1.6
    * seconds, which is why no big bubble ever survived long enough to be
    * seen: the population kept collapsing back to fizz. */
-  b.rise = Math.min(5 + u * u * 0.55, 55) * bubbleUnit;
+  b.rise = Math.min(5 + u * u * 0.55, 34) * bubbleUnit;
   b.mass = u * u * 0.55;
   b.wobble = (5 + (u % 7)) * bubbleUnit;
 }
@@ -923,10 +943,12 @@ function seed() {
       /* Settling speed. Turning a real glitter shaker over empties it in
        * tens of seconds, not minutes: at the old rate the median flake
        * needed four minutes to cross the container, so inverting the phone
-       * produced almost no visible fall. Big flakes now clear it in about
-       * ten seconds and the fine glitter still hangs for a long time,
-       * which is the spread a real one has. */
-      terminal: (9 + (r / unit) * (r / unit) * 1.1) * unit,
+       * produced almost no visible fall. But the first correction
+       * overshot: at 80 seconds of stillness the body had drained and all
+       * the glitter sat in the bottom third, which is not what anyone
+       * wants to look at. Halved again — big flakes still fall visibly
+       * within a flip, the fine glitter stays up for minutes. */
+      terminal: (4 + (r / unit) * (r / unit) * 0.5) * unit,
       // Flakes rock from side to side as they sink rather than dropping
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
@@ -951,8 +973,7 @@ function seed() {
      * was a mistake — it made every bubble tiny and they all but vanished,
      * because merging only just keeps pace with popping. Coalescence now
      * adds to this population rather than being the whole of it. */
-    const bt = Math.random();
-    const r = (bt < 0.72 ? 3 + bt * 7 : 12 + (bt - 0.72) * 110) * unit;
+    const r = bubbleSeedRadius();
     const b = {
       x: CX + (Math.random() * 2 - 1) * RX * 0.9,
       y: CY + (Math.random() * 2 - 1) * RY * 0.9,
@@ -1181,66 +1202,79 @@ function buildSprites() {
     g.fillRect(0, 0, s, s);
   });
 
-  /* A bubble drawn as a rim with nothing inside it is a drawn circle, and
-   * that is exactly what these were: thin white loops, hollow, tangling
-   * into each other. A real gas bubble in a tinted liquid has a body. It
-   * refracts the surroundings into a compressed image, so it sits lighter
-   * than the liquid around it; it is lit like any sphere, darker on the
-   * shadow side; it total-internal-reflects a hard bright ring at the very
-   * edge; and it focuses a caustic on the side away from the light.
+  /* An air bubble is thinnest through the middle, so you look straight
+   * through it and see the liquid behind barely changed. Everything that
+   * makes it visible happens at the rim, where the film turns edge-on: the
+   * ray path lengthens, it refracts a dark band, and past the critical
+   * angle it total-internal-reflects a hard bright ring.
    *
-   * Built in four passes for those four things, all clipped to the disc so
-   * nothing leaks past the silhouette.
+   * The previous attempt filled the interior with a lit-sphere gradient and
+   * produced a milky marble — opaque where a bubble is clearest, and washed
+   * out against the liquid because the fill was lighter than its
+   * surroundings everywhere. Almost all of the contrast belongs in the
+   * outer fifth of the radius.
    */
   const paintBubble = (g, s) => {
     const r = s / 2;
     const disc = () => { g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); };
 
-    // 1. Body: lit sphere, shadowed up-left, brighter down-right.
     disc(); g.save(); g.clip();
-    const lit = g.createLinearGradient(r * 0.35, r * 0.3, r * 1.7, r * 1.75);
-    lit.addColorStop(0, "rgba(96,164,214,.50)");
-    lit.addColorStop(0.45, "rgba(150,212,244,.34)");
-    lit.addColorStop(1, "rgba(224,246,255,.62)");
-    g.fillStyle = lit;
+
+    // 1. The film itself. Nearly nothing until close to the edge.
+    const film = g.createRadialGradient(r, r, 0, r, r, r);
+    film.addColorStop(0.00, "rgba(255,255,255,.015)");
+    film.addColorStop(0.62, "rgba(226,246,255,.04)");
+    film.addColorStop(0.85, "rgba(214,242,255,.11)");
+    film.addColorStop(0.96, "rgba(232,249,255,.26)");
+    film.addColorStop(1, "rgba(255,255,255,.34)");
+    g.fillStyle = film;
     g.fillRect(0, 0, s, s);
 
-    // 2. Interior falloff: thinnest film at the centre, so it clears there.
-    const clear = g.createRadialGradient(r, r, 0, r, r, r);
-    clear.addColorStop(0, "rgba(0,0,0,.55)");
-    clear.addColorStop(0.5, "rgba(0,0,0,.34)");
-    clear.addColorStop(0.85, "rgba(0,0,0,0)");
-    g.globalCompositeOperation = "destination-out";
-    g.fillStyle = clear;
+    // 2. Refracted dark band inside the rim. This is what gives the
+    //    silhouette its definition — without it the bubble has no edge
+    //    against liquid of a similar brightness.
+    const dark = g.createRadialGradient(r, r, r * 0.74, r, r, r);
+    dark.addColorStop(0, "rgba(9,52,112,0)");
+    dark.addColorStop(0.5, "rgba(9,52,112,.17)");
+    dark.addColorStop(0.85, "rgba(7,44,102,.30)");
+    dark.addColorStop(1, "rgba(7,44,102,.05)");
+    g.fillStyle = dark;
     g.fillRect(0, 0, s, s);
-    g.globalCompositeOperation = "source-over";
 
-    // 3. Caustic the sphere focuses on its far side.
-    const caus = g.createRadialGradient(
-      r * 1.22, r * 1.3, 0, r * 1.22, r * 1.3, r * 0.72);
-    caus.addColorStop(0, "rgba(236,254,255,.60)");
-    caus.addColorStop(0.45, "rgba(226,250,255,.24)");
-    caus.addColorStop(1, "rgba(226,250,255,0)");
-    g.fillStyle = caus;
-    g.fillRect(0, 0, s, s);
+    // 3. Caustic: the sphere focuses light into a crescent on the side away
+    //    from the source, riding just inside the rim.
+    g.lineCap = "round";
+    //    The specular puts the light up-left, so the focus lands down-right;
+    //    sweeping it across the bottom put the crescent on the wrong side.
+    for (const [w, a, from, to] of [
+      [0.13, 0.24, -0.22, 0.56], [0.075, 0.44, -0.14, 0.46],
+      [0.035, 0.72, -0.04, 0.36],
+    ]) {
+      g.lineWidth = r * w;
+      g.strokeStyle = `rgba(238,254,255,${a})`;
+      g.beginPath();
+      g.arc(r, r, r * 0.90, Math.PI * from, Math.PI * to);
+      g.stroke();
+    }
     g.restore();
 
-    // 4. Total-internal-reflection rim, hard and bright.
-    const rim = g.createRadialGradient(r, r, r * 0.86, r, r, r);
+    // 4. Total-internal-reflection rim: hard, bright, and thin.
+    const rim = g.createRadialGradient(r, r, r * 0.90, r, r, r);
     rim.addColorStop(0, "rgba(255,255,255,0)");
-    rim.addColorStop(0.62, "rgba(214,242,255,.30)");
-    rim.addColorStop(0.86, "rgba(255,255,255,.92)");
-    rim.addColorStop(0.97, "rgba(255,255,255,1)");
+    rim.addColorStop(0.55, "rgba(226,247,255,.45)");
+    rim.addColorStop(0.84, "rgba(255,255,255,.98)");
+    rim.addColorStop(0.96, "rgba(255,255,255,1)");
     rim.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = rim;
     disc(); g.fill();
 
-    // 5. Specular: the light source itself, small and hard.
+    // 5. The light source itself, small and hard.
     disc(); g.save(); g.clip();
     const spec = g.createRadialGradient(
-      r * 0.62, r * 0.54, 0, r * 0.62, r * 0.54, r * 0.30);
+      r * 0.60, r * 0.50, 0, r * 0.60, r * 0.50, r * 0.26);
     spec.addColorStop(0, "rgba(255,255,255,1)");
-    spec.addColorStop(0.35, "rgba(255,255,255,.85)");
+    spec.addColorStop(0.30, "rgba(255,255,255,.92)");
+    spec.addColorStop(0.7, "rgba(255,255,255,.22)");
     spec.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = spec;
     g.fillRect(0, 0, s, s);
@@ -1833,7 +1867,7 @@ function fixedStep(dt, time) {
       if (b.alpha <= 0) {
         b.alpha = 0; b.fading = false;
         // Reborn small; it will grow again by merging on the way up.
-        setBubbleSize(b, bubbleUnit * (3 + Math.random() * 5));
+        setBubbleSize(b, bubbleBirthRadius());
         respawnBubble(b);
       }
     } else if (b.alpha < 1) {
@@ -1925,7 +1959,7 @@ function coalesce(dt) {
 
       // The smaller one is consumed; respawn it as fresh fizz down below.
       b.fading = false; b.alpha = 0; b.rest = 0;
-      setBubbleSize(b, bubbleUnit * (3 + Math.random() * 5));
+      setBubbleSize(b, bubbleBirthRadius());
       respawnBubble(b);
       break;
     }
