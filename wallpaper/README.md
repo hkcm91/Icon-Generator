@@ -54,6 +54,44 @@ surface is seen almost edge-on and presents a band lit along its lower edge
 by light piping through the wedge of liquid beneath it. A hairline read as a
 stroke drawn on top of the picture.
 
+**The surface pushes the liquid under it downhill.** With a free surface at
+atmospheric pressure, the pressure at any depth is set by how much liquid is
+stacked above it, so a sloping surface leaves a horizontal pressure gradient
+and the whole body accelerates down the slope. That was missing entirely:
+the solver had no gravity in it and no idea where the surface was, so the
+only thing that could ever move the liquid was the container being shoved.
+Water finding its own level is now something the liquid does rather than
+something the waterline does on its own, and the coupling runs both ways —
+the slope drives the flow, the flow drives the waterline. A level surface
+has no gradient and exerts nothing, so holding the phone at a steady angle
+is still quiet.
+
+That term did almost nothing until the solver was told where the air is. A
+closed domain is where a pressure projection is at its most ruthless: any
+force that is nearly uniform is divergence-free, so the pressure field
+cancels it completely. The surface slope was being annihilated that way, and
+bought six per cent of the flow during a flip, because the liquid had
+nowhere to accelerate *into*. Air is at atmospheric pressure, which is the
+zero of this solver's pressure, so an air cell is a Dirichlet boundary
+rather than part of the domain, and a liquid cell touching one is free to
+accelerate toward it. With the headspace marked, a tilted surface drives
+43.8px/s of downhill flow through the body of the liquid, against 0.4px/s
+without the term — and the headspace is only 64 cells of 2304, because a
+95%-full vessel genuinely has very little room to slosh in.
+
+**Turning the container tilts the water in it.** The height field is a graph
+over an axis derived from gravity, so when the phone turns, the axes the
+surface is measured against turn with it. Left alone that means the surface
+arrives already perpendicular to the new gravity: roll the phone through 180
+degrees and the water swaps ends without ever sloshing, because the only
+forcing in the wave field is the container's acceleration and a pure
+rotation has none. But the surface does not turn with the container.
+Expressed in the new basis it is tilted by exactly the angle the basis
+moved, and putting that back is two lines — the wave dynamics then run the
+tilt back and forth across the vessel until it damps out. Measured through a
+180-degree roll, the peak surface deflection goes from 95px to 219px, and
+the level returns to within 0.02% of where it started.
+
 **Two-way coupling** — particles push back on the liquid, not just the other
 way around. One-way advection is the usual shortcut and it misses the most
 characteristic thing a glitter shaker does: settling flakes drag liquid down
@@ -256,6 +294,17 @@ sideways force is `sin(2 * (spin - gravity angle))`, which is zero when the
 flake is edge-on or face-on to its fall and largest at 45 degrees. A flake
 that stops turning stops fluttering, which is what a real one does.
 
+**A flake is a plate, not a sphere.** Falling face-on it presents its whole
+area to the liquid and falls slowly; edge-on it presents almost none and
+drops. Its settling speed therefore depends on which way it happens to be
+pointing — and since the spin now comes from the local vorticity, the liquid
+is what decides. That is the stop-start quality of real glitter settling: it
+stalls as it turns broadside and slips as it comes round, where a constant
+terminal speed gives a steady drift. Normalised so the population's average
+rate is unchanged, so this adds spread rather than draining the shaker
+faster: measured mean factor 1.035, with an edge-on flake falling 1.8x
+faster than a face-on one.
+
 Flakes also disperse down their own concentration gradient. A suspension
 does not let particles pile up indefinitely — collisions and the disturbance
 flow around each flake drive a flux from crowded regions to empty ones.
@@ -375,9 +424,13 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Bubble population at rest | median 4.5px, max 31px, stable over 80s, 1 overlapping pair |
 | Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
 | Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
+| A tilted surface drives the liquid downhill | 43.8px/s with the slope term, 0.4px/s without |
+| A pure rotation sloshes | peak surface deflection 95px before the basis tilt, 219px after |
+| A 180-degree roll conserves the fill | level returns to 0.02% of where it started |
+| Orientation changes how fast a flake falls | 1.8x between edge-on and face-on, population mean unchanged |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost under continuous shake | median 25.8ms, p90 28.5ms (software rasteriser, no GPU) |
+| Frame cost under continuous shake | median 24.2ms, p90 26.4ms (software rasteriser, no GPU) |
 | Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |
 | Buoyancy separates the phases, held still | bubbles climb 19.4px/s, flakes settle 4.8px/s |
 | Added mass makes bubbles lead the flow | lag 90px/s without the term, 17px/s with it; flakes lag 84px/s |
@@ -390,7 +443,7 @@ in-page, the whole simulation step costs ~3ms and issuing the draw calls
 ~2ms — but a frame takes far longer. The missing ~21ms is not in this code at all:
 it is the browser rasterising a full-screen canvas in software, because the
 container has no GPU. On a device with an accelerated canvas that cost is a
-fraction of this. Treat the ~39fps seen here as a software-rasteriser
+fraction of this. Treat the ~41fps seen here as a software-rasteriser
 number, not a device one; `stars` is still the dial if a real device needs
 it.
 

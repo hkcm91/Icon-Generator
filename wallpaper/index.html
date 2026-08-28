@@ -390,7 +390,7 @@ canvas.addEventListener("pointercancel", endDrag);
  * the whole solve is well under a millisecond.
  */
 let GW = 0, GH = 0, cell = 1;
-let fu, fv, fu0, fv0, fp, fdiv, fsolid;
+let fu, fv, fu0, fv0, fp, fdiv, fsolid, fair;
 // Reaction force the particles exert back on the liquid.
 let pfx, pfy;
 
@@ -451,6 +451,7 @@ function buildFluid() {
   dye = new Float32Array(n); dye0 = new Float32Array(n);
   conc = new Float32Array(n); concNext = new Float32Array(n);
   fsolid = new Uint8Array(n);
+  fair = new Uint8Array(n);
   causticCanvas = document.createElement("canvas");
   causticCanvas.width = CAUSTIC_W; causticCanvas.height = CAUSTIC_H;
   causticCtx = causticCanvas.getContext("2d");
@@ -544,12 +545,42 @@ function fluidVorticity(dt, eps) {
   }
 }
 
+/* Which cells hold liquid and which hold air.
+ *
+ * Without this the solver's domain is the whole sealed container, and a
+ * closed domain is exactly where a pressure projection is at its most
+ * ruthless: any force that is nearly uniform is divergence-free, so the
+ * pressure field cancels it completely and the liquid does not move. The
+ * surface slope was being annihilated that way — it bought six per cent of
+ * the flow during a flip, because the liquid had nowhere to accelerate into.
+ *
+ * The headspace is that somewhere. Air is at atmospheric pressure, which is
+ * the zero of this solver's pressure, so an air cell is a Dirichlet boundary
+ * rather than part of the domain — and a liquid cell next to one is free to
+ * accelerate toward it. That is the whole of a free surface as far as the
+ * projection is concerned, and it is what lets liquid actually run downhill
+ * inside the vessel.
+ */
+function buildAirMask() {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) { fair[k] = 0; continue; }
+      const px = (i + 0.5) * cell - CX, py = (j + 0.5) * cell - CY;
+      const s = px * tan.x + py * tan.y;
+      fair[k] = (px * up.x + py * up.y) > (level + surfaceAt(s)) ? 1 : 0;
+    }
+  }
+}
+
 function fluidProject(iters) {
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
       fp[k] = 0;
-      fdiv[k] = fsolid[k] ? 0 :
+      // An air cell keeps p = 0 and is never solved, so it reads as the
+      // atmospheric boundary to every liquid cell that touches it.
+      fdiv[k] = (fsolid[k] || fair[k]) ? 0 :
         -0.5 * ((fu[k + 1] - fu[k - 1]) + (fv[k + GW] - fv[k - GW]));
     }
   }
@@ -558,7 +589,7 @@ function fluidProject(iters) {
     for (let j = 1; j < GH - 1; j++) {
       for (let i = 1; i < GW - 1; i++) {
         const k = j * GW + i;
-        if (fsolid[k]) continue;
+        if (fsolid[k] || fair[k]) continue;
         // Solid neighbours reflect the centre pressure — a free-slip wall.
         const l = fsolid[k - 1] ? fp[k] : fp[k - 1];
         const r = fsolid[k + 1] ? fp[k] : fp[k + 1];
@@ -572,6 +603,9 @@ function fluidProject(iters) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
       if (fsolid[k]) { fu[k] = 0; fv[k] = 0; continue; }
+      // Air is not simulated. Left alone its velocities get advected back
+      // into the liquid as the waterline moves over them, so bleed them off.
+      if (fair[k]) { fu[k] *= 0.82; fv[k] *= 0.82; continue; }
       fu[k] -= 0.5 * ((fsolid[k + 1] ? fp[k] : fp[k + 1]) -
                       (fsolid[k - 1] ? fp[k] : fp[k - 1]));
       fv[k] -= 0.5 * ((fsolid[k + GW] ? fp[k] : fp[k + GW]) -
@@ -632,6 +666,7 @@ function meanDye() {
 
 function fluidStep(dt) {
   const n = GW * GH;
+  buildAirMask();
   removeNetForce(pfx, pfy);
   const dyeMean = meanDye();
   // Body force from the container's acceleration, in the non-inertial frame.
@@ -659,6 +694,30 @@ function fluidStep(dt) {
         // Rotation about the centre, so a twist stirs rather than shoves.
         fu[k] -= ((j + 0.5) * cell - CY) * swirl * dt;
         fv[k] += ((i + 0.5) * cell - CX) * swirl * dt;
+      }
+
+      /* The surface pushes the liquid under it downhill.
+       *
+       * This is the shallow-water pressure gradient — with a free surface at
+       * atmospheric pressure, the pressure at any depth is set by how much
+       * liquid is stacked above it, so a sloping surface leaves a horizontal
+       * gradient and the whole body accelerates down the slope at g times
+       * that slope. It was missing entirely: the solver had no gravity in it
+       * and no idea where the surface was, so the only thing that could move
+       * the liquid was the container being shoved. Water finding its own
+       * level is now something the liquid does rather than something the
+       * waterline does on its own, and the two are coupled both ways: the
+       * slope drives the flow, and the flow drives the waterline through
+       * `surfDrive`.
+       *
+       * A level surface has no gradient and so exerts nothing, which is why
+       * holding the phone at a steady angle is still quiet.
+       */
+      if (!fair[k]) {
+        const px = (i + 0.5) * cell - CX, py = (j + 0.5) * cell - CY;
+        const a = -SLOSH * gMag * surfaceSlope(px * tan.x + py * tan.y) * dt;
+        fu[k] += tan.x * a;
+        fv[k] += tan.y * a;
       }
     }
   }
@@ -698,6 +757,9 @@ function fluidStep(dt) {
 }
 
 const FLUID_DRIVE = 2600;   // px/s^2 per g of container acceleration
+const SLOSH = 2600;        // px/s^2 per g, per unit of surface slope — the same
+                          // scale the container acceleration uses, because it
+                          // is the same gravity doing both
 const FLUID_SWIRL = 1.6;    // rad/s^2 per unit of twist
 const FLUID_VISC = 0.62;    // 1/s
 const FLUID_WALL_DRAG = 3.2; // 1/s, applied only in cells touching glass
@@ -1672,11 +1734,40 @@ let up = { x: 0, y: -1 }, tan = { x: 1, y: 0 };
 let span = 1;        // along `tan`
 let upExtent = 1;    // along `up`
 
+let basisAngle = 0, basisReady = false;
+
+/* Turning the container tilts the water in it.
+ *
+ * The height field is a graph over `tan`, and `tan` is derived from gravity —
+ * so when the phone turns, the axes the surface is measured against turn with
+ * it. Left alone, that means the surface arrives already perpendicular to the
+ * new gravity: rotate the phone through 180 degrees and the water swaps ends
+ * without ever sloshing, because the only forcing in the wave field is
+ * `accel`, and a pure rotation has no translational acceleration at all.
+ *
+ * The surface does not turn with the container. Expressed in the new basis it
+ * is tilted by exactly the angle the basis moved, which is what this puts
+ * back — and the wave dynamics then do what they already do, running that
+ * tilt back and forth across the vessel until it damps out. All of the
+ * sloshing on a tilt or a flip comes from these two lines.
+ */
 function updateBasis() {
+  const prev = basisAngle;
   up = { x: -gDir.x, y: -gDir.y };
   tan = { x: -up.y, y: up.x };
   span = Math.abs(tan.x) * RX + Math.abs(tan.y) * RY;
   upExtent = Math.abs(up.x) * RX + Math.abs(up.y) * RY;
+  basisAngle = Math.atan2(up.y, up.x);
+
+  let d = basisAngle - prev;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  if (basisReady && d !== 0) {
+    for (let i = 0; i < N; i++) {
+      h[i] -= d * (-span + 2 * span * (i / (N - 1)));
+    }
+  }
+  basisReady = true;
 }
 
 function surfaceAt(s) {
@@ -1685,6 +1776,13 @@ function surfaceAt(s) {
   const i = Math.max(0, Math.min(N - 2, Math.floor(f)));
   const frac = f - i;
   return h[i] * (1 - frac) + h[i + 1] * frac;
+}
+
+/** How steeply the surface leans, in rise per unit run along `tan`. */
+function surfaceSlope(s) {
+  const f = (s + span) / (2 * span) * (N - 1);
+  const i = Math.max(1, Math.min(N - 2, Math.round(f)));
+  return (h[i + 1] - h[i - 1]) / (2 * (2 * span / (N - 1)));
 }
 
 /** Perpendicular distance above the wavy surface; negative = submerged. */
@@ -2245,7 +2343,17 @@ function fixedStep(dt, time) {
      * anything denser than the liquid. */
     const flut = Math.sin(2 * (p.spin - gAng)) * p.flutterAmp * gMag;
     sampleDisperse(p.x, p.y, disperse);
-    const fall = p.terminal * gMag;
+    /* A flake is a plate, not a sphere. Falling face-on it presents its whole
+     * area to the liquid and falls slowly; edge-on it presents almost none
+     * and drops. Its settling speed therefore depends on which way it happens
+     * to be pointing, and since the spin now comes from the local vorticity,
+     * the liquid is what decides. That is the stop-start quality of real
+     * glitter settling — it stalls as it turns broadside and slips as it
+     * comes round — where a constant terminal speed gives a steady drift.
+     * Normalised so the population's average rate is unchanged: this adds
+     * spread, it does not make the shaker drain faster. */
+    const broad = Math.abs(Math.cos(p.spin - gAng));
+    const fall = p.terminal * gMag * (1.573 / (1 + 0.9 * broad));
     let tx = flow.x + gDir.x * fall - gDir.y * flut + disperse.x * DISPERSE;
     let ty = flow.y + gDir.y * fall + gDir.x * flut + disperse.y * DISPERSE;
 
