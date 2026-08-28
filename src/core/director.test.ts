@@ -42,4 +42,15 @@ describe('stageDirectorInstruction', () => {
     expect(result.reply).toBe('Updated Mail.');
     expect(result.patch.selection).toEqual({ mode: 'named', names: ['Mail'] });
   });
+
+  it.each([
+    'can you please start filling the cards? add variety with the filler placements',
+    'implement',
+    'go',
+  ])('treats “%s” as a request to generate selected cards', (instruction) => {
+    const result = stageDirectorInstruction(instruction, context, '');
+
+    expect(result.action).toBe('generate-selected');
+    expect(result.reply).toBe('Generation requested for 1 selected card.');
+  });
 });
