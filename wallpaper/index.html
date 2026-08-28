@@ -440,6 +440,10 @@ function buildFluid() {
   dye = new Float32Array(n); dye0 = new Float32Array(n);
   conc = new Float32Array(n); concNext = new Float32Array(n);
   fsolid = new Uint8Array(n);
+  causticCanvas = document.createElement("canvas");
+  causticCanvas.width = CAUSTIC_W; causticCanvas.height = CAUSTIC_H;
+  causticCtx = causticCanvas.getContext("2d");
+
   dyeCanvas = document.createElement("canvas");
   dyeCanvas.width = GW; dyeCanvas.height = GH;
   dyeCtx = dyeCanvas.getContext("2d");
@@ -1007,6 +1011,9 @@ function seed() {
  * because it is positioned in user space. Bake each once and blit it scaled
  * instead. */
 let glowSprite = null, bubbleSprite = null, bubbleSmall = null;
+let shaftSprite = null;
+let causticCanvas = null, causticCtx = null;
+const CAUSTIC_W = 96, CAUSTIC_H = 220;
 let flareSprite = null;
 
 /* Full-screen layers that depend only on the container, not on gravity:
@@ -1019,6 +1026,13 @@ function sprite(size, paint) {
   const c = document.createElement("canvas");
   c.width = c.height = size;
   paint(c.getContext("2d"), size);
+  return c;
+}
+
+function spriteWH(w, h, paint) {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  paint(c.getContext("2d"), w, h);
   return c;
 }
 
@@ -1071,10 +1085,20 @@ function buildLayers() {
   const short = Math.min(RX, RY);
 
   depthLayer = layer((g) => {
-    // Liquid in a thick pouch is darker where the light path through it is
-    // longest — at the edges. Without this the body is a flat wash and the
-    // whole thing reads as a background gradient rather than as liquid.
-    softEdge(g, "#04285f", short * 0.30, short * 0.22, 0.5);
+    /* Where the liquid thins out against the wall.
+     *
+     * This had it backwards, and expensively: a 58px dark band blurred over
+     * 43px, hugging the rim. A pouch is a pillow — the liquid is deepest
+     * through the middle and tapers to nothing where the walls close, so
+     * absorption is strongest in the centre and the rim is the *clearest*
+     * part, not the darkest. And blurring it over a quarter of the short
+     * side turned the whole border into a haze the liquid faded away into
+     * rather than filling up to.
+     *
+     * Narrow, bright, and barely blurred: liquid that thins and a glass
+     * wall that refracts, meeting the edge crisply.
+     */
+    softEdge(g, "#dcf2ff", short * 0.030, short * 0.006, 0.42);
   });
 
   glassLayer = layer((g) => {
@@ -1102,9 +1126,9 @@ function buildLayers() {
 
     g.restore();
 
-    // Rim brightening that sells the thickness of the shell — again
-    // following the outline rather than an inscribed ellipse.
-    softEdge(g, "#ffffff", short * 0.075, short * 0.045, 0.55);
+    // Specular line along the glass itself. Thin and near-sharp: a wide
+    // blurred rim reads as fog around the edge, not as a wall.
+    softEdge(g, "#ffffff", short * 0.016, short * 0.004, 0.7);
 
     /* Knock out everything beyond the squircle with the page background.
      * This is what lets the render loop drop its per-frame clip(): the
@@ -1284,6 +1308,29 @@ function buildSprites() {
   bubbleSprite = sprite(192, paintBubble);
   // Small copy for the fine fizz, for the same mipmap reason as the flakes.
   bubbleSmall = sprite(28, paintBubble);
+
+  /* One soft light shaft, blitted per caustic.
+   *
+   * Filling rects instead gave every shaft two hard vertical edges at a
+   * fixed pitch, and the result read as corduroy rather than light. A baked
+   * streak is soft on all four sides and costs one blit. */
+  shaftSprite = spriteWH(64, 256, (g, w, h) => {
+    const v = g.createLinearGradient(0, 0, 0, h);
+    v.addColorStop(0, "rgba(216,246,255,1)");
+    v.addColorStop(0.16, "rgba(200,240,255,.6)");
+    v.addColorStop(0.45, "rgba(186,234,255,.22)");
+    v.addColorStop(1, "rgba(178,230,255,0)");
+    g.fillStyle = v;
+    g.fillRect(0, 0, w, h);
+    // Feather the sides so the shaft has no vertical edge at all.
+    const side = g.createLinearGradient(0, 0, w, 0);
+    side.addColorStop(0, "rgba(0,0,0,0)");
+    side.addColorStop(0.5, "rgba(0,0,0,1)");
+    side.addColorStop(1, "rgba(0,0,0,0)");
+    g.globalCompositeOperation = "destination-in";
+    g.fillStyle = side;
+    g.fillRect(0, 0, w, h);
+  });
 
   /* Four-ray glint for the flakes that catch the light. The reference is
    * full of these star flares, and they are a different thing from the
@@ -1635,6 +1682,63 @@ function render(time) {
   ctx.drawImage(dyeCanvas, 0, 0, W, H);
 
   ctx.drawImage(depthLayer, 0, 0, W, H);
+
+  /* Caustics. The free surface is a lens: where it curves concave it
+   * converges the light passing through into a bright shaft in the body
+   * below, and where convex it spreads it thin. It is the strongest depth
+   * cue a real liquid container has — light arriving through the top and
+   * structuring the volume underneath — and without it the body is evenly
+   * lit everywhere, which is what made it read flat.
+   *
+   * Drawn in the gravity frame, so the shafts hang straight down however
+   * the phone is held, and added rather than blended because this is light
+   * arriving, not a surface. Curvature is taken over a wide stencil: a lens
+   * is metres of surface, not one sample.
+   */
+  /* Drawn small and blitted once.
+   *
+   * Nineteen full-height additive blits straight onto the canvas cost 8ms a
+   * frame in paint — about a whole extra full-screen pass — for shafts that
+   * are soft-edged and carry no fine detail. At a fraction of the
+   * resolution the upscale supplies the softness for free.
+   */
+  const cg = causticCtx;
+  cg.clearRect(0, 0, CAUSTIC_W, CAUSTIC_H);
+  /* The band the shafts actually occupy: from a little above the crest down
+   * to where the light has faded out. Blitting the full container instead
+   * meant a whole-screen additive composite every frame, and in software
+   * rasterisation that alone is most of the frame budget. */
+  const bandTop = -(level + upExtent * 0.18);
+  const bandH = upExtent * 1.33;
+  const reach = upExtent * 1.15;
+  const pitch = 2 * span / (N - 1);
+  const toX = (v) => (v + span) / (2 * span) * CAUSTIC_W;
+  const toY = (v) => (v - bandTop) / bandH * CAUSTIC_H;
+  for (let i = 2; i < N - 2; i += 5) {
+    const curv = h[i - 2] + h[i + 2] - 2 * h[i];
+    /* Irregular by construction. Evenly spaced shafts of equal width read
+     * as a machined pattern; two incommensurate frequencies plus a
+     * per-shaft width give the uneven spacing real caustics have. */
+    const seed = Math.sin(i * 12.9898) * 43758.5453;
+    const jitter = seed - Math.floor(seed);
+    const amb = 0.05 + 0.032 * Math.sin(time * 0.41 + i * 0.29)
+                     + 0.022 * Math.sin(time * 0.23 - i * 0.73);
+    const a = Math.max(0, Math.min(0.24, amb + curv * 0.010));
+    if (a < 0.012) continue;
+    const w = pitch * (5 + jitter * 7);
+    const sx = -span + 2 * span * (i / (N - 1)) + (jitter - 0.5) * pitch * 4;
+    const sy = -(level + h[i]);
+    cg.globalAlpha = a;
+    cg.drawImage(shaftSprite, toX(sx - w / 2), toY(sy),
+                 w / (2 * span) * CAUSTIC_W, reach / bandH * CAUSTIC_H);
+  }
+  cg.globalAlpha = 1;
+
+  ctx.save();
+  ctx.transform(tan.x, tan.y, -up.x, -up.y, CX, CY);
+  ctx.globalCompositeOperation = "lighter";
+  ctx.drawImage(causticCanvas, -span, bandTop, 2 * span, bandH);
+  ctx.restore();
 
   // Light pooling just under the surface, the way it does in a real pouch.
   const under = ctx.createLinearGradient(

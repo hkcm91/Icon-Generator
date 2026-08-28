@@ -72,6 +72,26 @@ gradient stops being decoration and becomes a consequence of stratification.
 Measured: settled it separates to 0.01/0.96, a shake mixes it back to 0.68,
 and the mean is conserved across both.
 
+**Caustics** — the free surface is a lens. Where it curves concave it
+converges the light passing through into a bright shaft in the body below;
+where convex it spreads it thin. It is the strongest depth cue a real liquid
+container has, and without it the body is evenly lit everywhere, which is
+what made it read flat. Drawn in the gravity frame so the shafts hang
+straight down however the phone is held, and added rather than blended,
+because this is light arriving rather than a surface.
+
+They are deliberately irregular: evenly spaced shafts of equal width read as
+corduroy, so two incommensurate frequencies and a per-shaft width give them
+the uneven spacing real caustics have.
+
+**The container edge is crisp.** It used to carry a 58px dark band blurred
+over 43px, which had two things wrong with it. It turned the whole border
+into a haze the liquid faded away into rather than filling up to; and it was
+backwards — a pouch is a pillow, deepest through the middle and tapering to
+nothing where the walls close, so absorption is strongest at the centre and
+the rim is the *clearest* part. It is now a narrow bright band, barely
+blurred: liquid thinning against a glass wall that refracts.
+
 **Depth** — the simulation is 2-D but the pouch is not, so every particle
 carries a position through its thickness. Particles behind the mid-plane are
 drawn before the liquid tint and read as immersed; those in front are drawn
@@ -242,8 +262,8 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
 
 Frame rate measured here is misleading and worth explaining. Profiled
-in-page, the whole simulation step costs 3.0ms and issuing the draw calls
-1.9ms — but a frame takes 34ms. The missing 30ms is not in this code at all:
+in-page, the whole simulation step costs ~3ms and issuing the draw calls
+~2ms — but a frame takes far longer. The missing 30ms is not in this code at all:
 it is the browser rasterising a full-screen canvas in software, because the
 container has no GPU. On a device with an accelerated canvas that cost is a
 fraction of this. Treat the ~30fps seen here as a software-rasteriser
