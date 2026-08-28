@@ -2444,49 +2444,59 @@ function fixedStep(dt, time) {
   for (const p of stars) {
     sampleFlow(p.x, p.y, flow);
 
-    /* Terminal velocity relative to the fluid, not an acceleration that
-     * drag then fights: a suspended flake reaches terminal speed almost
-     * immediately at this scale, so relaxing toward (flow + settling) is
-     * both cheaper and better behaved than integrating gravity and damping
-     * separately. */
-    /* Flutter as a consequence of orientation rather than a free sine.
-     * A falling plate tips, the lift from tipping pushes it sideways,
-     * which tips it back — so the sideways force follows the flake's own
-     * angle to gravity, and stops when the flake stops turning. */
-    /* Settling is driven by gravity alone, not by gravity plus the shake.
-     * Feeding the container's acceleration in here as well double-counts it:
-     * the relaxation toward `flow` already makes a heavy flake lag a fluid
-     * that is being thrown about, and lagging *is* the dense-particle
-     * response to acceleration. Measured with both terms in, flakes drifted
-     * up the effective body force during a shake — the wrong way for
-     * anything denser than the liquid. */
+    /* The glitter is buoyant, and that is the whole toy.
+     *
+     * These flakes are lighter than the gel they are suspended in — which is
+     * how a liquid-motion shaker is actually built, the liquid loaded until
+     * it outweighs the film — so they do not sink, they climb, and they
+     * gather in a drift under the waterline. Turning the shaker over puts
+     * that drift at the bottom and you watch it float back up. Modelled the
+     * other way round it was a sedimentation tank: everything ended on the
+     * floor and a flip only gave you the same thing upside down.
+     *
+     * Terminal velocity relative to the fluid rather than an acceleration
+     * that drag then fights: a flake this small reaches its terminal speed
+     * almost immediately, so relaxing toward (flow + rise) is both cheaper
+     * and better behaved than integrating buoyancy and damping separately.
+     *
+     * Driven by gravity alone, not gravity plus the shake. Feeding the
+     * container's acceleration in here as well double-counts it: relaxing
+     * toward `flow` already makes a flake lag a fluid that is being thrown
+     * about, and that lag *is* a particle's response to acceleration.
+     */
+    /* Flutter as a consequence of orientation rather than a free sine. A
+     * plate moving through liquid tips, the lift from tipping pushes it
+     * sideways, which tips it back — so the sideways force follows the
+     * flake's own angle to gravity, and stops when the flake stops turning. */
     const flut = Math.sin(2 * (p.spin - gAng)) * p.flutterAmp * gMag;
     sampleDisperse(p.x, p.y, disperse);
-    /* A flake is a plate, not a sphere. Falling face-on it presents its whole
-     * area to the liquid and falls slowly; edge-on it presents almost none
-     * and drops. Its settling speed therefore depends on which way it happens
-     * to be pointing, and since the spin now comes from the local vorticity,
-     * the liquid is what decides. That is the stop-start quality of real
-     * glitter settling — it stalls as it turns broadside and slips as it
-     * comes round — where a constant terminal speed gives a steady drift.
+    /* A flake is a plate, not a sphere. Broadside to its travel it presents
+     * its whole area to the liquid and creeps; edge-on it presents almost
+     * none and slips. Its speed therefore depends on which way it happens to
+     * be pointing, and since the spin comes from the local vorticity, the
+     * liquid is what decides. That is the stop-start quality of real glitter
+     * drifting — it stalls as it turns broadside and slips as it comes
+     * round — where a constant terminal speed gives an even glide.
      * Normalised so the population's average rate is unchanged: this adds
-     * spread, it does not make the shaker drain faster. */
+     * spread, it does not empty the body faster. */
     const broad = Math.abs(Math.cos(p.spin - gAng));
-    /* Hindered settling. A flake falling through a crowd of other flakes has
-     * to push the liquid they displace back up past itself, so a dense
-     * suspension settles far slower than a dilute one — Richardson and
-     * Zaki's (1 - phi) to the 4.65, which is the reason a settling
-     * suspension forms a sharp front with clear liquid above it and a
-     * compacting bed below rather than thinning out evenly everywhere.
-     * It is also self-limiting: wherever the convection cells concentrate
-     * the glitter, the glitter there slows down, which is a mechanism doing
-     * the job the dispersion term was patching by hand. */
+    /* Hindered rise. A flake climbing through a crowd of other flakes has to
+     * drag the liquid they displace down past itself, so a dense suspension
+     * moves far slower than a dilute one — Richardson and Zaki's (1 - phi)
+     * to the 4.65. It is why a separating suspension forms a sharp front,
+     * with clearing liquid behind it and a packing drift ahead, rather than
+     * thinning out evenly everywhere. It is also self-limiting, which is
+     * what stops the drift under the waterline collapsing into a single
+     * hard line: the more crowded it gets there, the slower the next arrival
+     * pushes in. */
     const hind = Math.pow(Math.max(0, 1 - sampleConc(p.x, p.y) / PHI_MAX), 4.65);
-    const fall = p.terminal * gMag * (1.573 / (1 + 0.9 * broad)) * hind;
-    let tx = flow.x + gDir.x * fall - gDir.y * flut + disperse.x * DISPERSE;
-    let ty = flow.y + gDir.y * fall + gDir.x * flut + disperse.y * DISPERSE;
+    const climb = p.terminal * gMag * (1.573 / (1 + 0.9 * broad)) * hind;
+    let tx = flow.x - gDir.x * climb - gDir.y * flut + disperse.x * DISPERSE;
+    let ty = flow.y - gDir.y * climb + gDir.x * flut + disperse.y * DISPERSE;
 
-    // Do not let flakes swim up out of the liquid into the headspace.
+    /* The surface is a ceiling. Buoyancy would otherwise carry the glitter
+     * straight through the waterline and into the headspace, where there is
+     * no liquid to hold it up. */
     const depth = depthOf(p.x, p.y);
     if (depth > -p.r) {
       const into = tx * up.x + ty * up.y;
@@ -2498,7 +2508,8 @@ function fixedStep(dt, time) {
     p.vy += (ty - p.vy) * k;
 
     // Third law: whatever drag the liquid applied to the flake, the flake
-    // applies back. Settling glitter therefore drives downwelling plumes.
+    // applies back. Rising glitter therefore drives upwelling plumes, and
+    // the liquid it displaces has to come down somewhere else.
     scatterForce(p.x, p.y, (flow.x - p.vx) * p.mass * COUPLE,
                            (flow.y - p.vy) * p.mass * COUPLE);
     depositConc(p.x, p.y, p.r * p.r * Math.PI);

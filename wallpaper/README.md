@@ -94,8 +94,8 @@ the level returns to within 0.02% of where it started.
 
 **Two-way coupling** — particles push back on the liquid, not just the other
 way around. One-way advection is the usual shortcut and it misses the most
-characteristic thing a glitter shaker does: settling flakes drag liquid down
-with them, the displaced liquid rises somewhere else, and the suspension
+characteristic thing a glitter shaker does: drifting flakes drag liquid with
+them, the liquid they displace has to go the other way, and the suspension
 organises into convection plumes. With no input at all the flow field
 sustains real structural motion; before the coupling it was exactly zero.
 
@@ -342,65 +342,75 @@ star turned underneath it.
 
 **Particles with Stokes drag** — response time and terminal velocity both
 scale with radius squared, so fine glitter traces the flow almost exactly
-while big flakes lag, overshoot on a turn and sink faster. That spread is
-what makes a settle look like a real suspension rather than one moving
-sheet. Flakes flutter as they sink; bubbles rise with buoyancy against drag.
+while big flakes lag, overshoot on a turn and climb faster. That spread is
+what makes the drift look like a real suspension rather than one moving
+sheet. Flakes flutter as they travel; bubbles rise against drag.
 
 **Flakes tumble because the water turns them.** Each flake used to spin at a
 fixed rate assigned at birth, which meant a flake in dead-still water spun
 exactly as fast as one caught in a shake. A flake is small enough to follow
 the local rotation of the fluid, so it now spins at half the vorticity it
 sits in — measured 0.68 rad/s at rest against 2.19 rad/s under a shake. The
-flutter as it sinks follows from that: rather than a free sine wave, the
+flutter as it travels follows from that: rather than a free sine wave, the
 sideways force is `sin(2 * (spin - gravity angle))`, which is zero when the
-flake is edge-on or face-on to its fall and largest at 45 degrees. A flake
+flake is edge-on or face-on to its travel and largest at 45 degrees. A flake
 that stops turning stops fluttering, which is what a real one does.
 
-**A flake is a plate, not a sphere.** Falling face-on it presents its whole
-area to the liquid and falls slowly; edge-on it presents almost none and
-drops. Its settling speed therefore depends on which way it happens to be
-pointing — and since the spin now comes from the local vorticity, the liquid
-is what decides. That is the stop-start quality of real glitter settling: it
-stalls as it turns broadside and slips as it comes round, where a constant
-terminal speed gives a steady drift. Normalised so the population's average
-rate is unchanged, so this adds spread rather than draining the shaker
-faster: measured mean factor 1.035, with an edge-on flake falling 1.8x
-faster than a face-on one.
+**A flake is a plate, not a sphere.** Broadside to its travel it presents
+its whole area to the liquid and creeps; edge-on it presents almost none and
+slips. Its speed therefore depends on which way it happens to be pointing —
+and since the spin now comes from the local vorticity, the liquid is what
+decides. That is the stop-start quality of real glitter drifting: it stalls
+as it turns broadside and slips as it comes round, where a constant terminal
+speed gives an even glide. Normalised so the population's average rate is
+unchanged, so this adds spread rather than emptying the body faster:
+measured mean factor 1.035, with an edge-on flake moving 1.8x faster than a
+face-on one.
 
-**Settling has to end somewhere.** A flake falling through a crowd of other
-flakes has to push the liquid they displace back up past itself, so a dense
-suspension settles far slower than a dilute one — Richardson and Zaki's
-(1 - phi) to the 4.65. That is the reason a settling suspension forms a
-sharp front, with clearing liquid above it and a compacting bed below,
+**The glitter is buoyant, and that is the whole toy.** These flakes are
+lighter than the gel they are suspended in — which is how a liquid-motion
+shaker is actually built, the liquid loaded until it outweighs the film — so
+they do not sink, they climb, and they gather in a drift under the
+waterline. Turning the shaker over puts that drift at the bottom and you
+watch it float back up. Modelled the other way round it was a sedimentation
+tank: everything ended on the floor, and a flip only gave you the same thing
+upside down. Measured upright from a mixed start, the glitter's centre of
+mass climbs the screen from 0.423 to 0.299 over a minute, with 316 flakes of
+620 ending in the top fifth; inverted it turns round and goes the other way,
+0.344 to 0.544.
+
+**A drift has to end somewhere.** A flake climbing through a crowd of other
+flakes has to drag the liquid they displace down past itself, so a dense
+suspension moves far slower than a dilute one — Richardson and Zaki's
+(1 - phi) to the 4.65. That is the reason a separating suspension forms a
+sharp front, with clearing liquid behind it and a packing drift ahead,
 instead of thinning out evenly everywhere. Without it there is nowhere the
 glitter is going: measured from a well-mixed start, its centre of mass sat
 at 0.49 of the container and was still at 0.53 a hundred seconds later, with
 a flat profile top to bottom.
 
-Hindered settling is also self-limiting, which matters because it takes over
+Hindered rise is also self-limiting, which matters because it takes over
 a job that was being done by hand. Flakes disperse down their own
 concentration gradient too — collisions and the disturbance flow around each
 flake drive a flux from crowded regions to empty ones — and that term was
-carrying all the weight, at a strength that stopped anything settling at
+carrying all the weight, at a strength that stopped anything separating at
 all. Wherever the convection cells concentrate the glitter it now slows
 down, which is the same defence by a real mechanism, so the dispersion could
 drop to a seventh of what it was.
 
-It cannot go to zero. With no dispersion the glitter drains completely into
-the floor — 480 flakes of 620 in the bottom tenth after seventy seconds,
-which is not something anyone wants to look at. What is left keeps the body
+It cannot go to zero. With no dispersion the glitter packs completely into
+one end — 480 flakes of 620 in a single tenth after seventy seconds, which
+is not something anyone wants to look at. What is left keeps the body
 of the shaker populated while a bed still builds: the profile ends up
 running 31 flakes in the top tenth to 229 in the bottom, rather than flat at
 one end or empty at the other.
 
-The settling rate went up threefold along with it. It had been slowed twice,
-the second time because the body drained — but that was the dispersion and
-the missing hindrance fighting each other rather than a rate that was too
-fast. With a bed that slows its own arrivals, the rate can be what the toy
-actually does: a big flake drops through the container in seconds, the fine
-glitter still hangs there for minutes. Held upside down, the glitter's
-centre of mass climbs the screen from 0.635 to 0.335 over forty seconds
-while the bubbles sink past it from 0.314 to 0.69 — the two swap ends.
+The rate went up threefold along with it. It had been slowed twice, the
+second time because the body emptied — but that was the dispersion and the
+missing hindrance fighting each other rather than a rate that was too fast.
+With a drift that slows its own arrivals, the rate can be what the toy
+actually does: a big flake crosses the container in seconds, the fine
+glitter still hangs there for minutes.
 
 Gravity is deliberately **not** normalised: the in-plane component genuinely
 shrinks as the phone lies flatter, and normalising it makes a 5-degree tilt
@@ -517,9 +527,9 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Gas lift on a bubble-rich cell | 114px/s^2, against 75 for the densest cell of the heavy phase |
 | Film drainage sets the size range | largest bubble 7px at 1.4s drainage, 31px at 10s |
 | Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
-| Glitter actually settles | centre of mass 0.49 -> 0.53 over 100s before, 0.52 -> 0.69 now |
-| Glitter and bubbles swap ends on a flip | glitter climbs the screen 0.635 -> 0.335, bubbles sink 0.314 -> 0.69 |
-| Dispersion cannot go to zero | without it 480 flakes of 620 end in the bottom tenth |
+| Glitter floats to the top | centre of mass climbs the screen 0.423 -> 0.299 in a minute, 316 of 620 flakes in the top fifth |
+| It floats back after a flip | glitter 0.344 -> 0.544 down the screen toward the new surface |
+| Dispersion cannot go to zero | without it 480 flakes of 620 pack into a single tenth |
 | A tilted surface drives the liquid downhill | 43.8px/s with the slope term, 0.4px/s without |
 | A pure rotation sloshes | peak surface deflection 95px before the basis tilt, 219px after |
 | A 180-degree roll conserves the fill | level returns to 0.02% of where it started |
