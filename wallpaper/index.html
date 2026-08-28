@@ -829,7 +829,17 @@ const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
 /* Far larger than DYE_BUOY, and it should be: the dense phase is a few per
  * cent heavier than the liquid, a bubble is a hundred per cent lighter. */
 const GAS_LIFT = 900;       // px/s^2 per g at a cell entirely full of gas
-const DISPERSE = 1100;       // px/s of down-gradient drift per unit relative gradient
+/* Down-gradient drift, cut from 1100. At that strength nothing could ever
+ * settle: measured from a well-mixed start, the glitter's centre of mass sat
+ * at 0.49 of the container and was still at 0.53 a hundred seconds later,
+ * with a flat profile top to bottom. Most of what it was there to prevent —
+ * convection cells concentrating the flakes into bands — is now prevented by
+ * hindered settling instead, which is a mechanism rather than a patch. What
+ * is left keeps the body of the shaker populated: with dispersion off
+ * entirely the glitter drains completely into the floor, 480 flakes of 620
+ * in the bottom tenth, which is not something anyone wants to look at. */
+const DISPERSE = 150;
+const PHI_MAX = 1.0;         // solid fraction at which a bed stops settling
 const WAKE = 150;           // px/s^2 of wake attraction between near bubbles
 
 /* Two-way coupling: a particle dragged by the liquid drags back.
@@ -897,6 +907,13 @@ function depositConc(x, y, w) {
  *  concentration field. Normalised by local concentration so it is a
  *  diffusive flux rather than a force that grows without bound. */
 const disperse = { x: 0, y: 0 };
+/** Local solid fraction: how much of a cell is glitter rather than liquid. */
+function sampleConc(x, y) {
+  const i = Math.max(1, Math.min(GW - 2, (x / cell) | 0));
+  const j = Math.max(1, Math.min(GH - 2, (y / cell) | 0));
+  return conc[j * GW + i] / (cell * cell);
+}
+
 function sampleDisperse(x, y, out) {
   let gx = x / cell, gy = y / cell;
   const i = Math.max(1, Math.min(GW - 2, gx | 0));
@@ -1204,14 +1221,17 @@ function seed() {
        * of every flake moving as one sheet. */
       tau: 0.02 + (r / unit) * (r / unit) * 0.0016,
       /* Settling speed. Turning a real glitter shaker over empties it in
-       * tens of seconds, not minutes: at the old rate the median flake
-       * needed four minutes to cross the container, so inverting the phone
-       * produced almost no visible fall. But the first correction
-       * overshot: at 80 seconds of stillness the body had drained and all
-       * the glitter sat in the bottom third, which is not what anyone
-       * wants to look at. Halved again — big flakes still fall visibly
-       * within a flip, the fine glitter stays up for minutes. */
-      terminal: (4 + (r / unit) * (r / unit) * 0.5) * unit,
+       * tens of seconds, not minutes, and this was three times slower than
+       * that — the glitter had nowhere it was visibly going. It was set low
+       * because the earlier correction overshot and drained the body into
+       * the floor, but that was the dispersion term and the lack of
+       * hindrance fighting each other rather than a settling rate that was
+       * too fast. With hindered settling in place a bed slows its own
+       * arrivals, so the rate can be what the toy actually does: a big
+       * flake drops through the container in seconds and the fine glitter
+       * still hangs there for minutes, which is the spread that makes a
+       * shaker worth watching. */
+      terminal: (12 + (r / unit) * (r / unit) * 1.5) * unit,
       // Flakes rock from side to side as they sink rather than dropping
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
@@ -2452,7 +2472,17 @@ function fixedStep(dt, time) {
      * Normalised so the population's average rate is unchanged: this adds
      * spread, it does not make the shaker drain faster. */
     const broad = Math.abs(Math.cos(p.spin - gAng));
-    const fall = p.terminal * gMag * (1.573 / (1 + 0.9 * broad));
+    /* Hindered settling. A flake falling through a crowd of other flakes has
+     * to push the liquid they displace back up past itself, so a dense
+     * suspension settles far slower than a dilute one — Richardson and
+     * Zaki's (1 - phi) to the 4.65, which is the reason a settling
+     * suspension forms a sharp front with clear liquid above it and a
+     * compacting bed below rather than thinning out evenly everywhere.
+     * It is also self-limiting: wherever the convection cells concentrate
+     * the glitter, the glitter there slows down, which is a mechanism doing
+     * the job the dispersion term was patching by hand. */
+    const hind = Math.pow(Math.max(0, 1 - sampleConc(p.x, p.y) / PHI_MAX), 4.65);
+    const fall = p.terminal * gMag * (1.573 / (1 + 0.9 * broad)) * hind;
     let tx = flow.x + gDir.x * fall - gDir.y * flut + disperse.x * DISPERSE;
     let ty = flow.y + gDir.y * fall + gDir.x * flut + disperse.y * DISPERSE;
 
@@ -2471,7 +2501,7 @@ function fixedStep(dt, time) {
     // applies back. Settling glitter therefore drives downwelling plumes.
     scatterForce(p.x, p.y, (flow.x - p.vx) * p.mass * COUPLE,
                            (flow.y - p.vy) * p.mass * COUPLE);
-    depositConc(p.x, p.y, 1);
+    depositConc(p.x, p.y, p.r * p.r * Math.PI);
 
     const ox = p.x, oy = p.y;
     p.x += p.vx * dt; p.y += p.vy * dt;

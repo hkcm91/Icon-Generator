@@ -367,12 +367,40 @@ rate is unchanged, so this adds spread rather than draining the shaker
 faster: measured mean factor 1.035, with an edge-on flake falling 1.8x
 faster than a face-on one.
 
-Flakes also disperse down their own concentration gradient. A suspension
-does not let particles pile up indefinitely — collisions and the disturbance
-flow around each flake drive a flux from crowded regions to empty ones.
-Without it the convection cells preferentially concentrate the flakes and
-they band against the top and bottom: measured at a 2.2x spread between the
-fullest and emptiest tenth of the container, brought down to 1.4x.
+**Settling has to end somewhere.** A flake falling through a crowd of other
+flakes has to push the liquid they displace back up past itself, so a dense
+suspension settles far slower than a dilute one — Richardson and Zaki's
+(1 - phi) to the 4.65. That is the reason a settling suspension forms a
+sharp front, with clearing liquid above it and a compacting bed below,
+instead of thinning out evenly everywhere. Without it there is nowhere the
+glitter is going: measured from a well-mixed start, its centre of mass sat
+at 0.49 of the container and was still at 0.53 a hundred seconds later, with
+a flat profile top to bottom.
+
+Hindered settling is also self-limiting, which matters because it takes over
+a job that was being done by hand. Flakes disperse down their own
+concentration gradient too — collisions and the disturbance flow around each
+flake drive a flux from crowded regions to empty ones — and that term was
+carrying all the weight, at a strength that stopped anything settling at
+all. Wherever the convection cells concentrate the glitter it now slows
+down, which is the same defence by a real mechanism, so the dispersion could
+drop to a seventh of what it was.
+
+It cannot go to zero. With no dispersion the glitter drains completely into
+the floor — 480 flakes of 620 in the bottom tenth after seventy seconds,
+which is not something anyone wants to look at. What is left keeps the body
+of the shaker populated while a bed still builds: the profile ends up
+running 31 flakes in the top tenth to 229 in the bottom, rather than flat at
+one end or empty at the other.
+
+The settling rate went up threefold along with it. It had been slowed twice,
+the second time because the body drained — but that was the dispersion and
+the missing hindrance fighting each other rather than a rate that was too
+fast. With a bed that slows its own arrivals, the rate can be what the toy
+actually does: a big flake drops through the container in seconds, the fine
+glitter still hangs there for minutes. Held upside down, the glitter's
+centre of mass climbs the screen from 0.635 to 0.335 over forty seconds
+while the bubbles sink past it from 0.314 to 0.69 — the two swap ends.
 
 Gravity is deliberately **not** normalised: the in-plane component genuinely
 shrinks as the phone lies flatter, and normalising it makes a 5-degree tilt
@@ -489,14 +517,16 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Gas lift on a bubble-rich cell | 114px/s^2, against 75 for the densest cell of the heavy phase |
 | Film drainage sets the size range | largest bubble 7px at 1.4s drainage, 31px at 10s |
 | Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
-| Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
+| Glitter actually settles | centre of mass 0.49 -> 0.53 over 100s before, 0.52 -> 0.69 now |
+| Glitter and bubbles swap ends on a flip | glitter climbs the screen 0.635 -> 0.335, bubbles sink 0.314 -> 0.69 |
+| Dispersion cannot go to zero | without it 480 flakes of 620 end in the bottom tenth |
 | A tilted surface drives the liquid downhill | 43.8px/s with the slope term, 0.4px/s without |
 | A pure rotation sloshes | peak surface deflection 95px before the basis tilt, 219px after |
 | A 180-degree roll conserves the fill | level returns to 0.02% of where it started |
 | Orientation changes how fast a flake falls | 1.8x between edge-on and face-on, population mean unchanged |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost under continuous shake | median 27.3ms, p90 30.7ms (software rasteriser, no GPU) |
+| Frame cost under continuous shake | median 24.5ms, p90 29.4ms (software rasteriser, no GPU) |
 | Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |
 | Buoyancy separates the phases, held still | bubbles climb 19.4px/s, flakes settle 4.8px/s |
 | Added mass makes bubbles lead the flow | lag 90px/s without the term, 17px/s with it; flakes lag 84px/s |
@@ -509,7 +539,7 @@ in-page, the whole simulation step costs ~3ms and issuing the draw calls
 ~2ms — but a frame takes far longer. The missing ~21ms is not in this code at all:
 it is the browser rasterising a full-screen canvas in software, because the
 container has no GPU. On a device with an accelerated canvas that cost is a
-fraction of this. Treat the ~37fps seen here as a software-rasteriser
+fraction of this. Treat the ~41fps seen here as a software-rasteriser
 number, not a device one; `stars` is still the dial if a real device needs
 it.
 
