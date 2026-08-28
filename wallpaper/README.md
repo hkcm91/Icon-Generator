@@ -100,40 +100,125 @@ crosses the full thickness of liquid before it reaches the eye, and putting
 those flakes under the tint layer is that absorption, for free. Tilting also
 shifts the layers against each other, since the viewing angle changes.
 
-**Bubbles** are clear. An air bubble is thinnest through the middle, so you
-look straight through it and see the liquid and glitter behind barely
-changed; everything that makes it visible happens at the rim, where the film
-turns edge-on, the ray path lengthens, it refracts a dark band, and past the
-critical angle it total-internal-reflects a hard bright ring. Almost all of
-the contrast belongs in the outer fifth of the radius.
+**Bubbles are diverging lenses**, and that one fact sets their whole
+appearance. Light crossing from water into air bends away from the normal,
+so past an incidence of about 49 degrees none of it gets through at all — it
+is totally internally reflected. On a sphere that angle falls at an impact
+parameter of n_air/n_water = 0.75 of the radius, which cuts the disc into
+two quite different objects:
 
-Two earlier attempts got this wrong in opposite directions — first a rim
-with nothing inside it, which is just a drawn circle, then a lit-sphere fill
-which produced an opaque milky marble, brightest exactly where a bubble is
-clearest. The caustic sits opposite the specular, on the side away from the
-light; sweeping it across the bottom put it on the wrong side of the sphere.
+- **inside 0.75R** you see the liquid behind, minified and turned upside
+  down. A bubble therefore shows the far reaches of the pour rather than its
+  own surroundings, and its interior gradient runs *opposite* to the liquid
+  around it — pale where the liquid is deep, deep where the liquid is pale.
+  That inversion is the strongest single cue that there is a hole in the
+  water rather than a decal on it.
+- **outside 0.75R** nothing is transmitted; the annulus is a mirror. But
+  reflectance only climbs steeply in the last few percent of the radius, and
+  over the rest of that band a bubble is reflecting liquid back at liquid of
+  nearly the same brightness. So it is barely visible there, and the bright
+  ring is thin and at the very edge.
 
-They rise, deform, merge and pop. A bubble climbing through liquid is
+Rendered as a size ladder at large scale over the real liquid — the only
+test that has ever caught these — three earlier attempts each failed
+differently. A rim with nothing inside it is a drawn circle. A lit-sphere
+fill is an opaque milky marble, brightest exactly where a bubble is
+clearest. A uniform white outline is a soap bubble floating in air. And
+painting the whole quarter-radius annulus as opaque pale ring turns every
+bubble into a rubber grommet: a fat raised collar around a flat dark disc.
+Almost all of a bubble's contrast belongs in two thin rings and a hard
+specular; the rest of it is a hole you can see through.
+
+Two things orient a bubble and they are not the same thing. What it
+**refracts** is fixed to gravity, because the liquid it is looking through
+is graded along that axis. What it **reflects** is fixed to the light, which
+does not move when the phone turns. Baking both into one sprite is what made
+every bubble a stamp, so they are two layers now: the body turns with
+gravity, the glint never turns at all. Verified by drawing one bubble at
+four gravity angles — the specular held the same clock position in all four
+while the interior inversion rotated.
+
+They rise, weave, merge and burst. A bubble climbing through liquid is
 flattened perpendicular to its motion, but only by a few percent at these
 speeds — rendering that at the earlier strength turned every one into an
-egg. New bubbles nucleate small and grow only by merging, which is the loop that
-keeps the population in balance: respawning small with a fast rise drained
-the shaker to a median radius of 3px, and respawning large ran it away the
-other way to a median of 21px and 194 interpenetrating pairs. Bubbles that
-touch merge with gas volume conserved, drawn
-together on the way up by wake attraction — a bubble in another's wake meets
-less resistance and catches it, which is why bubbles form chains in a real
-liquid and why the large ones exist at all. Without wake attraction two
-bubbles have to collide by chance: measured at zero merges in thirty
-seconds. Rise speed follows r-squared only while Stokes drag holds, then
-plateaus; leaving that uncapped had a large bubble crossing the screen in
-1.6 seconds, so none ever survived to be seen.
+egg. New bubbles nucleate small and grow only by merging, which is the loop
+that keeps the population in balance: respawning small with a fast rise
+drained the shaker to a median radius of 3px, and respawning large ran it
+away the other way to a median of 21px and 194 interpenetrating pairs.
+Bubbles that touch merge with gas volume conserved, drawn together on the
+way up by wake attraction — a bubble in another's wake meets less resistance
+and catches it, which is why bubbles form chains in a real liquid and why
+the large ones exist at all. Without wake attraction two bubbles have to
+collide by chance: measured at zero merges in thirty seconds.
 
 Two bubbles too large to merge push apart instead. A big bubble's film takes
 far longer to drain, so they touch and stay separate — but they are still
 solid objects, and without the separation a bubble at the size cap sat
 permanently inside a neighbour it could never absorb, rendering as rings
 drawn over each other.
+
+**Air gets into a sealed vessel one way: the surface folds over and drags it
+under.** Bubbles used to reappear at a uniformly random point deep in the
+liquid, which is nucleation out of nowhere. A bubble born while the shaker
+is being agitated now starts just beneath the waterline and is driven *down*
+into the body by the plunging surface before climbing back, so a shake
+produces a plume of fizz instead of a fixed population quietly recycling.
+At rest the trickle comes off the glass, where a real vessel has its
+nucleation sites. Measured: 17% of births are entrained at the surface when
+the shaker is still, 87% while it is being shaken.
+
+**The free surface is a lid.** Nothing stopped a bubble there before — it
+kept climbing into the headspace for the two seconds its drain timer took,
+so bubbles were visibly floating in the air above the waterline. A bubble
+that reaches the surface now breaks through and stays, riding proud of the
+line by a fraction of its radius, until the film drains and it bursts. It
+bursts rather than fades: the sphere springs outward as the tension holding
+it lets go. And it leaves a dimple that rings — an impulse into the wave
+field at the point where it broke. That is the only thing the bubbles give
+back to the water; without it the coupling runs one way, the fluid shoving
+bubbles around and the bubbles never touching the surface they break
+through.
+
+**Path instability.** Below a critical size a bubble rises dead straight;
+above it the wake sheds vortices alternately and the bubble zigzags across
+its own rise. That threshold is real and was simply absent — every bubble
+down to the finest fizz wove from side to side at a rate drawn at random
+when it was born, which is why the fizz shimmered. The shedding frequency
+now follows speed over diameter, in the Strouhal form, so a bubble that
+stalls in the flow stops weaving and a fast one weaves quickly. Measured in
+still liquid: fizz generates 0.0px/s of lateral motion, large bubbles
+25.8px/s at 2.9Hz — and when the rise speed fell by a factor of three in a
+later run, the frequency fell with it, to 0.9Hz.
+
+**Response time is not a free parameter.** A bubble reaches terminal speed
+when buoyancy balances drag, so tau = v_t / 3g, the 3 being the added-mass
+result that a body of negligible density accelerates at three times the
+fluid around it. Deriving tau from the rise instead of tuning it separately
+— as it was — describes a bubble whose sluggishness and whose rise belong to
+the same object rather than to two different ones. It also carries the
+plateau over: past the point where rise speed stops growing with radius, the
+response time stops growing too. Measured across the population, v_t/(3g·tau)
+= 1.000.
+
+**A bubble leads the flow; everything heavier lags it.** This is the one
+thing relaxing toward the local flow can never reproduce, because relaxation
+only ever lags. A bubble has no inertia of its own — all it carries is the
+liquid it must shove aside — and the pressure gradient driving that liquid
+drives the bubble harder still, so it accelerates at three times the fluid
+around it and arrives at the far wall before the glitter does. Added
+explicitly, and driven by the fluid's own local acceleration rather than by
+the container's: what the liquid actually did is what the bubble responds
+to, and because the sample follows the bubble it is a material derivative,
+so eddies count too. Measured by switching the term off: bubbles lag the
+accelerating fluid at 90px/s without it and 17px/s with it, a difference of
+72px/s, against flakes lagging at 84px/s.
+
+The mirror image of that was a bug. Feeding the container's acceleration
+into the *flakes* as an effective gravity double-counts it, because the
+relaxation toward the flow already makes a heavy flake lag a fluid that is
+being thrown about, and lagging is precisely the dense-particle response to
+acceleration. With both terms in, flakes drifted up the effective body force
+during a shake — the wrong way for anything denser than the liquid.
 
 **Glitter is foil, not confetti.** Each flake was a flat pastel silhouette
 — one colour edge to edge, no material, no light — which read as a sticker
@@ -170,12 +255,6 @@ flutter as it sinks follows from that: rather than a free sine wave, the
 sideways force is `sin(2 * (spin - gravity angle))`, which is zero when the
 flake is edge-on or face-on to its fall and largest at 45 degrees. A flake
 that stops turning stops fluttering, which is what a real one does.
-
-Bubbles carry **added mass**. A rising bubble has to shove the water in
-front of it aside, and that water's inertia is what it actually feels — its
-own is negligible. The response time therefore grows with the square of the
-radius, so a large bubble drifts serenely through a shake that whips the
-small ones around it.
 
 Flakes also disperse down their own concentration gradient. A suspension
 does not let particles pile up indefinitely — collisions and the disturbance
@@ -293,22 +372,34 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Dense-phase stratification | separates to 0.01/0.96 settled, mixes to 0.68 shaken, mean conserved |
 | Inversion (roll 180°) | `level` matches its expected value at 0°, 90° and 180°; volume conserved to 0.1% |
 | Net fluid drift | 12.7 px/s before the momentum fix, 0.99 after |
-| Bubble population at rest | median 3px with 6-10 large, stable over 80s |
+| Bubble population at rest | median 4.5px, max 31px, stable over 80s, 1 overlapping pair |
 | Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
 | Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost under continuous shake | median 23.6ms, p90 26.2ms (software rasteriser, no GPU) |
+| Frame cost under continuous shake | median 25.8ms, p90 28.5ms (software rasteriser, no GPU) |
+| Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |
+| Buoyancy separates the phases, held still | bubbles climb 19.4px/s, flakes settle 4.8px/s |
+| Added mass makes bubbles lead the flow | lag 90px/s without the term, 17px/s with it; flakes lag 84px/s |
+| Weave is gated on size | fizz 0.0px/s lateral, large bubbles 25.8px/s at 2.9Hz |
+| Air is entrained at the surface | 17% of births at the waterline when still, 87% while shaken |
+| Bubbles stay out of the headspace | 0 above the waterline over 90s, at rest and shaken |
 
 Frame rate measured here is misleading and worth explaining. Profiled
 in-page, the whole simulation step costs ~3ms and issuing the draw calls
-~2ms — but a frame takes far longer. The missing ~19ms is not in this code at all:
+~2ms — but a frame takes far longer. The missing ~21ms is not in this code at all:
 it is the browser rasterising a full-screen canvas in software, because the
 container has no GPU. On a device with an accelerated canvas that cost is a
-fraction of this. Treat the ~41fps seen here as a software-rasteriser
+fraction of this. Treat the ~39fps seen here as a software-rasteriser
 number, not a device one; `stars` is still the dial if a real device needs
 it.
 
 The world-fixed specular costs a second sprite blit per flake and did not
 move that number, because the blit is small and the cost is dominated by
-compositing area, not by call count.
+compositing area, not by call count. Splitting the bubbles into a
+gravity-fixed body and a light-fixed glint costs 2.2ms, and that one is
+visible in the profile: only 15 of the 70 bubbles are large enough to take
+the two-blit path, but between them they cover about a tenth of a
+full-screen fill and each blit goes through a rotation. A combined sprite
+for the middle of the size range would save a twentieth of that, which is
+not worth the branch.

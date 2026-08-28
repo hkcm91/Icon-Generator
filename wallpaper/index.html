@@ -915,36 +915,103 @@ function bubbleBirthRadius() {
   return (3 + Math.random() * 5) * bubbleUnit;
 }
 
+/* Buoyant gravity for the bubbles, px/s^2 per g. Deliberately far below the
+ * scale the fluid runs at: a physical rise speed would put a big bubble
+ * across the screen in under a second and there would never be anything to
+ * look at. Everything else about a bubble is derived from this one number
+ * and its radius, so the drift and the dart describe the same object. */
+const BUOY_G = 92;
+/* Shedding frequency, in the Strouhal form f ~ v/d. The constant is not
+ * Strouhal's 0.2 because the scene's speeds are slowed relative to its
+ * sizes; what carries over is the shape of the law, which is what makes a
+ * stalled bubble stop weaving and a fast one weave quickly. */
+const WEAVE_ST = 7.5;
+
 /** Buoyancy against drag: both rise speed and response time follow from the
  *  radius, so a bubble's whole behaviour is set by its size alone. */
 function setBubbleSize(b, r) {
   b.r = r;
   const u = r / bubbleUnit;
-  /* Added mass. A bubble's own gas weighs almost nothing, so its entire
-   * inertia is the liquid it has to shove aside to move — half the
-   * displaced mass for a sphere. That is why a bubble answers a shove
-   * sluggishly rather than snapping to the flow like its density suggests. */
-  b.tau = 0.05 + u * u * 0.0034;
   /* Rise speed goes as r-squared only while Stokes drag holds. Past that a
    * real bubble departs from it badly and plateaus — deformation and the
-   * surfactant skin cost it the rest. Leaving the square law uncapped made
-   * a large bubble rise at 526 px/s and cross the whole screen in 1.6
+   * surfactant skin cost it the rest, and millimetre bubbles in water end up
+   * all climbing at much the same speed. Leaving the square law uncapped
+   * made a large bubble rise at 526 px/s and cross the whole screen in 1.6
    * seconds, which is why no big bubble ever survived long enough to be
    * seen: the population kept collapsing back to fizz. */
   b.rise = Math.min(5 + u * u * 0.55, 34) * bubbleUnit;
+  /* Response time is not a free parameter. A bubble reaches terminal speed
+   * when buoyancy balances drag, so tau = v_t / 3g — the 3 being the
+   * added-mass result that a body of negligible density accelerates at three
+   * times the fluid around it. Tuning tau separately, as before, described a
+   * bubble whose sluggishness and whose rise belonged to different objects;
+   * deriving it also carries the plateau over, so past it a bubble's
+   * response time stops growing along with its speed. */
+  b.tau = b.rise / (3 * BUOY_G * bubbleUnit);
   b.mass = u * u * 0.55;
-  b.wobble = (5 + (u % 7)) * bubbleUnit;
+  /* Path instability. Below a critical size a bubble rises dead straight;
+   * above it the wake sheds vortices alternately and the bubble zigzags
+   * across its own rise. The threshold is real and was simply absent — every
+   * bubble down to the finest fizz wove from side to side at a rate drawn at
+   * random when it was born, which is why the fizz shimmered. */
+  b.weave = Math.max(0, Math.min(1, (u - 5) / 7));
 }
 
-/** Drop a bubble back into the body of the liquid, well below the surface. */
+/* Where a new bubble comes from.
+ *
+ * Bubbles used to reappear at a uniformly random point deep in the liquid,
+ * which is nucleation out of nowhere. Air gets into a sealed vessel one way:
+ * the surface folds over and drags it under. So a bubble born while the
+ * shaker is being agitated starts just beneath the waterline and is driven
+ * *down* into the body by the plunging surface before climbing back — which
+ * is what turns a shake into a plume of fizz instead of a fixed population
+ * quietly recycling. At rest the trickle comes off the glass, where a real
+ * vessel has its nucleation sites.
+ */
 function respawnBubble(b) {
-  b.vx = 0; b.vy = 0; b.squash = 0;
-  for (let tries = 0; tries < 6; tries++) {
-    b.x = CX + (Math.random() * 2 - 1) * RX * 0.92;
-    b.y = CY + (Math.random() * 2 - 1) * RY * 0.92;
-    if (depthOf(b.x, b.y) < -b.r * 4) break;
+  b.vx = 0; b.vy = 0; b.squash = 0; b.pop = 1;
+  const agit = Math.min(1, Math.hypot(accel.x, accel.y) * 1.4);
+  if (Math.random() < 0.2 + 0.75 * agit) {
+    const s = (Math.random() * 2 - 1) * span * 0.95;
+    const lift = level + surfaceAt(s) - b.r * (1.5 + Math.random() * 4);
+    b.x = CX + tan.x * s + up.x * lift;
+    b.y = CY + tan.y * s + up.y * lift;
+    const plunge = (30 + 260 * agit) * (0.4 + Math.random());
+    b.vx = -up.x * plunge; b.vy = -up.y * plunge;
+  } else {
+    const a = Math.random() * Math.PI * 2;
+    const k = 0.80 + Math.random() * 0.13;
+    let dx = Math.cos(a) * RX * k, dy = Math.sin(a) * RY * k;
+    // Nucleation sites are all over the glass, but the ones that matter are
+    // the submerged ones — reflect a point that landed in the headspace.
+    if (dx * gDir.x + dy * gDir.y < 0) { dx = -dx; dy = -dy; }
+    b.x = CX + dx; b.y = CY + dy;
+    const d = depthOf(b.x, b.y);
+    if (d > -b.r * 3) {
+      const drop = d + b.r * 3;
+      b.x -= up.x * drop; b.y -= up.y * drop;
+    }
   }
   clampInside(b, Math.min(RX, RY) * 0.03);
+  // A bubble that has just teleported has not "seen" the flow accelerate;
+  // without this the difference against its old sample is a spurious kick.
+  sampleFlow(b.x, b.y, flow);
+  b.pfx = flow.x; b.pfy = flow.y;
+}
+
+/* A bursting bubble leaves a dimple where its film was, and that dimple
+ * rings. It is small, but it is the only thing the bubbles give back to the
+ * water: without it the coupling runs one way, the fluid shoving bubbles
+ * around and the bubbles never touching the surface they break through. */
+function burstRipple(b) {
+  const s = (b.x - CX) * tan.x + (b.y - CY) * tan.y;
+  const i = Math.round((s + span) / (2 * span) * (N - 1));
+  const amp = Math.min(70, b.r * 4.5);
+  for (let d = -2; d <= 2; d++) {
+    const j = i + d;
+    if (j < 0 || j >= N) continue;
+    wv[j] -= amp * (1 - Math.abs(d) / 3);
+  }
 }
 
 function seed() {
@@ -1019,6 +1086,12 @@ function seed() {
       alpha: Math.random(),
       fading: false,
       rest: 0,           // seconds spent sitting under the surface
+      pop: 1,            // burst expansion, 1 until the film lets go
+      pfx: 0, pfy: 0,    // last flow sample, for the fluid's acceleration
+      // Film thickness varies bubble to bubble, and with it how much of the
+      // refracted band interferes away. Three sprites is enough to stop a
+      // field of them reading as one stamp repeated.
+      variant: (Math.random() * BUB_VARIANTS) | 0,
       squash: 0,         // deformation, driven by how fast it is climbing
       z: Math.random() * 2 - 1,
       zDrift: (Math.random() - 0.5) * 0.07,
@@ -1041,7 +1114,15 @@ function seed() {
  * the frame rate at 600 flakes — the gradient has to be rebuilt every frame
  * because it is positioned in user space. Bake each once and blit it scaled
  * instead. */
-let glowSprite = null, bubbleSprite = null, bubbleSmall = null;
+let glowSprite = null, bubbleSmall = null;
+/* Two layers per bubble, because two different things set their orientation.
+ * What the bubble refracts is fixed to gravity — the liquid it is looking
+ * through is graded along that axis. What it reflects is fixed to the light,
+ * which does not move when the phone turns. Baking both into one sprite is
+ * what made every bubble a stamp. */
+const bubbleBody = [];       // BUB_VARIANTS of them, rotated to gravity
+let bubbleGlint = null;      // world-fixed, never rotated
+const BUB_VARIANTS = 3;
 let shaftSprite = null;
 let causticCanvas = null, causticCtx = null;
 const CAUSTIC_W = 96, CAUSTIC_H = 220;
@@ -1195,6 +1276,13 @@ const LIGHT_ANGLE = -Math.PI * 0.72;
 const FLAKE_PX = 64;
 const SHAPES = 4;   // 0 = star, 1..3 = crushed-foil shards
 const SMALL_PX = 12;
+/* The bubble glint sprite is baked with the source at the top of it, so this
+ * is the turn that puts it where the light actually is. Constant, because
+ * the light does not move when the phone does. */
+const BUBBLE_LIGHT_ROT = LIGHT_ANGLE + Math.PI / 2;
+/* ...and this is the turn that points a bubble's refracted interior along
+ * whichever way is currently up. Recomputed once per step, not per bubble. */
+let riseAngle = 0;
 
 function flakePath(g, cx, cy, R, shape) {
   g.beginPath();
@@ -1330,88 +1418,189 @@ function buildSprites() {
     g.fillRect(0, 0, s, s);
   });
 
-  /* An air bubble is thinnest through the middle, so you look straight
-   * through it and see the liquid behind barely changed. Everything that
-   * makes it visible happens at the rim, where the film turns edge-on: the
-   * ray path lengthens, it refracts a dark band, and past the critical
-   * angle it total-internal-reflects a hard bright ring.
+  /* A bubble in water is a *diverging* lens, and that one fact sets its
+   * whole appearance.
    *
-   * The previous attempt filled the interior with a lit-sphere gradient and
-   * produced a milky marble — opaque where a bubble is clearest, and washed
-   * out against the liquid because the fill was lighter than its
-   * surroundings everywhere. Almost all of the contrast belongs in the
-   * outer fifth of the radius.
+   * Light crossing from water into air bends away from the normal, so past
+   * an incidence of about 49 degrees none of it gets through at all — it is
+   * totally internally reflected. On a sphere that angle falls at an impact
+   * parameter of n_air/n_water = 0.75 of the radius, which splits the disc
+   * into two quite different objects:
+   *
+   *   inside 0.75R   you see the liquid behind, minified and turned upside
+   *                  down by the lens. The bubble therefore shows the far
+   *                  reaches of the pour, not its own surroundings, and its
+   *                  interior gradient runs *opposite* to the liquid around
+   *                  it. That inversion is the single strongest cue that
+   *                  there is a hole in the water rather than a decal on it.
+   *   outside 0.75R  nothing is transmitted; the annulus is a mirror,
+   *                  showing whatever is on the viewer's side. Bright where
+   *                  it faces the light, dark where it faces the depths.
+   *
+   * How much ink each part gets is set by reflectance, and reflectance on a
+   * sphere only climbs steeply in the last few percent of the radius. Over
+   * most of the annulus a bubble is reflecting liquid, back at liquid of
+   * nearly the same brightness, so it is barely visible there. Painting that
+   * whole quarter-radius band as opaque pale ring turned every bubble into a
+   * rubber grommet — a fat raised collar around a flat dark disc. Almost all
+   * of the contrast belongs in two thin rings and a hard specular; the rest
+   * of a bubble is a hole you can see through.
+   *
+   * Before that the sprite had a uniform white ring all the way around,
+   * which is a soap bubble floating in air, and a milky interior, which is
+   * opaque exactly where a bubble is clearest.
    */
-  const paintBubble = (g, s) => {
-    const r = s / 2;
-    const disc = () => { g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); };
+  const NREL = 0.752;        // n_air / n_water, so also the critical radius
+
+  /* Baked with "up" against gravity, because that is what the interior
+   * inversion is fixed to. Three variants: film thickness varies bubble to
+   * bubble and so does how much of the band it interferes away. */
+  const paintBubbleBody = (v) => (g, s) => {
+    const R = s / 2, c = s / 2;
+    const disc = (k) => { g.beginPath(); g.arc(c, c, R * (k || 1), 0, Math.PI * 2); };
+    const band = 0.13 + v * 0.035;     // how dark the refracted band goes
+    const warm = [236, 246, 240][v];   // faint film colour, per variant
 
     disc(); g.save(); g.clip();
 
-    // 1. The film itself. Nearly nothing until close to the edge.
-    const film = g.createRadialGradient(r, r, 0, r, r, r);
-    film.addColorStop(0.00, "rgba(255,255,255,.015)");
-    film.addColorStop(0.62, "rgba(226,246,255,.04)");
-    film.addColorStop(0.85, "rgba(214,242,255,.11)");
-    film.addColorStop(0.96, "rgba(232,249,255,.26)");
-    film.addColorStop(1, "rgba(255,255,255,.34)");
-    g.fillStyle = film;
+    /* 1. The inverted image. What sits below the bubble appears at the top
+     *    of it and what sits above appears at the bottom, so against a pour
+     *    that is deep blue at the top and pale teal at the bottom this runs
+     *    pale-over-dark — the reverse of its surroundings. Faint: it is a
+     *    displacement of the background, not a coat of paint over it. */
+    const inv = g.createLinearGradient(0, c - R * NREL, 0, c + R * NREL);
+    inv.addColorStop(0, `rgba(216,${warm + 8},255,.13)`);
+    inv.addColorStop(0.5, "rgba(255,255,255,.015)");
+    inv.addColorStop(1, "rgba(14,60,124,.12)");
+    g.fillStyle = inv;
     g.fillRect(0, 0, s, s);
 
-    // 2. Refracted dark band inside the rim. This is what gives the
-    //    silhouette its definition — without it the bubble has no edge
-    //    against liquid of a similar brightness.
-    const dark = g.createRadialGradient(r, r, r * 0.74, r, r, r);
-    dark.addColorStop(0, "rgba(9,52,112,0)");
-    dark.addColorStop(0.5, "rgba(9,52,112,.17)");
-    dark.addColorStop(0.85, "rgba(7,44,102,.30)");
-    dark.addColorStop(1, "rgba(7,44,102,.05)");
+    /* 2. The refracted band. Rays arriving near the critical angle are bent
+     *    hardest, so they reach the eye from far off-axis — from the deep
+     *    liquid and the dark of the container edge rather than from behind
+     *    the bubble. That is why an air bubble in water carries a dark ring
+     *    and a droplet of water in air does not. Thin, and sitting just
+     *    inside the critical radius. */
+    const dark = g.createRadialGradient(c, c, 0, c, c, R);
+    dark.addColorStop(0.00, "rgba(4,34,86,0)");
+    dark.addColorStop(0.40, "rgba(4,34,86,.015)");
+    dark.addColorStop(0.60, `rgba(4,34,86,${band * 0.42})`);
+    dark.addColorStop(0.735, `rgba(3,26,70,${band})`);
+    dark.addColorStop(0.82, `rgba(3,26,70,${band * 0.5})`);
+    dark.addColorStop(0.93, "rgba(3,26,70,0)");
     g.fillStyle = dark;
     g.fillRect(0, 0, s, s);
 
-    // 3. Caustic: the sphere focuses light into a crescent on the side away
-    //    from the source, riding just inside the rim.
-    g.lineCap = "round";
-    //    The specular puts the light up-left, so the focus lands down-right;
-    //    sweeping it across the bottom put the crescent on the wrong side.
-    for (const [w, a, from, to] of [
-      [0.13, 0.24, -0.22, 0.56], [0.075, 0.44, -0.14, 0.46],
-      [0.035, 0.72, -0.04, 0.36],
-    ]) {
-      g.lineWidth = r * w;
-      g.strokeStyle = `rgba(238,254,255,${a})`;
-      g.beginPath();
-      g.arc(r, r, r * 0.90, Math.PI * from, Math.PI * to);
-      g.stroke();
-    }
+    /* 3. The critical-angle caustic. The last rays that make it through all
+     *    emerge at the same grazing angle, so they pile up in a thin bright
+     *    ring right at the boundary between the two regimes. A line, not a
+     *    fade — and thin enough to read as light rather than as a bezel. */
+    const crit = g.createRadialGradient(c, c, 0, c, c, R);
+    crit.addColorStop(0.775, "rgba(232,251,255,0)");
+    crit.addColorStop(0.818, `rgba(246,254,255,${0.15 + v * 0.045})`);
+    crit.addColorStop(0.862, "rgba(232,251,255,0)");
+    g.fillStyle = crit;
+    g.fillRect(0, 0, s, s);
+
+    /* 4. The mirror annulus, its ambient half — nearly nothing, because it
+     *    is reflecting the same liquid it sits in. Only right at the edge,
+     *    where reflectance runs to one, does it brighten at all. The bright
+     *    part of the reflection belongs to the light and is baked separately
+     *    so that it can stay put while the bubble turns. */
+    const mir = g.createRadialGradient(c, c, 0, c, c, R);
+    mir.addColorStop(0.86, "rgba(206,238,252,0)");
+    mir.addColorStop(0.955, "rgba(224,246,255,.10)");
+    mir.addColorStop(0.99, "rgba(238,252,255,.24)");
+    mir.addColorStop(1, "rgba(238,252,255,0)");
+    g.fillStyle = mir;
+    g.fillRect(0, 0, s, s);
     g.restore();
 
-    // 4. Total-internal-reflection rim: hard, bright, and thin.
-    const rim = g.createRadialGradient(r, r, r * 0.90, r, r, r);
-    rim.addColorStop(0, "rgba(255,255,255,0)");
-    rim.addColorStop(0.55, "rgba(226,247,255,.45)");
-    rim.addColorStop(0.84, "rgba(255,255,255,.98)");
-    rim.addColorStop(0.96, "rgba(255,255,255,1)");
-    rim.addColorStop(1, "rgba(255,255,255,0)");
-    g.fillStyle = rim;
-    disc(); g.fill();
+    /* 5. The silhouette. A hairline where the film turns exactly edge-on:
+     *    without it a bubble has no outline at all against pale liquid. */
+    g.lineWidth = Math.max(1, R * 0.016);
+    g.strokeStyle = "rgba(12,52,110,.22)";
+    disc(0.985); g.stroke();
+  };
 
-    // 5. The light source itself, small and hard.
-    disc(); g.save(); g.clip();
-    const spec = g.createRadialGradient(
-      r * 0.60, r * 0.50, 0, r * 0.60, r * 0.50, r * 0.26);
+  /* Baked with the light at the top of the sprite, and never rotated with
+   * the bubble — a reflection stays with its source. */
+  const paintBubbleGlint = (g, s) => {
+    const R = s / 2, c = s / 2;
+
+    /* The lit part of the mirror. Confined to the outer tenth, where the
+     * reflectance actually runs to one, and filled with a gradient running
+     * away from the source so the arc is brilliant facing the light and
+     * fades to nothing on the far side. A ring that is uniformly bright all
+     * the way round is a drawn circle; this falloff is what makes it a
+     * reflection. */
+    g.save();
+    g.beginPath();
+    g.arc(c, c, R, 0, Math.PI * 2);
+    g.arc(c, c, R * 0.90, 0, Math.PI * 2, true);
+    g.clip("evenodd");
+    const lit = g.createLinearGradient(0, c - R, 0, c + R * 0.5);
+    lit.addColorStop(0, "rgba(255,255,255,.62)");
+    lit.addColorStop(0.28, "rgba(243,253,255,.34)");
+    lit.addColorStop(0.62, "rgba(226,246,255,.10)");
+    lit.addColorStop(1, "rgba(226,246,255,0)");
+    g.fillStyle = lit;
+    g.fillRect(0, 0, s, s);
+    g.restore();
+
+    g.save();
+    g.beginPath(); g.arc(c, c, R, 0, Math.PI * 2); g.clip();
+
+    // The image of the source itself: small, hard, and smeared along the
+    // rim because the annulus is curving away underneath it.
+    g.save();
+    g.translate(c, c - R * 0.87);
+    g.scale(2.2, 1);
+    const spec = g.createRadialGradient(0, 0, 0, 0, 0, R * 0.105);
     spec.addColorStop(0, "rgba(255,255,255,1)");
-    spec.addColorStop(0.30, "rgba(255,255,255,.92)");
-    spec.addColorStop(0.7, "rgba(255,255,255,.22)");
+    spec.addColorStop(0.5, "rgba(255,255,255,.95)");
+    spec.addColorStop(0.78, "rgba(255,255,255,.34)");
     spec.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = spec;
+    g.fillRect(-R, -R, R * 2, R * 2);
+    g.restore();
+
+    /* The second image, from the far wall of the bubble. Every curved
+     * transparent surface gives two, and drawing only the near one is why
+     * the old bubble looked lit from one side like a solid ball. */
+    g.save();
+    g.translate(c, c + R * 0.86);
+    g.scale(1.5, 1);
+    const back = g.createRadialGradient(0, 0, 0, 0, 0, R * 0.13);
+    back.addColorStop(0, "rgba(255,255,255,.44)");
+    back.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = back;
+    g.fillRect(-R, -R, R * 2, R * 2);
+    g.restore();
+
+    // Light that came through the lens, landing on the side away from the
+    // source and spread wide because the lens diverges it.
+    const thru = g.createRadialGradient(
+      c, c + R * 0.30, 0, c, c + R * 0.30, R * 0.46);
+    thru.addColorStop(0, "rgba(230,251,255,.20)");
+    thru.addColorStop(1, "rgba(230,251,255,0)");
+    g.fillStyle = thru;
     g.fillRect(0, 0, s, s);
     g.restore();
   };
 
-  bubbleSprite = sprite(192, paintBubble);
-  // Small copy for the fine fizz, for the same mipmap reason as the flakes.
-  bubbleSmall = sprite(28, paintBubble);
+  for (let v = 0; v < BUB_VARIANTS; v++) {
+    bubbleBody[v] = sprite(192, paintBubbleBody(v));
+  }
+  bubbleGlint = sprite(192, paintBubbleGlint);
+  /* Fine fizz: at four or five pixels across none of the structure survives,
+   * so bake one flattened copy at the size it is actually drawn. The reason
+   * is the same as for the flakes — canvas does not mipmap, and downscaling
+   * a 192px sprite to five costs far more than the sprite is worth. */
+  bubbleSmall = sprite(28, (g, s) => {
+    paintBubbleBody(1)(g, s);
+    paintBubbleGlint(g, s);
+  });
 
   /* One soft light shaft, blitted per caustic.
    *
@@ -1603,20 +1792,38 @@ function polygonArea(pts) {
  */
 function drawBubble(b) {
   const sc = 1 + b.z * 0.3;
-  const r = b.r * sc;
+  const r = b.r * b.pop * sc;
   const x = b.x + parallaxX(b.z), y = b.y + parallaxY(b.z);
-  const speed = Math.hypot(b.vx, b.vy);
-  const ang = speed > 1 ? Math.atan2(b.vy, b.vx) : 0;
+  const alpha = b.alpha * (0.74 + 0.26 * (b.z + 1) * 0.5);
 
   ctx.save();
-  ctx.globalAlpha = b.alpha * (0.74 + 0.26 * (b.z + 1) * 0.5);
+  ctx.globalAlpha = alpha;
   ctx.translate(x, y);
-  if (b.squash > 0.01) {
-    // Flatten along the direction of travel.
-    ctx.rotate(ang);
-    ctx.scale(1 / (1 + b.squash), 1 + b.squash * 0.72);
+
+  if (r < 9) {
+    // Fine fizz. Nothing directional survives at this size, so one flat
+    // blit — no transforms, and it is most of the population.
+    ctx.drawImage(bubbleSmall, -r, -r, r * 2, r * 2);
+    ctx.restore();
+    return;
   }
-  ctx.drawImage(r < 9 ? bubbleSmall : bubbleSprite, -r, -r, r * 2, r * 2);
+
+  const speed = Math.hypot(b.vx, b.vy);
+  const vang = speed > 1 ? Math.atan2(b.vy, b.vx) : 0;
+  if (b.squash > 0.01) {
+    // Flatten along the direction of travel, and leave the frame squashed
+    // so the reflection deforms with the surface carrying it.
+    ctx.rotate(vang);
+    ctx.scale(1 / (1 + b.squash), 1 + b.squash * 0.72);
+    ctx.rotate(-vang);
+  }
+
+  // What it refracts is fixed to gravity; what it reflects is fixed to the
+  // light. Two blits, two frames.
+  ctx.rotate(riseAngle);
+  ctx.drawImage(bubbleBody[b.variant], -r, -r, r * 2, r * 2);
+  ctx.rotate(BUBBLE_LIGHT_ROT - riseAngle);
+  ctx.drawImage(bubbleGlint, -r, -r, r * 2, r * 2);
   ctx.restore();
 }
 
@@ -2011,6 +2218,12 @@ function fixedStep(dt, time) {
     if (vn < 0) { p.vx -= vn * nx * 1.15; p.vy -= vn * ny * 1.15; }
   };
 
+  /* Which way is up, for the bubbles' refracted interiors. Gravity, not the
+   * shake: what a bubble is looking through is the liquid's own colour
+   * gradient, and that is anchored to gravity. */
+  riseAngle = Math.atan2(gDir.y, gDir.x) + Math.PI * 1.5;
+  const gAng = Math.atan2(gDir.y, gDir.x);
+
   for (const p of stars) {
     sampleFlow(p.x, p.y, flow);
 
@@ -2023,13 +2236,18 @@ function fixedStep(dt, time) {
      * A falling plate tips, the lift from tipping pushes it sideways,
      * which tips it back — so the sideways force follows the flake's own
      * angle to gravity, and stops when the flake stops turning. */
-    const gAng = Math.atan2(gDir.y, gDir.x);
+    /* Settling is driven by gravity alone, not by gravity plus the shake.
+     * Feeding the container's acceleration in here as well double-counts it:
+     * the relaxation toward `flow` already makes a heavy flake lag a fluid
+     * that is being thrown about, and lagging *is* the dense-particle
+     * response to acceleration. Measured with both terms in, flakes drifted
+     * up the effective body force during a shake — the wrong way for
+     * anything denser than the liquid. */
     const flut = Math.sin(2 * (p.spin - gAng)) * p.flutterAmp * gMag;
     sampleDisperse(p.x, p.y, disperse);
-    let tx = flow.x + gDir.x * p.terminal * gMag - gDir.y * flut
-             + disperse.x * DISPERSE;
-    let ty = flow.y + gDir.y * p.terminal * gMag + gDir.x * flut
-             + disperse.y * DISPERSE;
+    const fall = p.terminal * gMag;
+    let tx = flow.x + gDir.x * fall - gDir.y * flut + disperse.x * DISPERSE;
+    let ty = flow.y + gDir.y * fall + gDir.x * flut + disperse.y * DISPERSE;
 
     // Do not let flakes swim up out of the liquid into the headspace.
     const depth = depthOf(p.x, p.y);
@@ -2056,13 +2274,43 @@ function fixedStep(dt, time) {
     if (clampInside(p, pad)) hitWall(p, ox, oy);
   }
 
+  const invDt = 1 / Math.max(dt, 1e-4);
   for (const b of bubbles) {
     sampleFlow(b.x, b.y, flow);
-    b.phase += dt * 3;
 
-    const wob = Math.sin(b.phase) * b.wobble;
-    const tx = flow.x - gDir.x * b.rise * gMag - gDir.y * wob;
-    const ty = flow.y - gDir.y * b.rise * gMag + gDir.x * wob;
+    /* Vortex shedding. The zigzag frequency follows speed over diameter, so
+     * a bubble that stalls in the flow stops weaving and a fast one weaves
+     * quickly — and `weave` is zero below the critical size, so fine fizz
+     * rises straight. Before, every bubble wove at a fixed rate whatever it
+     * was doing. */
+    const rvx = b.vx - flow.x, rvy = b.vy - flow.y;
+    const rel = Math.hypot(rvx, rvy);
+    b.phase += WEAVE_ST * rel / (2 * b.r) * dt;
+    const wob = Math.sin(b.phase) * b.weave * rel * 0.5;
+
+    /* Added mass, and the one thing about a bubble that relaxing toward the
+     * flow can never reproduce.
+     *
+     * A body of negligible density accelerates at three times the fluid
+     * around it: it has no inertia of its own, so all it carries is the
+     * liquid it must shove aside, and the pressure gradient driving that
+     * liquid drives the bubble harder still. A bubble therefore *leads* the
+     * flow into a turn while everything heavier lags it — which is why the
+     * fizz arrives at the far wall before the glitter does. Relaxation only
+     * ever lags, so this has to be added explicitly, and it is driven by the
+     * fluid's own local acceleration (a material derivative, since the
+     * sample follows the bubble) rather than by the container's: what the
+     * liquid actually did is what the bubble responds to.
+     */
+    const ax = (flow.x - b.pfx) * invDt, ay = (flow.y - b.pfy) * invDt;
+    b.pfx = flow.x; b.pfy = flow.y;
+    const lead = 2 * b.tau;               // 3x the fluid, less the 1x it rides
+    const lx = Math.max(-260, Math.min(260, ax * lead));
+    const ly = Math.max(-260, Math.min(260, ay * lead));
+
+    const climb = b.rise * gMag;
+    const tx = flow.x - gDir.x * climb - gDir.y * wob + lx;
+    const ty = flow.y - gDir.y * climb + gDir.x * wob + ly;
     const k = 1 - Math.exp(-dt / b.tau);
     b.vx += (tx - b.vx) * k;
     b.vy += (ty - b.vy) * k;
@@ -2084,18 +2332,43 @@ function fixedStep(dt, time) {
     b.squash += (target - b.squash) * Math.min(1, dt * 5);
     b.z = Math.max(-1, Math.min(1, b.z + b.zDrift * dt));
 
-    /* Bubbles do not vanish the instant they touch the surface — they sit
-     * under it, jostling, until the film drains and they pop. Fading on
-     * contact made them wink out mid-rise. */
-    if (!b.fading && depthOf(b.x, b.y) > -b.r * 1.4) {
-      b.rest += dt;
-      if (b.rest > 2.2 + b.r * 0.12) b.fading = true;
+    /* The free surface is a lid.
+     *
+     * Nothing stopped a bubble there before — it kept climbing into the
+     * headspace for the two seconds its drain timer took, so bubbles were
+     * visibly floating in the air above the waterline. A bubble that reaches
+     * the surface breaks through it and stays: held in the film, riding
+     * proud of the line by a fraction of its radius, because it is buoyant
+     * and there is nothing left above it to climb through. */
+    const d = depthOf(b.x, b.y);
+    const perch = b.r * 0.36;
+    if (d > -b.r * 0.9) {
+      if (d > perch) {
+        const over = d - perch;
+        b.x -= up.x * over; b.y -= up.y * over;
+        const vn = b.vx * up.x + b.vy * up.y;
+        if (vn > 0) { b.vx -= up.x * vn; b.vy -= up.y * vn; }
+      }
+      if (!b.fading) {
+        b.rest += dt;
+        /* Film drainage. A big bubble's film holds more liquid and takes
+         * proportionally longer to thin to the point where it goes. */
+        if (b.rest > 1.4 + b.r * 0.1) { b.fading = true; burstRipple(b); }
+      }
+    } else if (!b.fading) {
+      b.rest = 0;
     }
+
     if (b.fading) {
       b.rest = 0;
-      b.alpha -= dt * 2.5;
+      /* Bursting, not fading. A film that has thinned past the point of
+       * holding does not dim in place — it springs outward as the surface
+       * tension that was holding it in a sphere lets go. Cheap, and it is
+       * the difference between a pop and a bubble being switched off. */
+      b.pop += dt * 5.5;
+      b.alpha -= dt * 5;
       if (b.alpha <= 0) {
-        b.alpha = 0; b.fading = false;
+        b.alpha = 0; b.fading = false; b.pop = 1;
         // Reborn small; it will grow again by merging on the way up.
         setBubbleSize(b, bubbleBirthRadius());
         respawnBubble(b);
@@ -2188,7 +2461,7 @@ function coalesce(dt) {
       mergeCount++;
 
       // The smaller one is consumed; respawn it as fresh fizz down below.
-      b.fading = false; b.alpha = 0; b.rest = 0;
+      b.fading = false; b.alpha = 0; b.rest = 0; b.pop = 1;
       setBubbleSize(b, bubbleBirthRadius());
       respawnBubble(b);
       break;
