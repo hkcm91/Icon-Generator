@@ -144,11 +144,38 @@ the angle, and a flake spans a range of angles), and a bright edge where the
 cut catches light. The shards are angular offcuts with sharp corners rather
 than the rounded lozenges they were.
 
+**The light does not spin with the flake.** The specular streak was baked
+into each flake sprite, so rotating the sprite carried the highlight around
+with it — every flake read as having its own private light source orbiting
+it. The streak is now a separate atlas of 16 orientations per shape, and the
+draw picks the entry that cancels the flake's own rotation, so the highlight
+stays in the same screen direction no matter how the flake tumbles. What
+still varies with rotation is its *brightness*: a flake edge-on to the light
+catches nothing, and face-on it flares. Verified by rendering the same flake
+at eight rotations — the bright band held its screen orientation while the
+star turned underneath it.
+
 **Particles with Stokes drag** — response time and terminal velocity both
 scale with radius squared, so fine glitter traces the flow almost exactly
 while big flakes lag, overshoot on a turn and sink faster. That spread is
 what makes a settle look like a real suspension rather than one moving
 sheet. Flakes flutter as they sink; bubbles rise with buoyancy against drag.
+
+**Flakes tumble because the water turns them.** Each flake used to spin at a
+fixed rate assigned at birth, which meant a flake in dead-still water spun
+exactly as fast as one caught in a shake. A flake is small enough to follow
+the local rotation of the fluid, so it now spins at half the vorticity it
+sits in — measured 0.68 rad/s at rest against 2.19 rad/s under a shake. The
+flutter as it sinks follows from that: rather than a free sine wave, the
+sideways force is `sin(2 * (spin - gravity angle))`, which is zero when the
+flake is edge-on or face-on to its fall and largest at 45 degrees. A flake
+that stops turning stops fluttering, which is what a real one does.
+
+Bubbles carry **added mass**. A rising bubble has to shove the water in
+front of it aside, and that water's inertia is what it actually feels — its
+own is negligible. The response time therefore grows with the square of the
+radius, so a large bubble drifts serenely through a shake that whips the
+small ones around it.
 
 Flakes also disperse down their own concentration gradient. A suspension
 does not let particles pile up indefinitely — collisions and the disturbance
@@ -269,12 +296,19 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Bubble population at rest | median 3px with 6-10 large, stable over 80s |
 | Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
 | Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
+| Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
+| Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
+| Frame cost under continuous shake | median 23.6ms, p90 26.2ms (software rasteriser, no GPU) |
 
 Frame rate measured here is misleading and worth explaining. Profiled
 in-page, the whole simulation step costs ~3ms and issuing the draw calls
-~2ms — but a frame takes far longer. The missing 30ms is not in this code at all:
+~2ms — but a frame takes far longer. The missing ~19ms is not in this code at all:
 it is the browser rasterising a full-screen canvas in software, because the
 container has no GPU. On a device with an accelerated canvas that cost is a
-fraction of this. Treat the ~30fps seen here as a software-rasteriser
+fraction of this. Treat the ~41fps seen here as a software-rasteriser
 number, not a device one; `stars` is still the dial if a real device needs
 it.
+
+The world-fixed specular costs a second sprite blit per flake and did not
+move that number, because the blit is small and the cost is dominated by
+compositing area, not by call count.
