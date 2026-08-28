@@ -80,9 +80,18 @@ crosses the full thickness of liquid before it reaches the eye, and putting
 those flakes under the tint layer is that absorption, for free. Tilting also
 shifts the layers against each other, since the viewing angle changes.
 
-**Bubbles** rise, deform, merge and pop. A gas bubble climbing through
-liquid is flattened perpendicular to its motion; the faster it climbs, the
-more oblate. Bubbles that touch merge with gas volume conserved, drawn
+**Bubbles** are drawn as lit spheres, not rings. A rim with nothing inside
+it is a drawn circle, which is exactly how they read before: hollow white
+loops tangling into each other. A gas bubble in tinted liquid has a body —
+it refracts the surroundings into a compressed image so it sits lighter than
+the liquid, it is lit like any sphere with a shadow side, it
+total-internal-reflects a hard ring at the very edge, and it focuses a
+caustic on the side away from the light. Four passes, one for each.
+
+They rise, deform, merge and pop. A bubble climbing through liquid is
+flattened perpendicular to its motion, but only by a few percent at these
+speeds — rendering that at the earlier strength turned every one into an
+egg. Bubbles that touch merge with gas volume conserved, drawn
 together on the way up by wake attraction — a bubble in another's wake meets
 less resistance and catches it, which is why bubbles form chains in a real
 liquid and why the large ones exist at all. Without wake attraction two
@@ -90,6 +99,12 @@ bubbles have to collide by chance: measured at zero merges in thirty
 seconds. Rise speed follows r-squared only while Stokes drag holds, then
 plateaus; leaving that uncapped had a large bubble crossing the screen in
 1.6 seconds, so none ever survived to be seen.
+
+Two bubbles too large to merge push apart instead. A big bubble's film takes
+far longer to drain, so they touch and stay separate — but they are still
+solid objects, and without the separation a bubble at the size cap sat
+permanently inside a neighbour it could never absorb, rendering as rings
+drawn over each other.
 
 **Particles with Stokes drag** — response time and terminal velocity both
 scale with radius squared, so fine glitter traces the flow almost exactly
@@ -154,7 +169,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `620` | Confetti count |
-| `bubbles` | `95` | Bubble count |
+| `bubbles` | `70` | Bubble count |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
@@ -213,6 +228,7 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Dense-phase stratification | separates to 0.01/0.96 settled, mixes to 0.68 shaken, mean conserved |
 | Inversion (roll 180°) | `level` matches its expected value at 0°, 90° and 180°; volume conserved to 0.1% |
 | Net fluid drift | 12.7 px/s before the momentum fix, 0.99 after |
+| Bubble overlap | 0 interpenetrating pairs after 20s |
 | Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
 
 Frame rate measured here is misleading and worth explaining. Profiled

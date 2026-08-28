@@ -72,7 +72,7 @@ const CONFIG = {
    * and still terminate correctly, so the container can be properly full. */
   fill: num("fill", 0.965),
   stars: num("stars", 620),
-  bubbles: num("bubbles", 95),
+  bubbles: num("bubbles", 70),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
   /* Blue-dominant. The green-teal is not in this ramp: it comes from the
@@ -689,7 +689,7 @@ const FLUID_WALL_DRAG = 3.2; // 1/s, applied only in cells touching glass
 const COUPLE = 0.055;       // particle reaction strength fed back to the fluid
 const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
 const DISPERSE = 340;       // px/s of down-gradient drift per unit relative gradient
-const WAKE = 260;           // px/s^2 of wake attraction between near bubbles
+const WAKE = 150;           // px/s^2 of wake attraction between near bubbles
 
 /* Two-way coupling: a particle dragged by the liquid drags back.
  *
@@ -1181,69 +1181,75 @@ function buildSprites() {
     g.fillRect(0, 0, s, s);
   });
 
-  /* A bubble in the reference reads as a glass sphere, not a disc: a bright
-   * rim, a darker band just inside it where the shell is thickest to the
-   * eye, a tight specular up-left and the caustic the sphere focuses on its
-   * lower-right. Drawn at 128px so the big ones hold up when scaled. */
-  bubbleSprite = sprite(128, (g, s) => {
+  /* A bubble drawn as a rim with nothing inside it is a drawn circle, and
+   * that is exactly what these were: thin white loops, hollow, tangling
+   * into each other. A real gas bubble in a tinted liquid has a body. It
+   * refracts the surroundings into a compressed image, so it sits lighter
+   * than the liquid around it; it is lit like any sphere, darker on the
+   * shadow side; it total-internal-reflects a hard bright ring at the very
+   * edge; and it focuses a caustic on the side away from the light.
+   *
+   * Built in four passes for those four things, all clipped to the disc so
+   * nothing leaks past the silhouette.
+   */
+  const paintBubble = (g, s) => {
     const r = s / 2;
+    const disc = () => { g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); };
 
-    /* Many stops, closely spaced near the rim. Three widely spaced stops
-     * banded into visible concentric rings once a bubble grew large enough
-     * to matter — the gradient was being magnified along with everything
-     * else, so what looked smooth at 6px read as Saturn at 40. */
-    const shell = g.createRadialGradient(r, r, 0, r, r, r);
-    shell.addColorStop(0.00, "rgba(170,230,252,.05)");
-    shell.addColorStop(0.45, "rgba(150,218,246,.10)");
-    shell.addColorStop(0.68, "rgba(126,202,238,.19)");
-    shell.addColorStop(0.80, "rgba(100,180,224,.30)");
-    shell.addColorStop(0.885, "rgba(92,172,218,.44)");
-    shell.addColorStop(0.930, "rgba(150,215,240,.62)");
-    shell.addColorStop(0.962, "rgba(232,250,255,.92)");
-    shell.addColorStop(0.984, "rgba(255,255,255,.98)");
-    shell.addColorStop(0.996, "rgba(255,255,255,.35)");
-    shell.addColorStop(1, "rgba(255,255,255,0)");
-    g.fillStyle = shell;
-    g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); g.fill();
+    // 1. Body: lit sphere, shadowed up-left, brighter down-right.
+    disc(); g.save(); g.clip();
+    const lit = g.createLinearGradient(r * 0.35, r * 0.3, r * 1.7, r * 1.75);
+    lit.addColorStop(0, "rgba(96,164,214,.50)");
+    lit.addColorStop(0.45, "rgba(150,212,244,.34)");
+    lit.addColorStop(1, "rgba(224,246,255,.62)");
+    g.fillStyle = lit;
+    g.fillRect(0, 0, s, s);
 
-    // Caustic: light focused through the sphere onto its far side. Soft and
-    // unclipped, so it does not leave a hard arc where it meets the rim.
+    // 2. Interior falloff: thinnest film at the centre, so it clears there.
+    const clear = g.createRadialGradient(r, r, 0, r, r, r);
+    clear.addColorStop(0, "rgba(0,0,0,.55)");
+    clear.addColorStop(0.5, "rgba(0,0,0,.34)");
+    clear.addColorStop(0.85, "rgba(0,0,0,0)");
+    g.globalCompositeOperation = "destination-out";
+    g.fillStyle = clear;
+    g.fillRect(0, 0, s, s);
+    g.globalCompositeOperation = "source-over";
+
+    // 3. Caustic the sphere focuses on its far side.
     const caus = g.createRadialGradient(
-      r * 1.24, r * 1.28, 0, r * 1.24, r * 1.28, r * 0.62);
-    caus.addColorStop(0, "rgba(220,252,255,.55)");
-    caus.addColorStop(0.5, "rgba(220,252,255,.22)");
-    caus.addColorStop(1, "rgba(220,252,255,0)");
+      r * 1.22, r * 1.3, 0, r * 1.22, r * 1.3, r * 0.72);
+    caus.addColorStop(0, "rgba(236,254,255,.60)");
+    caus.addColorStop(0.45, "rgba(226,250,255,.24)");
+    caus.addColorStop(1, "rgba(226,250,255,0)");
     g.fillStyle = caus;
-    g.beginPath(); g.arc(r, r, r * 0.93, 0, Math.PI * 2); g.fill();
+    g.fillRect(0, 0, s, s);
+    g.restore();
 
-    // Tight specular highlight.
+    // 4. Total-internal-reflection rim, hard and bright.
+    const rim = g.createRadialGradient(r, r, r * 0.86, r, r, r);
+    rim.addColorStop(0, "rgba(255,255,255,0)");
+    rim.addColorStop(0.62, "rgba(214,242,255,.30)");
+    rim.addColorStop(0.86, "rgba(255,255,255,.92)");
+    rim.addColorStop(0.97, "rgba(255,255,255,1)");
+    rim.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = rim;
+    disc(); g.fill();
+
+    // 5. Specular: the light source itself, small and hard.
+    disc(); g.save(); g.clip();
     const spec = g.createRadialGradient(
-      r * 0.64, r * 0.58, 0, r * 0.64, r * 0.58, r * 0.34);
-    spec.addColorStop(0, "rgba(255,255,255,.98)");
-    spec.addColorStop(0.45, "rgba(255,255,255,.45)");
+      r * 0.62, r * 0.54, 0, r * 0.62, r * 0.54, r * 0.30);
+    spec.addColorStop(0, "rgba(255,255,255,1)");
+    spec.addColorStop(0.35, "rgba(255,255,255,.85)");
     spec.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = spec;
     g.fillRect(0, 0, s, s);
-  });
+    g.restore();
+  };
 
+  bubbleSprite = sprite(192, paintBubble);
   // Small copy for the fine fizz, for the same mipmap reason as the flakes.
-  bubbleSmall = sprite(24, (g, s) => {
-    const r = s / 2;
-    const shell = g.createRadialGradient(r, r, 0, r, r, r);
-    shell.addColorStop(0, "rgba(160,225,250,.05)");
-    shell.addColorStop(0.7, "rgba(120,198,236,.20)");
-    shell.addColorStop(0.88, "rgba(96,176,220,.42)");
-    shell.addColorStop(0.965, "rgba(255,255,255,.96)");
-    shell.addColorStop(1, "rgba(255,255,255,0)");
-    g.fillStyle = shell;
-    g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); g.fill();
-    const spec = g.createRadialGradient(
-      r * 0.66, r * 0.6, 0, r * 0.66, r * 0.6, r * 0.34);
-    spec.addColorStop(0, "rgba(255,255,255,.95)");
-    spec.addColorStop(1, "rgba(255,255,255,0)");
-    g.fillStyle = spec;
-    g.fillRect(0, 0, s, s);
-  });
+  bubbleSmall = sprite(28, paintBubble);
 
   /* Four-ray glint for the flakes that catch the light. The reference is
    * full of these star flares, and they are a different thing from the
@@ -1808,9 +1814,9 @@ function fixedStep(dt, time) {
 
     // Oblate when climbing: a rising bubble is flattened perpendicular to
     // its motion, and the faster it goes the more so.
-    // Capped low: a strongly flattened bubble reads as a sliver, not a
-    // bubble, and at this scale the deformation is a subtle cue.
-    const target = Math.min(0.22, Math.hypot(b.vx, b.vy) / (b.rise + 60) * 0.5);
+    /* Barely any. Oblateness is real, but at these speeds it is a few
+     * percent, and rendering it at 0.22 turned every bubble into an egg. */
+    const target = Math.min(0.07, Math.hypot(b.vx, b.vy) / (b.rise + 60) * 0.2);
     b.squash += (target - b.squash) * Math.min(1, dt * 5);
     b.z = Math.max(-1, Math.min(1, b.z + b.zDrift * dt));
 
@@ -1862,8 +1868,12 @@ function coalesce(dt) {
     for (let j = i + 1; j < bubbles.length; j++) {
       const b = bubbles[j];
       if (b.fading || b.alpha < 0.9) continue;
-      // Only bubbles at a similar depth can actually touch.
-      if (Math.abs(a.z - b.z) > 0.45) continue;
+      /* Only bubbles at a similar depth can touch — but the window was
+       * tight enough that wake attraction pulled bubbles into a cluster it
+       * then forbade them to merge out of, and they sat there overlapping
+       * as a tangle of rings. A bubble is a sphere: if their centres are
+       * within a radius in the plane, they are close enough in depth too. */
+      if (Math.abs(a.z - b.z) > 0.85) continue;
       const dx = b.x - a.x, dy = b.y - a.y;
       const d2 = dx * dx + dy * dy;
       const touch = (a.r + b.r) * 0.9;
@@ -1875,7 +1885,7 @@ function coalesce(dt) {
        * essentially never happens: zero merges in thirty seconds, so the
        * population only ever shrank as bubbles reached the surface.
        */
-      const reach = (a.r + b.r) * 5;
+      const reach = (a.r + b.r) * 3.5;
       if (d2 < reach * reach && d2 > 1e-3) {
         const d = Math.sqrt(d2);
         // Strongest when one trails the other along the rise axis.
@@ -1890,7 +1900,20 @@ function coalesce(dt) {
 
       // Spheres: volumes add, so radii add in cube.
       const merged = Math.cbrt(a.r * a.r * a.r + b.r * b.r * b.r);
-      if (merged > maxBubble) continue;      // would burst; leave them be
+      if (merged > maxBubble) {
+        /* Too big to merge — a large bubble's film takes far longer to
+         * drain than a small one's, so they touch and stay separate. But
+         * they are still solid objects: without pushing apart they sat
+         * inside one another indefinitely, and a bubble at the size cap
+         * plus a neighbour it could never absorb rendered as two rings
+         * drawn over each other. */
+        const d = Math.sqrt(d2) || 1;
+        const nx = dx / d, ny = dy / d;
+        const push = (touch - d) * 6;
+        a.vx -= nx * push * dt; a.vy -= ny * push * dt;
+        b.vx += nx * push * dt; b.vy += ny * push * dt;
+        continue;
+      }
       const wa = a.r * a.r * a.r, wb = b.r * b.r * b.r, wt = wa + wb;
       a.x = (a.x * wa + b.x * wb) / wt;
       a.y = (a.y * wa + b.y * wb) / wt;
