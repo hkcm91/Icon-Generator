@@ -261,11 +261,13 @@ export function stageDirectorInstruction(
   // that happen to resemble a card alias (for example, “and” previously
   // selected Moon and Stars from “subject and frame”).
   const targets = selectedCards.length ? selectedCards : namedCards.length ? namedCards : failedCards;
-  const confirmsGeneration = /^(?:(?:yes|ok(?:ay)?)[,.]?\s*)?(?:please\s+)?(?:now(?:\s+please)?|go ahead(?:\s+now)?|do it(?:\s+now)?|start(?:\s+(?:it|them|those))?(?:\s+now)?|run (?:it|them|those)(?:\s+now)?)(?:\s+please)?[.!]*$/i.test(cleaned);
+  const confirmsGeneration = /^(?:(?:yes|ok(?:ay)?)[,.]?\s*)?(?:please\s+)?(?:now(?:\s+please)?|go(?: ahead(?:\s+now)?)?|do it(?:\s+now)?|implement(?:\s+(?:it|them|those))?|start(?:\s+(?:it|them|those))?(?:\s+now)?|run (?:it|them|those)(?:\s+now)?)(?:\s+please)?[.!]*$/i.test(cleaned);
   const createsNamedCard = namedCards.length > 0 && /\b(?:create|recreate|make|remake)\b/i.test(cleaned);
+  const startsFillingCards = /\b(?:start|begin|continue|keep)\s+(?:filling|generating|rendering|making)\b|\bfill(?:ing)?\s+(?:the\s+)?(?:selected\s+)?(?:cards?|icons?)\b/i.test(cleaned);
   const wantsGeneration = /\b(?:generate|regenerate|render|redo|recreate|remake)\b|\b(?:make|try)\s+(?:it|them|those|again)\b|\btest\b[^.]{0,80}\bselected\b/i.test(cleaned)
     || confirmsGeneration
-    || createsNamedCard;
+    || createsNamedCard
+    || startsFillingCards;
   const nextMemory = appendMemory(memory, context.familyPrompt, cleaned);
   const generationDirection = [
     'ICON DIRECTOR CONVERSATION: Follow every compatible instruction below.',
