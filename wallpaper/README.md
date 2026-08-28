@@ -135,6 +135,15 @@ solid objects, and without the separation a bubble at the size cap sat
 permanently inside a neighbour it could never absorb, rendering as rings
 drawn over each other.
 
+**Glitter is foil, not confetti.** Each flake was a flat pastel silhouette
+— one colour edge to edge, no material, no light — which read as a sticker
+cutout. A real glitter flake is a tiny mirror: it carries a specular streak
+where it catches the source, an iridescent shift from the pale end of its
+hue to the saturated end (that is what iridescent means — the hue depends on
+the angle, and a flake spans a range of angles), and a bright edge where the
+cut catches light. The shards are angular offcuts with sharp corners rather
+than the rounded lozenges they were.
+
 **Particles with Stokes drag** — response time and terminal velocity both
 scale with radius squared, so fine glitter traces the flow almost exactly
 while big flakes lag, overshoot on a turn and sink faster. That spread is
@@ -197,7 +206,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `fill` | `0.965` | Fraction of the container holding liquid. The ullage is what sloshes — at `1` nothing moves |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `620` | Confetti count |
+| `stars` | `620` | Glitter flake count |
 | `bubbles` | `70` | Bubble count |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
