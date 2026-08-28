@@ -313,12 +313,18 @@ export function stageDirectorInstruction(
       ? patch.selection.names.length
       : context.cards.filter((card) => card.selected).length;
   const action = wantsGeneration && selectedAfterPatch > 0 ? 'generate-selected' as const : undefined;
+  const directedNames = targets.map((card) => card.name);
+  const directionReply = directedNames.length
+    ? `Updated ${directedNames.length === 1 ? directedNames[0] : `${directedNames.length} selected cards`}.`
+    : requestedTheme
+      ? `Using the ${requestedTheme} theme for this family.`
+      : 'Using that direction for this family.';
   return {
     reply: action
       ? `Generation requested for ${selectedAfterPatch} selected card${selectedAfterPatch === 1 ? '' : 's'}.`
       : wantsGeneration
         ? 'I can generate here, but no cards are selected. Select the cards you want and ask me to generate again.'
-        : '',
+        : directionReply,
     memory: nextMemory,
     patch,
     action,
