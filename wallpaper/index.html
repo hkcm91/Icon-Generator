@@ -1295,7 +1295,7 @@ function seed() {
  * the frame rate at 600 flakes — the gradient has to be rebuilt every frame
  * because it is positioned in user space. Bake each once and blit it scaled
  * instead. */
-let glowSprite = null, bubbleSmall = null;
+let glowSprite = null, bubbleSmall = null, shadeSprite = null;
 /* Two layers per bubble, because two different things set their orientation.
  * What the bubble refracts is fixed to gravity — the liquid it is looking
  * through is graded along that axis. What it reflects is fixed to the light,
@@ -1314,6 +1314,32 @@ let flareSprite = null;
  * frame cost five full-screen fills and dropped the wallpaper to 18fps.
  * Baked once per resize, they are one blit each. */
 let glassLayer = null, depthLayer = null;
+
+/* Depth of field.
+ *
+ * A camera focused on the front glass cannot also hold the back wall sharp
+ * through this much liquid, and until now every flake and bubble was
+ * rendered at identical sharpness whatever depth it sat at — which is most
+ * of why the scene read as a picture of a shaker rather than a volume with
+ * things suspended at different distances in it. The near ones are still
+ * crisp; the far ones are not.
+ *
+ * Baked rather than filtered per frame: a blur filter over the whole back
+ * pass is one of the most expensive things canvas can be asked to do, and
+ * costs nothing at build time. Drawn inset so the blur has somewhere to
+ * bleed, because defocus spreads a highlight outward rather than growing
+ * the object.
+ */
+function defocus(src, blurPx) {
+  const s = src.width;
+  const c = document.createElement("canvas");
+  c.width = c.height = s;
+  const g = c.getContext("2d");
+  g.filter = `blur(${blurPx}px)`;
+  const inset = blurPx * 1.5;
+  g.drawImage(src, inset, inset, s - inset * 2, s - inset * 2);
+  return c;
+}
 
 function sprite(size, paint) {
   const c = document.createElement("canvas");
@@ -1449,6 +1475,12 @@ function buildLayers() {
  * the path rasteriser at all. */
 const flakeSprites = [];
 const flakeSmall = [];
+// The same sets again, defocused, for everything behind the mid-plane.
+const flakeFar = [];
+const flakeSmallFar = [];
+let bubbleBodyFar = [], bubbleGlintFar = null, bubbleSmallFar = null;
+// Set for the duration of the back pass, so the draw picks the far sprites.
+let farField = false;
 const flashSprites = [];
 const specSprites = [];
 // Angular resolution of the specular atlas, and where the light sits.
@@ -1461,6 +1493,8 @@ const SMALL_PX = 12;
  * is the turn that puts it where the light actually is. Constant, because
  * the light does not move when the phone does. */
 const BUBBLE_LIGHT_ROT = LIGHT_ANGLE + Math.PI / 2;
+// Which way a shadow falls: directly away from the source.
+const SHADOW_X = Math.cos(LIGHT_ANGLE), SHADOW_Y = Math.sin(LIGHT_ANGLE);
 /* ...and this is the turn that points a bubble's refracted interior along
  * whichever way is currently up. Recomputed once per step, not per bubble. */
 let riseAngle = 0;
@@ -1553,7 +1587,7 @@ function paintFlakeSpec(g, size, shape, angle) {
 
 function buildFlakeSprites() {
   flakeSprites.length = 0; flashSprites.length = 0; flakeSmall.length = 0;
-  specSprites.length = 0;
+  specSprites.length = 0; flakeFar.length = 0; flakeSmallFar.length = 0;
   for (let hi = 0; hi < FLAKE_COLOURS.length; hi++) {
     const [light, deep] = FLAKE_COLOURS[hi];
     for (let shape = 0; shape < SHAPES; shape++) {
@@ -1577,6 +1611,8 @@ function buildFlakeSprites() {
         paintFlakeSpec(g, FLAKE_PX, shape, k / SPEC_K * Math.PI * 2)));
     }
   }
+  for (const c of flakeSprites) flakeFar.push(defocus(c, 3.2));
+  for (const c of flakeSmall) flakeSmallFar.push(defocus(c, 1.1));
   for (let shape = 0; shape < SHAPES; shape++) {
     flashSprites.push(sprite(FLAKE_PX, (g) => {
       const c = FLAKE_PX / 2, R = FLAKE_PX / 2 - 2;
@@ -1589,6 +1625,21 @@ function buildFlakeSprites() {
 
 function buildSprites() {
   buildFlakeSprites();
+  /* A bubble's shadow. It is a diverging lens, so it spreads the light
+   * passing through it and the liquid directly behind it receives less —
+   * which is the one thing in the scene that makes anything look like it is
+   * *in* the medium rather than painted on top of it. Nothing occluded
+   * anything before. */
+  shadeSprite = sprite(64, (g, s) => {
+    const r = s / 2;
+    const grad = g.createRadialGradient(r, r, 0, r, r, r);
+    grad.addColorStop(0, "rgba(6,42,96,.85)");
+    grad.addColorStop(0.45, "rgba(6,42,96,.42)");
+    grad.addColorStop(1, "rgba(6,42,96,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, s, s);
+  });
+
   glowSprite = sprite(64, (g, s) => {
     const r = s / 2;
     const grad = g.createRadialGradient(r, r, 0, r, r, r);
@@ -1774,6 +1825,8 @@ function buildSprites() {
     bubbleBody[v] = sprite(192, paintBubbleBody(v));
   }
   bubbleGlint = sprite(192, paintBubbleGlint);
+  bubbleBodyFar = bubbleBody.map((c) => defocus(c, 9));
+  bubbleGlintFar = defocus(bubbleGlint, 9);
   /* Fine fizz: at four or five pixels across none of the structure survives,
    * so bake one flattened copy at the size it is actually drawn. The reason
    * is the same as for the flakes — canvas does not mipmap, and downscaling
@@ -1782,6 +1835,7 @@ function buildSprites() {
     paintBubbleBody(1)(g, s);
     paintBubbleGlint(g, s);
   });
+  bubbleSmallFar = defocus(bubbleSmall, 1.4);
 
   /* One soft light shaft, blitted per caustic.
    *
@@ -2011,7 +2065,9 @@ function drawBubble(b) {
   const sc = 1 + b.z * 0.3;
   const r = b.r * b.pop * sc;
   const x = b.x + parallaxX(b.z), y = b.y + parallaxY(b.z);
-  const alpha = b.alpha * (0.74 + 0.26 * (b.z + 1) * 0.5);
+  // Same aerial perspective as the flakes: a bubble at the back wall is seen
+  // through the whole thickness of the liquid and loses most of its contrast.
+  const alpha = b.alpha * (0.40 + 0.60 * (b.z + 1) * 0.5);
 
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -2020,10 +2076,18 @@ function drawBubble(b) {
   if (r < 9) {
     // Fine fizz. Nothing directional survives at this size, so one flat
     // blit — no transforms, and it is most of the population.
-    ctx.drawImage(bubbleSmall, -r, -r, r * 2, r * 2);
+    ctx.drawImage(farField ? bubbleSmallFar : bubbleSmall, -r, -r, r * 2, r * 2);
     ctx.restore();
     return;
   }
+
+  /* Cast first, so the bubble sits on top of its own shadow. Offset away
+   * from the source and softened with size, the way a shadow thrown through
+   * a thick medium spreads with the distance it travels. */
+  ctx.globalAlpha = alpha * 0.30;
+  const sd = r * 1.35;
+  ctx.drawImage(shadeSprite, -SHADOW_X * sd - r, -SHADOW_Y * sd - r, r * 2, r * 2);
+  ctx.globalAlpha = alpha;
 
   const speed = Math.hypot(b.vx, b.vy);
   const vang = speed > 1 ? Math.atan2(b.vy, b.vx) : 0;
@@ -2038,9 +2102,9 @@ function drawBubble(b) {
   // What it refracts is fixed to gravity; what it reflects is fixed to the
   // light. Two blits, two frames.
   ctx.rotate(riseAngle);
-  ctx.drawImage(bubbleBody[b.variant], -r, -r, r * 2, r * 2);
+  ctx.drawImage((farField ? bubbleBodyFar : bubbleBody)[b.variant], -r, -r, r * 2, r * 2);
   ctx.rotate(BUBBLE_LIGHT_ROT - riseAngle);
-  ctx.drawImage(bubbleGlint, -r, -r, r * 2, r * 2);
+  ctx.drawImage(farField ? bubbleGlintFar : bubbleGlint, -r, -r, r * 2, r * 2);
   ctx.restore();
 }
 
@@ -2057,9 +2121,19 @@ function drawStar(p, time) {
    * reference pushed most of the population off this fast path and onto the
    * save/rotate/restore one, costing 23fps. At three pixels across the
    * rotation is not visible anyway. */
+  /* Aerial perspective. Against a coloured background, dropping a particle's
+   * alpha *is* the loss of contrast with distance — what shows through is
+   * the liquid, which is exactly what absorption and scattering along a
+   * longer path leave you with. The ramp used to run 0.68 to 1.0, which is
+   * barely a fifth of the range, and the fine glitter did not get it at all:
+   * every small flake was drawn at full strength however deep it sat. */
+  const depthFade = 0.34 + 0.66 * (p.z + 1) * 0.5;
+
   if (rr < 3.0) {
-    ctx.drawImage(flakeSmall[p.hueIdx * SHAPES + p.shape],
+    ctx.globalAlpha = depthFade;
+    ctx.drawImage((farField ? flakeSmallFar : flakeSmall)[p.hueIdx * SHAPES + p.shape],
                   px - rr, py - rr, rr * 2, rr * 2);
+    ctx.globalAlpha = 1;
     return;
   }
 
@@ -2067,18 +2141,18 @@ function drawStar(p, time) {
   // blit count down and reads as depth of field.
   if (rr > 6) {
     const g = rr * 4.2;
-    ctx.globalAlpha = 0.30;
+    ctx.globalAlpha = 0.30 * depthFade;
     ctx.drawImage(glowSprite, px - g, py - g, g * 2, g * 2);
     ctx.globalAlpha = 1;
   }
 
   const s = rr * 2;
   ctx.save();
-  // Flakes at the back are seen through the full thickness of the liquid.
-  ctx.globalAlpha = 0.68 + 0.32 * (p.z + 1) * 0.5;
+  ctx.globalAlpha = depthFade;
   ctx.translate(px, py);
   ctx.rotate(p.spin);
-  ctx.drawImage(flakeSprites[p.hueIdx * SHAPES + p.shape], -rr, -rr, s, s);
+  ctx.drawImage((farField ? flakeFar : flakeSprites)[p.hueIdx * SHAPES + p.shape],
+                -rr, -rr, s, s);
 
   /* Highlight, placed so it stays with the light while the flake turns
    * under it. The sprite is drawn in the flake's rotated frame, so the
@@ -2093,7 +2167,7 @@ function drawStar(p, time) {
   const face = Math.cos(p.spin * 2 - LIGHT_ANGLE * 2 + p.flashPhase);
   const glint = Math.pow(Math.max(0, face), 3);
   if (glint > 0.02) {
-    ctx.globalAlpha = 0.12 + 0.88 * glint;
+    ctx.globalAlpha = (0.12 + 0.88 * glint) * depthFade;
     ctx.drawImage(specSprites[p.shape * SPEC_K + k], -rr, -rr, s, s);
   }
 
@@ -2152,6 +2226,7 @@ function drawParticles(s0, s1, b0, b1, time) {
     if (depthOf(p.x, p.y) > 0) continue;
     drawStar(p, time);
   }
+  ctx.globalAlpha = 1;
 }
 
 /* The render loop deliberately uses no clip() at all.
@@ -2211,7 +2286,11 @@ function render(time) {
    * the back wall crosses the full thickness of liquid before it reaches
    * the eye, and gets absorbed and colour-shifted on the way; putting those
    * flakes under the tint layer is that absorption, for free. */
+  // Behind the mid-plane: seen through the full thickness of the liquid, so
+  // out of focus and washed toward the liquid's own colour.
+  farField = true;
   drawParticles(0, starSplit, 0, bubbleSplit, time);
+  farField = false;
 
   /* The dense phase, blitted from the grid and left to the browser's
    * bilinear upscale to smooth. At this grid size that reads as soft

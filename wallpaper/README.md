@@ -168,6 +168,36 @@ nothing where the walls close, so absorption is strongest at the centre and
 the rim is the *clearest* part. It is now a narrow bright band, barely
 blurred: liquid thinning against a glass wall that refracts.
 
+**Depth of field.** A camera focused on the front glass cannot also hold
+the back wall sharp through this much liquid, and until now every flake and
+bubble was rendered at identical sharpness whatever depth it sat at — which
+is most of why the scene read as a picture of a shaker rather than a volume
+with things suspended at different distances inside it. The back pass now
+draws from a defocused copy of every sprite. Baked, not filtered per frame:
+a blur over the whole back pass is one of the most expensive things canvas
+can be asked to do, and costs nothing at build time. They are drawn inset so
+the blur has somewhere to bleed, because defocus spreads a highlight outward
+rather than growing the object.
+
+**Aerial perspective.** Against a coloured background, dropping a particle's
+alpha *is* the loss of contrast with distance — what shows through is the
+liquid, which is exactly what absorption and scattering along a longer path
+leave you with. The ramp used to run 0.68 to 1.0 for flakes, barely a fifth
+of the range, and the fine glitter did not get it at all: every small flake
+was drawn at full strength however deep it sat. It now runs 0.34 to 1.0 and
+covers the fast path, the glow, and the specular.
+
+Both together came out slightly *cheaper* than before, 24.5ms to 23.6ms,
+because the far half of the population now composites at lower alpha and
+there are no extra draw calls — only different sprites.
+
+**Bubbles cast.** A bubble is a diverging lens, so it spreads the light
+passing through it and the liquid directly behind it receives less. Nothing
+in the scene occluded anything before, and a shadow is the one thing that
+makes an object look like it is *in* a medium rather than painted on top of
+it. Offset directly away from the source, and only for bubbles big enough to
+have taken the detailed draw path anyway, so it costs 1.2ms.
+
 **Depth** — the simulation is 2-D but the pouch is not, so every particle
 carries a position through its thickness. Particles behind the mid-plane are
 drawn before the liquid tint and read as immersed; those in front are drawn
@@ -536,7 +566,9 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Orientation changes how fast a flake falls | 1.8x between edge-on and face-on, population mean unchanged |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost under continuous shake | median 24.5ms, p90 29.4ms (software rasteriser, no GPU) |
+| Frame cost under continuous shake | median 24.8ms, p90 27.6ms (software rasteriser, no GPU) |
+| Depth of field and aerial perspective | cost nothing: 24.5ms before, 23.6ms after |
+| Bubble shadows | 1.2ms, for the 15 or so bubbles large enough to get one |
 | Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |
 | Buoyancy separates the phases, held still | bubbles climb 19.4px/s, flakes settle 4.8px/s |
 | Added mass makes bubbles lead the flow | lag 90px/s without the term, 17px/s with it; flakes lag 84px/s |
