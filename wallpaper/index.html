@@ -72,7 +72,7 @@ const CONFIG = {
    * and still terminate correctly, so the container can be properly full. */
   fill: num("fill", 0.965),
   stars: num("stars", 620),
-  bubbles: num("bubbles", 52),
+  bubbles: num("bubbles", 95),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
   /* Blue-dominant. The green-teal is not in this ramp: it comes from the
@@ -565,8 +565,60 @@ function fluidProject(iters) {
   }
 }
 
+/* Strip the net force out of a body-force field before it is applied.
+ *
+ * The liquid is sealed in a container, so the container absorbs whatever net
+ * force the contents exert — total momentum stays zero. Skipping that is not
+ * a small error: a spatially uniform force is divergence-free, so the
+ * pressure projection cannot remove the drift it causes, and it accumulates
+ * without bound. Measured upside down, the settling flakes' own reaction
+ * had spun up a 28 px/s bulk flow against a 4.8 px/s settling speed — six
+ * times stronger than the thing it came from, sweeping every flake to the
+ * surface and holding it there indefinitely.
+ *
+ * Subtracting the mean leaves every local plume and eddy intact. Only the
+ * bulk translation, which a sealed vessel cannot have, goes away.
+ */
+function removeNetForce(ax, ay) {
+  let sx = 0, sy = 0, count = 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) continue;
+      sx += ax[k]; sy += ay[k]; count++;
+    }
+  }
+  if (count === 0) return;
+  const mx = sx / count, my = sy / count;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) continue;
+      ax[k] -= mx; ay[k] -= my;
+    }
+  }
+}
+
+/** Mean concentration of the dense phase over the liquid. Buoyancy is a
+ *  force relative to the ambient, so it is this that the difference is
+ *  taken against — using a fixed 0.5 injects a net force whenever the
+ *  mixture is not exactly half and half. */
+function meanDye() {
+  let s = 0, count = 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) continue;
+      s += dye[k]; count++;
+    }
+  }
+  return count ? s / count : 0.5;
+}
+
 function fluidStep(dt) {
   const n = GW * GH;
+  removeNetForce(pfx, pfy);
+  const dyeMean = meanDye();
   // Body force from the container's acceleration, in the non-inertial frame.
   const fx = -accel.x * FLUID_DRIVE, fy = -accel.y * FLUID_DRIVE;
   const swirl = swirlInput * FLUID_SWIRL;
@@ -585,7 +637,7 @@ function fluidStep(dt) {
        * moves like a liquid: heavier fluid sinks, lighter fluid gets out of
        * its way, and the Rayleigh-Taylor fingers that produces are exactly
        * the curling teal shapes in the reference. */
-      const bw = (dye[k] - 0.5) * DYE_BUOY * gMag * dt;
+      const bw = (dye[k] - dyeMean) * DYE_BUOY * gMag * dt;
       fu[k] += gDir.x * bw;
       fv[k] += gDir.y * bw;
       if (swirl) {
@@ -637,6 +689,7 @@ const FLUID_WALL_DRAG = 3.2; // 1/s, applied only in cells touching glass
 const COUPLE = 0.055;       // particle reaction strength fed back to the fluid
 const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
 const DISPERSE = 340;       // px/s of down-gradient drift per unit relative gradient
+const WAKE = 260;           // px/s^2 of wake attraction between near bubbles
 
 /* Two-way coupling: a particle dragged by the liquid drags back.
  *
@@ -785,11 +838,59 @@ function stepWaves(dt) {
       else if (h[i] < -trough) { h[i] = -trough; wv[i] *= 0.4; }
     }
   }
+
+  /* Keep the height field zero-mean, moving any bulk offset into `level`.
+   *
+   * The two together describe the surface, so the split between them is
+   * free — and left free it drifts. Rolling the phone through 180 degrees
+   * sent `level` from 513 to -22 while the wave field grew to compensate:
+   * the total was right the whole way (volume stayed conserved to 0.1%) but
+   * the decomposition was meaningless, and since the crest bound is derived
+   * from `level`, a sinking `level` licensed an ever larger wave. Defining
+   * `level` as the mean and `h` as the deviation from it removes the
+   * freedom that was drifting.
+   */
+  let mean = 0;
+  for (let i = 0; i < N; i++) mean += h[i];
+  mean /= N;
+  if (mean !== 0) {
+    level += mean;
+    for (let i = 0; i < N; i++) h[i] -= mean;
+  }
 }
 
 /* --------------------------------------------------------------- particles */
 
 const stars = [], bubbles = [];
+let bubbleUnit = 1, maxBubble = 1;
+
+/** Buoyancy against drag: both rise speed and response time follow from the
+ *  radius, so a bubble's whole behaviour is set by its size alone. */
+function setBubbleSize(b, r) {
+  b.r = r;
+  const u = r / bubbleUnit;
+  b.tau = 0.03 + u * u * 0.0018;
+  /* Rise speed goes as r-squared only while Stokes drag holds. Past that a
+   * real bubble departs from it badly and plateaus — deformation and the
+   * surfactant skin cost it the rest. Leaving the square law uncapped made
+   * a large bubble rise at 526 px/s and cross the whole screen in 1.6
+   * seconds, which is why no big bubble ever survived long enough to be
+   * seen: the population kept collapsing back to fizz. */
+  b.rise = Math.min(5 + u * u * 0.55, 55) * bubbleUnit;
+  b.mass = u * u * 0.55;
+  b.wobble = (5 + (u % 7)) * bubbleUnit;
+}
+
+/** Drop a bubble back into the body of the liquid, well below the surface. */
+function respawnBubble(b) {
+  b.vx = 0; b.vy = 0; b.squash = 0;
+  for (let tries = 0; tries < 6; tries++) {
+    b.x = CX + (Math.random() * 2 - 1) * RX * 0.92;
+    b.y = CY + (Math.random() * 2 - 1) * RY * 0.92;
+    if (depthOf(b.x, b.y) < -b.r * 4) break;
+  }
+  clampInside(b, Math.min(RX, RY) * 0.03);
+}
 
 function seed() {
   stars.length = 0; bubbles.length = 0;
@@ -819,7 +920,13 @@ function seed() {
        * spread is what makes the settle look like a real suspension instead
        * of every flake moving as one sheet. */
       tau: 0.02 + (r / unit) * (r / unit) * 0.0016,
-      terminal: (4 + (r / unit) * (r / unit) * 0.42) * unit,
+      /* Settling speed. Turning a real glitter shaker over empties it in
+       * tens of seconds, not minutes: at the old rate the median flake
+       * needed four minutes to cross the container, so inverting the phone
+       * produced almost no visible fall. Big flakes now clear it in about
+       * ten seconds and the fine glitter still hangs for a long time,
+       * which is the spread a real one has. */
+      terminal: (9 + (r / unit) * (r / unit) * 1.1) * unit,
       // Flakes rock from side to side as they sink rather than dropping
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
@@ -827,34 +934,48 @@ function seed() {
       flutterAmp: (6 + Math.random() * 14) * unit,
       // Mass proxy for the reaction it exerts back on the liquid.
       mass: (r / unit) * (r / unit),
+      /* Position through the thickness of the pouch, -1 at the back wall
+       * and +1 against the front glass. The simulation is 2-D, but the
+       * pouch is not, and this is what buys back the depth: flakes behind
+       * the liquid are drawn under the tint and read as immersed, flakes in
+       * front are drawn over it and read as pressed against the glass. */
+      z: Math.random() * 2 - 1,
+      zDrift: (Math.random() - 0.5) * 0.09,
     });
   }
+  bubbleUnit = unit;
+  maxBubble = Math.min(RX, RY) * 0.13;
   for (let i = 0; i < CONFIG.bubbles; i++) {
-    /* Skewed like the flakes: mostly fine fizz with a few big showpiece
-     * spheres. The reference leans on those large bubbles for its scale. */
+    /* Skewed: mostly fine fizz, plus the large trapped-air bubbles a sealed
+     * shaker genuinely starts with. Leaving coalescence as their only source
+     * was a mistake — it made every bubble tiny and they all but vanished,
+     * because merging only just keeps pace with popping. Coalescence now
+     * adds to this population rather than being the whole of it. */
     const bt = Math.random();
-    const r = (bt < 0.78 ? 2.6 + bt * 6 : 11 + (bt - 0.78) * 128) * unit;
-    bubbles.push({
+    const r = (bt < 0.72 ? 3 + bt * 7 : 12 + (bt - 0.72) * 110) * unit;
+    const b = {
       x: CX + (Math.random() * 2 - 1) * RX * 0.9,
       y: CY + (Math.random() * 2 - 1) * RY * 0.9,
       vx: 0, vy: 0,
-      r,
-      // Buoyancy against drag: bigger bubbles genuinely climb faster.
-      tau: 0.03 + (r / unit) * (r / unit) * 0.0018,
-      rise: (16 + (r / unit) * (r / unit) * 1.1) * unit,
-      // Displaced-liquid mass: a rising bubble pushes liquid up behind it.
-      mass: (r / unit) * (r / unit) * 0.55,
       phase: Math.random() * Math.PI * 2,
-      wobble: (5 + Math.random() * 9) * unit,
       // Bubbles used to teleport from the surface back to the bottom in one
       // frame, which was plainly visible. They now fade out and back in.
       alpha: Math.random(),
       fading: false,
-    });
+      rest: 0,           // seconds spent sitting under the surface
+      squash: 0,         // deformation, driven by how fast it is climbing
+      z: Math.random() * 2 - 1,
+      zDrift: (Math.random() - 0.5) * 0.07,
+    };
+    setBubbleSize(b, r);
+    bubbles.push(b);
   }
-  /* Draw order is depth order: the big flakes are the ones nearest the
-   * front glass, so they belong on top of the fine glitter behind them. */
-  stars.sort((a, b) => a.r - b.r);
+  /* Draw order is depth order, and depth is now a real coordinate rather
+   * than size standing in for it. */
+  stars.sort((a, b) => a.z - b.z);
+  bubbles.sort((a, b) => a.z - b.z);
+  starSplit = depthSplit(stars);
+  bubbleSplit = depthSplit(bubbles);
   buildSprites();
 }
 
@@ -864,7 +985,8 @@ function seed() {
  * the frame rate at 600 flakes — the gradient has to be rebuilt every frame
  * because it is positioned in user space. Bake each once and blit it scaled
  * instead. */
-let glowSprite = null, bubbleSprite = null, flareSprite = null;
+let glowSprite = null, bubbleSprite = null, bubbleSmall = null;
+let flareSprite = null;
 
 /* Full-screen layers that depend only on the container, not on gravity:
  * the glass shell and the depth vignette. Rebuilding their gradients every
@@ -988,8 +1110,10 @@ function buildLayers() {
  * the flash — is what held this at 32fps; blitting a sprite does not touch
  * the path rasteriser at all. */
 const flakeSprites = [];
+const flakeSmall = [];
 const flashSprites = [];
 const FLAKE_PX = 48;
+const SMALL_PX = 10;
 
 function flakePath(g, cx, cy, R, isStar) {
   g.beginPath();
@@ -1012,13 +1136,26 @@ function flakePath(g, cx, cy, R, isStar) {
 }
 
 function buildFlakeSprites() {
-  flakeSprites.length = 0; flashSprites.length = 0;
+  flakeSprites.length = 0; flashSprites.length = 0; flakeSmall.length = 0;
   const c = FLAKE_PX / 2, R = FLAKE_PX / 2 - 1;
   for (let hi = 0; hi < HUES.length; hi++) {
     for (let shape = 0; shape < 2; shape++) {
       flakeSprites.push(sprite(FLAKE_PX, (g) => {
         g.fillStyle = HUES[hi];
         flakePath(g, c, c, R, shape === 0);
+        g.fill();
+      }));
+      /* A second, small copy of every flake.
+       *
+       * Canvas has no mipmaps, so drawing the 48px sprite down to the three
+       * or four pixels most of the glitter occupies makes the rasteriser
+       * filter the whole thing every single time — measured at 23fps of the
+       * frame budget for 620 flakes. Blitting a sprite that is already
+       * roughly the right size costs a fraction of that. */
+      flakeSmall.push(sprite(SMALL_PX, (g) => {
+        g.fillStyle = HUES[hi];
+        flakePath(g, SMALL_PX / 2, SMALL_PX / 2, SMALL_PX / 2 - 0.5,
+                  shape === 0);
         g.fill();
       }));
     }
@@ -1051,28 +1188,58 @@ function buildSprites() {
   bubbleSprite = sprite(128, (g, s) => {
     const r = s / 2;
 
-    const shell = g.createRadialGradient(r, r, r * 0.35, r, r, r);
-    shell.addColorStop(0, "rgba(150,220,245,.05)");
-    shell.addColorStop(0.62, "rgba(120,200,235,.16)");
-    shell.addColorStop(0.86, "rgba(86,168,214,.34)");   // thick-shell band
-    shell.addColorStop(0.955, "rgba(255,255,255,.95)"); // rim
+    /* Many stops, closely spaced near the rim. Three widely spaced stops
+     * banded into visible concentric rings once a bubble grew large enough
+     * to matter — the gradient was being magnified along with everything
+     * else, so what looked smooth at 6px read as Saturn at 40. */
+    const shell = g.createRadialGradient(r, r, 0, r, r, r);
+    shell.addColorStop(0.00, "rgba(170,230,252,.05)");
+    shell.addColorStop(0.45, "rgba(150,218,246,.10)");
+    shell.addColorStop(0.68, "rgba(126,202,238,.19)");
+    shell.addColorStop(0.80, "rgba(100,180,224,.30)");
+    shell.addColorStop(0.885, "rgba(92,172,218,.44)");
+    shell.addColorStop(0.930, "rgba(150,215,240,.62)");
+    shell.addColorStop(0.962, "rgba(232,250,255,.92)");
+    shell.addColorStop(0.984, "rgba(255,255,255,.98)");
+    shell.addColorStop(0.996, "rgba(255,255,255,.35)");
     shell.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = shell;
     g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); g.fill();
 
-    // Caustic: light focused through the sphere onto its far side.
+    // Caustic: light focused through the sphere onto its far side. Soft and
+    // unclipped, so it does not leave a hard arc where it meets the rim.
     const caus = g.createRadialGradient(
-      r * 1.3, r * 1.34, 0, r * 1.3, r * 1.34, r * 0.5);
-    caus.addColorStop(0, "rgba(214,250,255,.75)");
-    caus.addColorStop(1, "rgba(214,250,255,0)");
+      r * 1.24, r * 1.28, 0, r * 1.24, r * 1.28, r * 0.62);
+    caus.addColorStop(0, "rgba(220,252,255,.55)");
+    caus.addColorStop(0.5, "rgba(220,252,255,.22)");
+    caus.addColorStop(1, "rgba(220,252,255,0)");
     g.fillStyle = caus;
-    g.beginPath(); g.arc(r, r, r * 0.97, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(r, r, r * 0.93, 0, Math.PI * 2); g.fill();
 
     // Tight specular highlight.
     const spec = g.createRadialGradient(
       r * 0.64, r * 0.58, 0, r * 0.64, r * 0.58, r * 0.34);
     spec.addColorStop(0, "rgba(255,255,255,.98)");
     spec.addColorStop(0.45, "rgba(255,255,255,.45)");
+    spec.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = spec;
+    g.fillRect(0, 0, s, s);
+  });
+
+  // Small copy for the fine fizz, for the same mipmap reason as the flakes.
+  bubbleSmall = sprite(24, (g, s) => {
+    const r = s / 2;
+    const shell = g.createRadialGradient(r, r, 0, r, r, r);
+    shell.addColorStop(0, "rgba(160,225,250,.05)");
+    shell.addColorStop(0.7, "rgba(120,198,236,.20)");
+    shell.addColorStop(0.88, "rgba(96,176,220,.42)");
+    shell.addColorStop(0.965, "rgba(255,255,255,.96)");
+    shell.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = shell;
+    g.beginPath(); g.arc(r, r, r, 0, Math.PI * 2); g.fill();
+    const spec = g.createRadialGradient(
+      r * 0.66, r * 0.6, 0, r * 0.66, r * 0.6, r * 0.34);
+    spec.addColorStop(0, "rgba(255,255,255,.95)");
     spec.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = spec;
     g.fillRect(0, 0, s, s);
@@ -1234,39 +1401,75 @@ function polygonArea(pts) {
   return Math.abs(a) * 0.5;
 }
 
+/* A bubble is a deformable object, not a stamp.
+ *
+ * A gas bubble rising through liquid is flattened perpendicular to its
+ * motion — pressure is highest on the face meeting the fluid — and the
+ * faster it climbs the more oblate it gets. Drawing every bubble as the same
+ * rigid circle was the single thing that made them read as decals. It is
+ * also drawn at its depth, so bubbles at the back sit under the liquid tint
+ * and only the ones near the glass keep a hard bright rim.
+ */
+function drawBubble(b) {
+  const sc = 1 + b.z * 0.3;
+  const r = b.r * sc;
+  const x = b.x + parallaxX(b.z), y = b.y + parallaxY(b.z);
+  const speed = Math.hypot(b.vx, b.vy);
+  const ang = speed > 1 ? Math.atan2(b.vy, b.vx) : 0;
+
+  ctx.save();
+  ctx.globalAlpha = b.alpha * (0.74 + 0.26 * (b.z + 1) * 0.5);
+  ctx.translate(x, y);
+  if (b.squash > 0.01) {
+    // Flatten along the direction of travel.
+    ctx.rotate(ang);
+    ctx.scale(1 / (1 + b.squash), 1 + b.squash * 0.72);
+  }
+  ctx.drawImage(r < 9 ? bubbleSmall : bubbleSprite, -r, -r, r * 2, r * 2);
+  ctx.restore();
+}
+
 function drawStar(p, time) {
   // Fine glitter: at two or three pixels the rotation is invisible, so skip
   // the transform — but still blit the sprite. Substituting a fillRect here
   // is faster again and looks it: hard little squares read as cheap dither,
   // where the downscaled sprite reads as soft glitter.
-  if (p.r < 2.2) {
-    const d = p.r * 2;
-    ctx.drawImage(flakeSprites[p.hueIdx * 2 + p.shape],
-                  p.x - p.r, p.y - p.r, d, d);
+  const sc = 1 + p.z * 0.3;
+  const rr = p.r * sc;
+  const px = p.x + parallaxX(p.z), py = p.y + parallaxY(p.z);
+
+  /* Threshold raised from 2.2px: enlarging the flakes to match the
+   * reference pushed most of the population off this fast path and onto the
+   * save/rotate/restore one, costing 23fps. At three pixels across the
+   * rotation is not visible anyway. */
+  if (rr < 3.0) {
+    ctx.drawImage(flakeSmall[p.hueIdx * 2 + p.shape],
+                  px - rr, py - rr, rr * 2, rr * 2);
     return;
   }
 
   // Big flakes carry a glow; the fine glitter does not, which keeps the
   // blit count down and reads as depth of field.
-  if (p.r > 6) {
-    const g = p.r * 4.2;
+  if (rr > 6) {
+    const g = rr * 4.2;
     ctx.globalAlpha = 0.30;
-    ctx.drawImage(glowSprite, p.x - g, p.y - g, g * 2, g * 2);
+    ctx.drawImage(glowSprite, px - g, py - g, g * 2, g * 2);
     ctx.globalAlpha = 1;
   }
 
-  const s = p.r * 2;
+  const s = rr * 2;
   ctx.save();
-  ctx.translate(p.x, p.y);
+  // Flakes at the back are seen through the full thickness of the liquid.
+  ctx.globalAlpha = 0.68 + 0.32 * (p.z + 1) * 0.5;
+  ctx.translate(px, py);
   ctx.rotate(p.spin);
-  ctx.drawImage(flakeSprites[p.hueIdx * 2 + p.shape], -p.r, -p.r, s, s);
+  ctx.drawImage(flakeSprites[p.hueIdx * 2 + p.shape], -rr, -rr, s, s);
 
   // Specular flash as the flake turns edge-on to the light.
   const flash = Math.sin(time * p.flashRate + p.flashPhase);
   if (flash > 0.86) {
     ctx.globalAlpha = (flash - 0.86) / 0.14;
-    ctx.drawImage(flashSprites[p.shape], -p.r, -p.r, s, s);
-    ctx.globalAlpha = 1;
+    ctx.drawImage(flashSprites[p.shape], -rr, -rr, s, s);
   }
   ctx.restore();
 
@@ -1274,14 +1477,48 @@ function drawStar(p, time) {
    * of these; they are a different thing from the confetti — a specular
    * event, not an object — so they are added rather than blended. Light
    * arrives on top of what is already there; it does not cover it. */
-  if (flash > 0.975 && p.r > 5.5) {
+  if (flash > 0.975 && rr > 5.5) {
     const k = (flash - 0.975) / 0.025;
-    const f = p.r * (1.8 + k * 2.2);
+    const f = rr * (1.8 + k * 2.2);
     ctx.globalCompositeOperation = "lighter";
     ctx.globalAlpha = k * 0.6;
-    ctx.drawImage(flareSprite, p.x - f, p.y - f, f * 2, f * 2);
+    ctx.drawImage(flareSprite, px - f, py - f, f * 2, f * 2);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
+  }
+}
+
+/* Parallax offset for a particle at depth z.
+ *
+ * Tilting the phone changes the angle you view the pouch from, and the back
+ * wall shifts against the front by an amount proportional to the thickness
+ * between them. Using the gravity direction as the proxy for that angle
+ * costs nothing and is right to first order: upright it is zero, and the
+ * further the phone leans the more the layers separate. */
+function parallaxX(z) { return z * PARALLAX * gDir.x; }
+function parallaxY(z) { return z * PARALLAX * (gDir.y - 1); }
+const PARALLAX = 9;
+
+let starSplit = 0, bubbleSplit = 0;
+
+/** Index of the first particle at or in front of the mid-plane. */
+function depthSplit(list) {
+  let i = 0;
+  while (i < list.length && list[i].z < 0) i++;
+  return i;
+}
+
+function drawParticles(s0, s1, b0, b1, time) {
+  for (let i = b0; i < b1; i++) {
+    const b = bubbles[i];
+    if (b.alpha <= 0 || depthOf(b.x, b.y) > 0) continue;
+    drawBubble(b);
+  }
+  ctx.globalAlpha = 1;
+  for (let i = s0; i < s1; i++) {
+    const p = stars[i];
+    if (depthOf(p.x, p.y) > 0) continue;
+    drawStar(p, time);
   }
 }
 
@@ -1337,6 +1574,13 @@ function render(time) {
 
   const menisc = meniscus(poly, 64);   // array of interface segments
 
+  /* Depth pass one: everything behind the mid-plane of the pouch, drawn
+   * before the liquid tint so the tint falls over it. Light from a flake at
+   * the back wall crosses the full thickness of liquid before it reaches
+   * the eye, and gets absorbed and colour-shifted on the way; putting those
+   * flakes under the tint layer is that absorption, for free. */
+  drawParticles(0, starSplit, 0, bubbleSplit, time);
+
   /* The dense phase, blitted from the grid and left to the browser's
    * bilinear upscale to smooth. At this grid size that reads as soft
    * marbling — which is what an unmixed second liquid looks like. */
@@ -1362,17 +1606,8 @@ function render(time) {
   ctx.fillStyle = under;
   ctx.fillRect(0, 0, W, H);
 
-  // Cull above the waterline rather than clipping to the liquid body.
-  for (const b of bubbles) {
-    if (b.alpha <= 0 || depthOf(b.x, b.y) > 0) continue;
-    ctx.globalAlpha = b.alpha;
-    ctx.drawImage(bubbleSprite, b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
-  }
-  ctx.globalAlpha = 1;
-  for (const p of stars) {
-    if (depthOf(p.x, p.y) > 0) continue;
-    drawStar(p, time);
-  }
+  // Depth pass two: everything in front of the mid-plane, over the tint.
+  drawParticles(starSplit, stars.length, bubbleSplit, bubbles.length, time);
 
   /* Meniscus. Three passes: a soft glow bleeding down into the liquid, the
    * bright surface line itself, and a thin darker line above it. One flat
@@ -1571,27 +1806,107 @@ function fixedStep(dt, time) {
     b.x += b.vx * dt; b.y += b.vy * dt;
     if (clampInside(b, pad)) hitWall(b, ox, oy);
 
-    // Reaching the surface starts a fade rather than an instant jump.
-    if (!b.fading && depthOf(b.x, b.y) > -b.r) b.fading = true;
+    // Oblate when climbing: a rising bubble is flattened perpendicular to
+    // its motion, and the faster it goes the more so.
+    // Capped low: a strongly flattened bubble reads as a sliver, not a
+    // bubble, and at this scale the deformation is a subtle cue.
+    const target = Math.min(0.22, Math.hypot(b.vx, b.vy) / (b.rise + 60) * 0.5);
+    b.squash += (target - b.squash) * Math.min(1, dt * 5);
+    b.z = Math.max(-1, Math.min(1, b.z + b.zDrift * dt));
+
+    /* Bubbles do not vanish the instant they touch the surface — they sit
+     * under it, jostling, until the film drains and they pop. Fading on
+     * contact made them wink out mid-rise. */
+    if (!b.fading && depthOf(b.x, b.y) > -b.r * 1.4) {
+      b.rest += dt;
+      if (b.rest > 2.2 + b.r * 0.12) b.fading = true;
+    }
     if (b.fading) {
+      b.rest = 0;
       b.alpha -= dt * 2.5;
       if (b.alpha <= 0) {
         b.alpha = 0; b.fading = false;
-        b.vx = 0; b.vy = 0;
-        for (let tries = 0; tries < 6; tries++) {
-          b.x = CX + (Math.random() * 2 - 1) * RX * 0.92;
-          b.y = CY + (Math.random() * 2 - 1) * RY * 0.92;
-          if (depthOf(b.x, b.y) < -b.r * 4) break;
-        }
-        clampInside(b, pad);
+        // Reborn small; it will grow again by merging on the way up.
+        setBubbleSize(b, bubbleUnit * (3 + Math.random() * 5));
+        respawnBubble(b);
       }
     } else if (b.alpha < 1) {
       b.alpha = Math.min(1, b.alpha + dt * 1.6);
     }
   }
 
+  // Every other step: merging is a slow process and the pair loop is the
+  // most expensive thing the bubbles do.
+  coalesceTick = !coalesceTick;
+  if (coalesceTick) coalesce(dt * 2);
+
   // Publish this step's concentration for the next one to disperse against.
   const swap = conc; conc = concNext; concNext = swap; concNext.fill(0);
+}
+
+/* Bubbles that touch merge, conserving gas volume.
+ *
+ * This is what produces the range of sizes the reference shows: a shaker
+ * does not start with big bubbles, it makes them by merging small ones, and
+ * the merged bubble then rises faster because buoyancy scales with volume
+ * while drag does not. Cheap at this count — the pair loop is a few thousand
+ * comparisons — and it gives the population a life cycle rather than a fixed
+ * set of sizes cycling forever.
+ */
+let mergeCount = 0;
+let coalesceTick = false;
+function coalesce(dt) {
+  for (let i = 0; i < bubbles.length; i++) {
+    const a = bubbles[i];
+    if (a.fading || a.alpha < 0.9) continue;
+    for (let j = i + 1; j < bubbles.length; j++) {
+      const b = bubbles[j];
+      if (b.fading || b.alpha < 0.9) continue;
+      // Only bubbles at a similar depth can actually touch.
+      if (Math.abs(a.z - b.z) > 0.45) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d2 = dx * dx + dy * dy;
+      const touch = (a.r + b.r) * 0.9;
+
+      /* Wake attraction. A bubble rising in the wake of another meets less
+       * resistance, catches up and merges — it is why bubbles in a real
+       * liquid form chains and why the big ones exist at all. Without it
+       * two bubbles have to collide by chance, which measurement said
+       * essentially never happens: zero merges in thirty seconds, so the
+       * population only ever shrank as bubbles reached the surface.
+       */
+      const reach = (a.r + b.r) * 5;
+      if (d2 < reach * reach && d2 > 1e-3) {
+        const d = Math.sqrt(d2);
+        // Strongest when one trails the other along the rise axis.
+        const align = Math.abs((dx * gDir.x + dy * gDir.y) / d);
+        const pull = WAKE * align * (1 - d / reach) * dt;
+        const nx = dx / d, ny = dy / d;
+        a.vx += nx * pull; a.vy += ny * pull;
+        b.vx -= nx * pull; b.vy -= ny * pull;
+      }
+
+      if (d2 > touch * touch) continue;
+
+      // Spheres: volumes add, so radii add in cube.
+      const merged = Math.cbrt(a.r * a.r * a.r + b.r * b.r * b.r);
+      if (merged > maxBubble) continue;      // would burst; leave them be
+      const wa = a.r * a.r * a.r, wb = b.r * b.r * b.r, wt = wa + wb;
+      a.x = (a.x * wa + b.x * wb) / wt;
+      a.y = (a.y * wa + b.y * wb) / wt;
+      a.vx = (a.vx * wa + b.vx * wb) / wt;
+      a.vy = (a.vy * wa + b.vy * wb) / wt;
+      a.z = (a.z * wa + b.z * wb) / wt;
+      setBubbleSize(a, merged);
+      mergeCount++;
+
+      // The smaller one is consumed; respawn it as fresh fizz down below.
+      b.fading = false; b.alpha = 0; b.rest = 0;
+      setBubbleSize(b, bubbleUnit * (3 + Math.random() * 5));
+      respawnBubble(b);
+      break;
+    }
+  }
 }
 
 /** Sutherland–Hodgman clip of the liquid polygon against the squircle, so the

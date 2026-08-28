@@ -72,6 +72,25 @@ gradient stops being decoration and becomes a consequence of stratification.
 Measured: settled it separates to 0.01/0.96, a shake mixes it back to 0.68,
 and the mean is conserved across both.
 
+**Depth** — the simulation is 2-D but the pouch is not, so every particle
+carries a position through its thickness. Particles behind the mid-plane are
+drawn before the liquid tint and read as immersed; those in front are drawn
+over it and read as pressed against the glass. Light from the back wall
+crosses the full thickness of liquid before it reaches the eye, and putting
+those flakes under the tint layer is that absorption, for free. Tilting also
+shifts the layers against each other, since the viewing angle changes.
+
+**Bubbles** rise, deform, merge and pop. A gas bubble climbing through
+liquid is flattened perpendicular to its motion; the faster it climbs, the
+more oblate. Bubbles that touch merge with gas volume conserved, drawn
+together on the way up by wake attraction — a bubble in another's wake meets
+less resistance and catches it, which is why bubbles form chains in a real
+liquid and why the large ones exist at all. Without wake attraction two
+bubbles have to collide by chance: measured at zero merges in thirty
+seconds. Rise speed follows r-squared only while Stokes drag holds, then
+plateaus; leaving that uncapped had a large bubble crossing the screen in
+1.6 seconds, so none ever survived to be seen.
+
 **Particles with Stokes drag** — response time and terminal velocity both
 scale with radius squared, so fine glitter traces the flow almost exactly
 while big flakes lag, overshoot on a turn and sink faster. That spread is
@@ -90,6 +109,24 @@ shrinks as the phone lies flatter, and normalising it makes a 5-degree tilt
 pull as hard as an 85-degree one. It comes from a low-pass of the
 accelerometer; the residual is the shake, which is a measured quantity
 rather than a jerk heuristic.
+
+The container is sealed, so it absorbs whatever net force its contents
+exert and the total momentum stays zero. Both the particle reaction and the
+buoyancy of the dense phase have their mean subtracted before they are
+applied. This is not bookkeeping: a spatially uniform force is
+divergence-free, so the pressure projection cannot remove the drift it
+causes and it accumulates without bound. Measured upside down, the settling
+flakes' own reaction had spun up a 28 px/s bulk flow against a 4.8 px/s
+settling speed, sweeping every flake to the surface and pinning it there
+permanently.
+
+`level` is defined as the mean of the surface and `h` as the deviation from
+it, with any bulk offset moved across each step. The two together describe
+the surface, so the split between them is otherwise free — and left free it
+drifts: rolling through 180 degrees sent `level` from 513 to -22 while the
+wave grew to compensate. Volume stayed conserved to 0.1% the whole way, but
+the crest bound is derived from `level`, so a sinking `level` licensed an
+ever larger wave.
 
 Volume is conserved by feedback rather than by solving the tilted squircle's
 area: each frame clips the liquid polygon against the container, measures the
@@ -117,7 +154,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `620` | Confetti count |
-| `bubbles` | `52` | Bubble count |
+| `bubbles` | `95` | Bubble count |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
@@ -174,8 +211,15 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Capillary term stability | no non-finite values in surface or flow after a 2.3g shake |
 | Settling convection with zero input | 19 px/s flow, ~100% of it spatial structure rather than drift |
 | Dense-phase stratification | separates to 0.01/0.96 settled, mixes to 0.68 shaken, mean conserved |
+| Inversion (roll 180°) | `level` matches its expected value at 0°, 90° and 180°; volume conserved to 0.1% |
+| Net fluid drift | 12.7 px/s before the momentum fix, 0.99 after |
 | Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
 
-Frame rate is 44fps at 620 flakes, measured in a
-headless container with no GPU — treat that as a floor rather than a
-promise, and drop `stars` if a device needs it.
+Frame rate measured here is misleading and worth explaining. Profiled
+in-page, the whole simulation step costs 3.0ms and issuing the draw calls
+1.9ms — but a frame takes 34ms. The missing 30ms is not in this code at all:
+it is the browser rasterising a full-screen canvas in software, because the
+container has no GPU. On a device with an accelerated canvas that cost is a
+fraction of this. Treat the ~30fps seen here as a software-rasteriser
+number, not a device one; `stars` is still the dial if a real device needs
+it.
