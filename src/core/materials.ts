@@ -63,6 +63,16 @@ export const MATERIALS: Material[] = [
       'colour at the bottom, extremely thin and fragile',
   },
   {
+    id: 'melted-chrome',
+    label: 'Melted chrome',
+    stem:
+      'liquid melted chrome, a soft organic blob of mirror-polished metal ' +
+      'that has flowed and set, curvature sweeping the whole environment ' +
+      'across its face so a hard horizon line runs right through the middle, ' +
+      'a cool bright sky reflected above it and a dark warm floor below, ' +
+      'one bright bounce of light along the very bottom edge',
+  },
+  {
     id: 'chrome',
     label: 'Mirror chrome',
     stem:
