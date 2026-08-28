@@ -417,6 +417,7 @@ let dyeCanvas = null, dyeCtx = null, dyeImage = null;
  * tenth of the container, which is not what a real shaker looks like.
  */
 let conc, concNext;
+let gas, gasNext;      // gas fraction per cell, and the next step's accumulator
 
 /** Pure containment test, for marking solid cells. */
 function isInside(x, y) {
@@ -450,6 +451,7 @@ function buildFluid() {
   pfx = new Float32Array(n); pfy = new Float32Array(n);
   dye = new Float32Array(n); dye0 = new Float32Array(n);
   conc = new Float32Array(n); concNext = new Float32Array(n);
+  gas = new Float32Array(n); gasNext = new Float32Array(n);
   fsolid = new Uint8Array(n);
   fair = new Uint8Array(n);
   causticCanvas = document.createElement("canvas");
@@ -669,6 +671,12 @@ function fluidStep(dt) {
   buildAirMask();
   removeNetForce(pfx, pfy);
   const dyeMean = meanDye();
+  let gasSum = 0, gasCells = 0;
+  for (let k = 0; k < n; k++) {
+    if (fsolid[k] || fair[k]) continue;
+    gasSum += gas[k]; gasCells++;
+  }
+  const gasMean = gasCells ? gasSum / gasCells : 0;
   // Body force from the container's acceleration, in the non-inertial frame.
   const fx = -accel.x * FLUID_DRIVE, fy = -accel.y * FLUID_DRIVE;
   const swirl = swirlInput * FLUID_SWIRL;
@@ -690,6 +698,14 @@ function fluidStep(dt) {
       const bw = (dye[k] - dyeMean) * DYE_BUOY * gMag * dt;
       fu[k] += gDir.x * bw;
       fv[k] += gDir.y * bw;
+
+      /* And the same thing with the sign reversed for the gas. Only the
+       * departure from the average matters: bubbles spread evenly through
+       * the vessel make all of it lighter and nothing moves. It is where
+       * they gather that the liquid goes up. */
+      const gw = (gas[k] - gasMean) * GAS_LIFT * gMag * dt;
+      fu[k] -= gDir.x * gw;
+      fv[k] -= gDir.y * gw;
       if (swirl) {
         // Rotation about the centre, so a twist stirs rather than shoves.
         fu[k] -= ((j + 0.5) * cell - CY) * swirl * dt;
@@ -734,6 +750,40 @@ function fluidStep(dt) {
   // The dense phase rides the velocity field it just helped create.
   advectDye(dt);
 
+  /* A sealed vessel cannot drift, though it can slosh.
+   *
+   * The net force is already stripped out of the particle reaction before it
+   * is applied, but that only constrains the forcing. At any real coupling
+   * strength the *flow* acquires a bulk drift of its own through advection
+   * and the asymmetry of the walls, and being a translation of everything at
+   * once it is invisible to the pressure projection, which only ever sees
+   * divergence. Measured at rest with the coupling raised: 29px/s of steady
+   * drift, which swept the glitter into one end and held it there — the same
+   * failure the force-side fix was written for, arriving by another route.
+   *
+   * Zeroing the bulk momentum outright would be wrong: sloshing *is* bulk
+   * momentum, and a vessel tipped over genuinely has its contents moving one
+   * way. So this removes only the part that persists — a running mean over
+   * a second and a half, which a half-second slosh barely registers in and
+   * a steady drift saturates. A high-pass on the bulk motion, not a clamp.
+   */
+  {
+    let mu = 0, mv = 0, count = 0;
+    for (let k = 0; k < n; k++) {
+      if (fsolid[k] || fair[k]) continue;
+      mu += fu[k]; mv += fv[k]; count++;
+    }
+    if (count) {
+      const a = 1 - Math.exp(-dt / 1.5);
+      driftU += (mu / count - driftU) * a;
+      driftV += (mv / count - driftV) * a;
+      for (let k = 0; k < n; k++) {
+        if (fsolid[k] || fair[k]) continue;
+        fu[k] -= driftU; fv[k] -= driftV;
+      }
+    }
+  }
+
   // Viscosity. Frame-rate independent: a per-frame multiplier would make the
   // liquid thicker at low frame rates.
   const decay = Math.exp(-FLUID_VISC * dt);
@@ -756,6 +806,8 @@ function fluidStep(dt) {
   }
 }
 
+let driftU = 0, driftV = 0;   // the persistent part of the bulk motion
+
 const FLUID_DRIVE = 2600;   // px/s^2 per g of container acceleration
 const SLOSH = 2600;        // px/s^2 per g, per unit of surface slope — the same
                           // scale the container acceleration uses, because it
@@ -763,8 +815,20 @@ const SLOSH = 2600;        // px/s^2 per g, per unit of surface slope — the sa
 const FLUID_SWIRL = 1.6;    // rad/s^2 per unit of twist
 const FLUID_VISC = 0.62;    // 1/s
 const FLUID_WALL_DRAG = 3.2; // 1/s, applied only in cells touching glass
-const COUPLE = 0.055;       // particle reaction strength fed back to the fluid
+/* Particle reaction fed back to the fluid. Roughly three times what it was:
+ * at the old strength the convection a settling suspension drives could not
+ * go unstable, so the flow after a flip decayed from 357px/s to 29 and
+ * stayed there while the glitter drifted down one flake at a time. A dense
+ * suspension sitting over clear liquid is the most unstable arrangement
+ * there is and should overturn in plumes. It could not be raised before,
+ * because raising it drove a bulk drift that swept the glitter into one end;
+ * with that removed, the flow after a flip now holds at 51px/s instead of
+ * dying. */
+const COUPLE = 0.16;
 const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
+/* Far larger than DYE_BUOY, and it should be: the dense phase is a few per
+ * cent heavier than the liquid, a bubble is a hundred per cent lighter. */
+const GAS_LIFT = 900;       // px/s^2 per g at a cell entirely full of gas
 const DISPERSE = 1100;       // px/s of down-gradient drift per unit relative gradient
 const WAKE = 150;           // px/s^2 of wake attraction between near bubbles
 
@@ -792,6 +856,32 @@ function scatterForce(x, y, fx, fy) {
 }
 
 /** Bilinear deposit of one flake into the concentration accumulator. */
+/* Gas fraction: how much of each cell is bubble rather than liquid.
+ *
+ * A bubbly liquid weighs less than the same liquid without bubbles, and that
+ * is the strongest circulation a shaker has. Where bubbles collect, the
+ * mixture is lighter and rises; the liquid it displaces comes down somewhere
+ * else, and the whole vessel turns over. It is why a glass of beer visibly
+ * circulates and why an airlift pump works without moving parts.
+ *
+ * The bubbles only ever pushed back on the liquid through drag before, which
+ * is a local wake and nothing more. The buoyancy they carry — a hundred per
+ * cent density deficit each, against the few per cent the dense phase
+ * carries — never reached the fluid at all, so once a flip's transient had
+ * damped out there was nothing left driving anything and the liquid simply
+ * sat there.
+ */
+function depositVoid(x, y, w) {
+  let gx = x / cell - 0.5, gy = y / cell - 0.5;
+  if (gx < 0) gx = 0; else if (gx > GW - 1.001) gx = GW - 1.001;
+  if (gy < 0) gy = 0; else if (gy > GH - 1.001) gy = GH - 1.001;
+  const i0 = gx | 0, j0 = gy | 0;
+  const s = gx - i0, t = gy - j0;
+  const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
+  gasNext[a] += w * (1 - s) * (1 - t); gasNext[a + 1] += w * s * (1 - t);
+  gasNext[b] += w * (1 - s) * t;       gasNext[b + 1] += w * s * t;
+}
+
 function depositConc(x, y, w) {
   let gx = x / cell - 0.5, gy = y / cell - 0.5;
   if (gx < 0) gx = 0; else if (gx > GW - 1.001) gx = GW - 1.001;
@@ -982,7 +1072,7 @@ function bubbleBirthRadius() {
  * across the screen in under a second and there would never be anything to
  * look at. Everything else about a bubble is derived from this one number
  * and its radius, so the drift and the dart describe the same object. */
-const BUOY_G = 92;
+const BUOY_G = 244;
 /* Shedding frequency, in the Strouhal form f ~ v/d. The constant is not
  * Strouhal's 0.2 because the scene's speeds are slowed relative to its
  * sizes; what carries over is the shape of the law, which is what makes a
@@ -997,11 +1087,20 @@ function setBubbleSize(b, r) {
   /* Rise speed goes as r-squared only while Stokes drag holds. Past that a
    * real bubble departs from it badly and plateaus — deformation and the
    * surfactant skin cost it the rest, and millimetre bubbles in water end up
-   * all climbing at much the same speed. Leaving the square law uncapped
-   * made a large bubble rise at 526 px/s and cross the whole screen in 1.6
-   * seconds, which is why no big bubble ever survived long enough to be
-   * seen: the population kept collapsing back to fizz. */
-  b.rise = Math.min(5 + u * u * 0.55, 34) * bubbleUnit;
+   * all climbing at much the same speed.
+   *
+   * The plateau used to sit at 34px/s, which is 40 seconds to cross the
+   * screen, and it was set there for the wrong reason: bubbles that rose at
+   * any speed reached the surface and were lost, so the population kept
+   * collapsing back to fizz and the answer at the time was to slow them
+   * down. That is a fudge standing in for a mechanism. What actually keeps
+   * the population up is where new bubbles come from and how long they last
+   * once they arrive — entrainment at the folding surface, and a film that
+   * has to drain before it bursts — and both of those exist now. So the
+   * plateau can go back to something a gel would really give: a large
+   * bubble crosses in about ten seconds, which is a bubble visibly rising
+   * rather than a bubble hanging in the liquid. */
+  b.rise = Math.min(14 + u * u * 1.6, 110) * bubbleUnit;
   /* Response time is not a free parameter. A bubble reaches terminal speed
    * when buoyancy balances drag, so tau = v_t / 3g — the 3 being the
    * added-mass result that a body of negligible density accelerates at three
@@ -2426,6 +2525,9 @@ function fixedStep(dt, time) {
     if (b.alpha > 0) {
       scatterForce(b.x, b.y, (flow.x - b.vx) * b.mass * COUPLE,
                              (flow.y - b.vy) * b.mass * COUPLE);
+      // What fraction of a cell this bubble displaces. The lift it gives the
+      // liquid follows from that, next step.
+      depositVoid(b.x, b.y, b.alpha * Math.PI * b.r * b.r / (cell * cell));
     }
 
     const ox = b.x, oy = b.y;
@@ -2459,9 +2561,20 @@ function fixedStep(dt, time) {
       }
       if (!b.fading) {
         b.rest += dt;
-        /* Film drainage. A big bubble's film holds more liquid and takes
-         * proportionally longer to thin to the point where it goes. */
-        if (b.rest > 1.4 + b.r * 0.1) { b.fading = true; burstRipple(b); }
+        /* Film drainage, and it has to be slow.
+         *
+         * A big bubble's film holds more liquid and takes proportionally
+         * longer to thin to the point where it goes — and in a gel this
+         * viscous, laden with whatever keeps the glitter in suspension, that
+         * is tens of seconds rather than one or two. Which matters for more
+         * than the bubble it applies to: bubbles at the surface are packed
+         * against each other, so it is where coalescence actually happens,
+         * and a foam coarsens by exactly that. Bursting them after a second
+         * and a half meant nothing ever got the chance to grow — measured
+         * across a hundred seconds, every bubble above 12px died and none
+         * replaced it, with the largest in the vessel collapsing from 31px
+         * to 7. The bubbles the reference shows are made here. */
+        if (b.rest > 10 + b.r * 1.4) { b.fading = true; burstRipple(b); }
       }
     } else if (!b.fading) {
       b.rest = 0;
@@ -2493,6 +2606,7 @@ function fixedStep(dt, time) {
 
   // Publish this step's concentration for the next one to disperse against.
   const swap = conc; conc = concNext; concNext = swap; concNext.fill(0);
+  const gswap = gas; gas = gasNext; gasNext = gswap; gasNext.fill(0);
 }
 
 /* Bubbles that touch merge, conserving gas volume.

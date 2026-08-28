@@ -96,9 +96,47 @@ the level returns to within 0.02% of where it started.
 way around. One-way advection is the usual shortcut and it misses the most
 characteristic thing a glitter shaker does: settling flakes drag liquid down
 with them, the displaced liquid rises somewhere else, and the suspension
-organises into slow convection plumes. With no input at all the flow field
-sustains 17-19 px/s of almost purely structural motion; before the coupling
-it was exactly zero.
+organises into convection plumes. With no input at all the flow field
+sustains real structural motion; before the coupling it was exactly zero.
+
+It has to be strong enough to go unstable. A dense suspension sitting over
+clear liquid is the most unstable arrangement there is — flip the shaker and
+that is exactly what you have — and it should overturn in plumes rather than
+settle one flake at a time. At the strength it was set to it could not:
+measured through a flip, the flow decayed from 357px/s to 29 within five
+seconds and then sat there while the glitter drifted down. Tripled, it holds
+at 51px/s indefinitely and carries the glitter twice as far in the same time.
+
+It could not have been raised before, because raising it drove a bulk drift
+that swept the glitter into one end — which is also worth knowing about the
+old behaviour, because some of the drama of a flip was that artefact rather
+than the physics.
+
+**A sealed vessel cannot drift, though it can slosh.** The net force is
+stripped out of the particle reaction before it is applied, but that only
+constrains the forcing. At any real coupling strength the *flow* acquires a
+bulk drift of its own through advection and the asymmetry of the walls, and
+being a translation of everything at once it is invisible to the pressure
+projection, which only ever sees divergence. Measured at rest with the
+coupling raised: 29px/s of steady drift, which swept the glitter into one
+end and held it there — the same failure the force-side fix was written for,
+arriving by another route. Zeroing the bulk momentum would be wrong, since
+sloshing *is* bulk momentum and a vessel tipped over genuinely has its
+contents moving one way, so only the part that persists is removed: a
+running mean over a second and a half, which a half-second slosh barely
+registers in and a steady drift saturates. It takes the drift to 2.7px/s.
+
+**Bubbles make the liquid lighter where they gather.** A bubbly liquid
+weighs less than the same liquid without bubbles, and where that mixture
+collects it rises while the liquid it displaces comes down somewhere else —
+it is why a glass of beer visibly circulates and why an airlift pump works
+with no moving parts. The bubbles only ever pushed back through drag, which
+is a local wake and nothing more; the buoyancy they carry, a hundred per
+cent density deficit each against the few per cent the dense phase carries,
+never reached the fluid at all. Measured, a cell in the top few per cent of
+gas fraction gets 114px/s^2 of lift, against 75px/s^2 for the densest cell
+of the heavy phase. It is a smaller effect than it sounds, because 70
+bubbles across 2240 cells is a sparse field rather than a plume.
 
 **A second, denser liquid** — carried as a passive scalar on the same grid
 and advected by the same velocity field. The reference has a teal ribbon
@@ -188,6 +226,30 @@ way up by wake attraction — a bubble in another's wake meets less resistance
 and catches it, which is why bubbles form chains in a real liquid and why
 the large ones exist at all. Without wake attraction two bubbles have to
 collide by chance: measured at zero merges in thirty seconds.
+
+Rise speed follows r-squared only while Stokes drag holds, then plateaus —
+and where that plateau sits used to be set for the wrong reason. It was at
+34px/s, which is forty seconds to cross the screen: a bubble hanging in the
+liquid rather than rising through it. It sat there because bubbles that rose
+at any speed reached the surface and were lost, and slowing them down was
+the answer to hand — a fudge standing in for a mechanism. What actually
+holds the population up is where new bubbles come from and how long they
+last once they arrive, and both of those exist now, so the plateau sits at
+110px/s and a large bubble crosses in about ten seconds.
+
+**Foam coarsens, and that is where the big bubbles come from.** Film
+drainage was 1.4 seconds plus a tenth of a second per pixel of radius, and
+almost the whole size distribution turns out to hang off that one number.
+Bubbles at the surface are packed against each other, so the surface is
+where coalescence actually happens — and bursting them after a second and a
+half meant nothing ever got the chance to grow. Measured across a hundred
+seconds of stillness, every bubble above 12px died and none replaced it,
+with the largest in the vessel collapsing from 31px to 7: a shaker of
+nothing but fizz. In a gel this viscous, laden with whatever holds the
+glitter in suspension, a film takes tens of seconds to drain rather than
+one. At ten seconds plus 1.4 per pixel the population holds 3-8 bubbles
+above 12px indefinitely, with 11-17 of them resting in the surface layer at
+any moment.
 
 Two bubbles too large to merge push apart instead. A big bubble's film takes
 far longer to drain, so they touch and stay separate — but they are still
@@ -421,7 +483,11 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Dense-phase stratification | separates to 0.01/0.96 settled, mixes to 0.68 shaken, mean conserved |
 | Inversion (roll 180°) | `level` matches its expected value at 0°, 90° and 180°; volume conserved to 0.1% |
 | Net fluid drift | 12.7 px/s before the momentum fix, 0.99 after |
-| Bubble population at rest | median 4.5px, max 31px, stable over 80s, 1 overlapping pair |
+| Bubble population at rest | median 4.3px, max 31px, 3-8 above 12px, stable over 100s |
+| Convection after a flip | decayed 357 -> 29px/s at the old coupling, holds at 51 now |
+| Sealed vessel holds no drift | 29px/s of bulk drift at that coupling, 2.7px/s with the high-pass |
+| Gas lift on a bubble-rich cell | 114px/s^2, against 75 for the densest cell of the heavy phase |
+| Film drainage sets the size range | largest bubble 7px at 1.4s drainage, 31px at 10s |
 | Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
 | Flake distribution evenness | 2.2x top-to-bottom spread without dispersion, 1.4x with |
 | A tilted surface drives the liquid downhill | 43.8px/s with the slope term, 0.4px/s without |
@@ -430,7 +496,7 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Orientation changes how fast a flake falls | 1.8x between edge-on and face-on, population mean unchanged |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost under continuous shake | median 24.2ms, p90 26.4ms (software rasteriser, no GPU) |
+| Frame cost under continuous shake | median 27.3ms, p90 30.7ms (software rasteriser, no GPU) |
 | Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |
 | Buoyancy separates the phases, held still | bubbles climb 19.4px/s, flakes settle 4.8px/s |
 | Added mass makes bubbles lead the flow | lag 90px/s without the term, 17px/s with it; flakes lag 84px/s |
@@ -443,7 +509,7 @@ in-page, the whole simulation step costs ~3ms and issuing the draw calls
 ~2ms — but a frame takes far longer. The missing ~21ms is not in this code at all:
 it is the browser rasterising a full-screen canvas in software, because the
 container has no GPU. On a device with an accelerated canvas that cost is a
-fraction of this. Treat the ~41fps seen here as a software-rasteriser
+fraction of this. Treat the ~37fps seen here as a software-rasteriser
 number, not a device one; `stars` is still the dial if a real device needs
 it.
 
