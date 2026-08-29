@@ -3149,13 +3149,43 @@ function intersect(p1, p2, a, b) {
 
 let last = 0, raf = 0;
 
-function frame(now) {
-  raf = requestAnimationFrame(frame);
+/* One step of everything, however the clock arrived — the page's own
+ * requestAnimationFrame, or a host calling tick(). */
+function advance(now) {
   const dt = Math.min((now - last) / 1000 || 0.016, 0.05);
   last = now;
+  const t0 = diagOn ? performance.now() : 0;
   // Render on simulation time, not wall time, so the specular flashes stay
   // in step with the physics they belong to.
   render(step(dt));
+  if (diagOn) diagSample(now, performance.now() - t0);
+}
+
+/* Frame timing, reported to the console.
+ *
+ * Off unless a host turns it on. Inside a wallpaper there is no devtools to
+ * attach and no way to read anything out of the page, so the one number that
+ * actually matters there — whether this holds a frame rate on real hardware,
+ * which every measurement so far has been a software rasteriser in a
+ * container — has to come out through the console and into logcat. */
+let diagOn = false, diagFrames = 0, diagJs = 0, diagSince = 0;
+
+function diagSample(now, js) {
+  diagFrames++;
+  diagJs += js;
+  if (now - diagSince < 2000) return;
+  const fps = diagFrames * 1000 / (now - diagSince);
+  console.log("shaker fps=" + fps.toFixed(1) +
+              " js=" + (diagJs / diagFrames).toFixed(1) + "ms" +
+              " canvas=" + canvas.width + "x" + canvas.height +
+              " stars=" + stars.length + " bubbles=" + bubbles.length +
+              " fizz=" + fizz.length);
+  diagFrames = 0; diagJs = 0; diagSince = now;
+}
+
+function frame(now) {
+  raf = requestAnimationFrame(frame);
+  advance(now);
 }
 
 function start() {
@@ -3364,12 +3394,10 @@ window.__shaker = {
    * runs. The host that is already waking up once per frame to draw can step
    * the simulation itself instead. */
   drive() { cancelAnimationFrame(raf); raf = 0; last = performance.now(); },
-  tick() {
-    const now = performance.now();
-    const dt = Math.min((now - last) / 1000 || 0.016, 0.05);
-    last = now;
-    render(step(dt));
-  },
+  tick() { advance(performance.now()); },
+
+  /** Frame timing to the console, for a host that has no other way to see it. */
+  diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; diagJs = 0; },
 };
 
 start();

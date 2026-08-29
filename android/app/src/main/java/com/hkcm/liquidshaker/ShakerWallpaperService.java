@@ -16,6 +16,8 @@ import android.view.Choreographer;
 import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.ConsoleMessage;
+import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
@@ -75,10 +77,26 @@ public class ShakerWallpaperService extends WallpaperService {
             web.getSettings().setJavaScriptEnabled(true);
             web.getSettings().setDomStorageEnabled(true);
             web.getSettings().setMediaPlaybackRequiresUserGesture(false);
+            /* Forward the page's console to logcat, and switch its frame
+             * timing on — but only in a debuggable build. Inside a wallpaper
+             * there is no devtools to attach, so this is the only way to see
+             * whether it is holding a frame rate on the actual hardware. */
+            final boolean debuggable =
+                    (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+            if (debuggable) {
+                web.setWebChromeClient(new WebChromeClient() {
+                    @Override
+                    public boolean onConsoleMessage(ConsoleMessage m) {
+                        Log.i(TAG, m.message());
+                        return true;
+                    }
+                });
+            }
             web.setWebViewClient(new WebViewClient() {
                 @Override
                 public void onPageFinished(WebView view, String url) {
                     pageReady = true;
+                    if (debuggable) js("window.__shaker&&window.__shaker.diag(true)");
                     if (hostDrivesClock) js("window.__shaker&&window.__shaker.drive()");
                     else if (isVisible()) js("window.__shaker&&window.__shaker.resume()");
                 }
