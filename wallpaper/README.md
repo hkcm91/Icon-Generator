@@ -446,8 +446,27 @@ there. Measured over a minute of stillness it holds its shape: 318/137/86/79
 flakes by quarter at load, 321/129/91/79 a minute later, with the lateral
 balance at 0.97.
 
-Flip it and the same gradient rebuilds at the other end: 313/118/89/100
-becomes 89/89/132/310 over a minute.
+**How fast it resolves is a separate knob from where it settles.** The
+equilibrium is set by the *ratio* of the buoyant flux to the dispersive one,
+so scaling both together leaves the resting gradient exactly where it is and
+only shortens the time taken to reach it. Scaled three and a half times up,
+a flip resolves in about five seconds rather than a minute, and the resting
+profile is unchanged and stable — 270/214/93/43 flakes by quarter, holding
+that shape across two minutes of stillness with a lateral balance of 0.99.
+
+That scaling only worked once the dispersion term was normalised properly.
+It is a flux down the *relative* gradient — what matters is how much more
+crowded it is over there than here, not the absolute difference — so the
+denominator has to be on the same scale as the field. It was a bare
+constant, chosen back when that field counted flakes, and the field now
+carries an areal fraction on a completely different scale. In the dilute
+regions the constant dominated and the term stopped being relative at all.
+Doubling the dispersion then drove the whole population *down* the container
+and piled it on the floor, which is a strange thing for buoyant glitter to
+do. Normalised against the field's own mean, it scales cleanly.
+
+Flip it and the same gradient rebuilds at the other end within about five
+seconds: 319/136/86/79 by quarter becomes 63/115/221/221.
 
 **A drift has to end somewhere.** A flake climbing through a crowd of other
 flakes has to drag the liquid they displace down past itself, so a dense
@@ -597,10 +616,11 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Gas lift on a bubble-rich cell | 114px/s^2, against 75 for the densest cell of the heavy phase |
 | Film drainage sets the size range | largest bubble 7px at 1.4s drainage, 31px at 10s |
 | Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
-| The resting gradient holds | 318/137/86/79 flakes by quarter at load, 321/129/91/79 a minute later |
+| The resting gradient holds | 274/197/102/47 at ten seconds, 270/214/93/43 two minutes later |
 | Laterally even | left/right balance 0.97 after a minute, against 0.80 under the square law |
 | A flake does not hinder itself | big flakes went from the slowest thing in the shaker to the fastest |
-| It floats back after a flip | 313/118/89/100 by quarter inverts to 89/89/132/310 over a minute |
+| It floats back after a flip | 319/136/86/79 by quarter inverts to 63/115/221/221 in five seconds |
+| Rate is independent of the resting shape | scaling rise and dispersion together leaves the gradient, shortens the approach |
 | Dispersion cannot go to zero | without it 480 flakes of 620 pack into a single tenth |
 | A tilted surface drives the liquid downhill | 43.8px/s with the slope term, 0.4px/s without |
 | A pure rotation sloshes | peak surface deflection 95px before the basis tilt, 219px after |
@@ -608,7 +628,7 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Orientation changes how fast a flake falls | 1.8x between edge-on and face-on, population mean unchanged |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost under continuous shake | median 17.6ms, p90 19.6ms (software rasteriser, no GPU) |
+| Frame cost under continuous shake | median 19.3ms, p90 21.7ms (software rasteriser, no GPU) |
 | Depth of field and aerial perspective | cost nothing: 24.5ms before, 23.6ms after |
 | Bubble shadows | 1.2ms, for the 15 or so bubbles large enough to get one |
 | Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |

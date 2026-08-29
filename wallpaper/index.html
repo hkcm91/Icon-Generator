@@ -418,6 +418,7 @@ let dyeCanvas = null, dyeCtx = null, dyeImage = null;
  */
 let conc, concNext;
 let gas, gasNext;      // gas fraction per cell, and the next step's accumulator
+let concFloor = 1;     // scale of the glitter field, for the dispersion term
 
 /** Pure containment test, for marking solid cells. */
 function isInside(x, y) {
@@ -838,7 +839,16 @@ const GAS_LIFT = 900;       // px/s^2 per g at a cell entirely full of gas
  * is left keeps the body of the shaker populated: with dispersion off
  * entirely the glitter drains completely into the floor, 480 flakes of 620
  * in the bottom tenth, which is not something anyone wants to look at. */
-const DISPERSE = 300;
+/* Dispersion and rise are scaled together, three and a half times up from
+ * where they were balanced. The equilibrium is set by their *ratio* — where
+ * the buoyant flux up matches the dispersive flux down — so scaling both
+ * leaves the resting gradient where it is and only shortens the time taken
+ * to reach it: a flip resolved in about a minute before, and in under eight
+ * seconds now. That this lands near the 1100 the dispersion once had is a
+ * coincidence of arithmetic, not a return to it; at that value the rise was
+ * quadratic and the normalisation below was wrong, and between them nothing
+ * could separate at all. */
+const DISPERSE = 1050;
 const PHI_MAX = 1.0;         // solid fraction at which a bed stops settling
 const WAKE = 150;           // px/s^2 of wake attraction between near bubbles
 
@@ -919,7 +929,18 @@ function sampleDisperse(x, y, out) {
   const i = Math.max(1, Math.min(GW - 2, gx | 0));
   const j = Math.max(1, Math.min(GH - 2, gy | 0));
   const k = j * GW + i;
-  const c = conc[k] + 0.9;
+  /* Normalised by the field's own mean, not by a constant.
+   *
+   * Dispersion is a flux down the *relative* gradient — what matters is how
+   * much more crowded it is over there than here, not the absolute
+   * difference — so the denominator has to be on the same scale as the
+   * field. It was a bare 0.9, chosen when this field counted flakes; it now
+   * carries an areal fraction, on a completely different scale, and in the
+   * dilute regions that constant dominated and turned the term into a plain
+   * gradient that grew without bound. Scaling the dispersion up then drove
+   * the whole population *down* the container and piled it on the floor,
+   * which is a strange thing for buoyant glitter to do. */
+  const c = conc[k] + concFloor;
   out.x = -(conc[k + 1] - conc[k - 1]) * 0.5 / c;
   out.y = -(conc[k + GW] - conc[k - GW]) * 0.5 / c;
 }
@@ -1263,7 +1284,7 @@ function seed() {
        * same convection on the same terms, and what settles out is a
        * gradient instead: concentrated under the waterline, thinning down
        * through the body, holding that shape indefinitely. */
-      terminal: (10 + (r / unit) * 2.2) * unit,
+      terminal: (35 + (r / unit) * 7.7) * unit,
       // Flakes rock from side to side as they sink rather than dropping
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
@@ -2772,6 +2793,12 @@ function fixedStep(dt, time) {
   // Publish this step's concentration for the next one to disperse against.
   const swap = conc; conc = concNext; concNext = swap; concNext.fill(0);
   const gswap = gas; gas = gasNext; gasNext = gswap; gasNext.fill(0);
+  let cs = 0, cn = 0;
+  for (let k = 0; k < conc.length; k++) {
+    if (fsolid[k] || fair[k]) continue;
+    cs += conc[k]; cn++;
+  }
+  concFloor = cn ? Math.max(1e-4, cs / cn) * 0.75 : 1;
 }
 
 /* Bubbles that touch merge, conserving gas volume.
