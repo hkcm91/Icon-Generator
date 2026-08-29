@@ -47,8 +47,11 @@ software fallback locks a normal canvas rather than `lockHardwareCanvas()`,
 which is API 26. Nothing is lost by that, since a detached WebView renders in
 software either way.
 
-Then: **Settings → Wallpaper → Live Wallpapers → Liquid Shaker**, or long-press
-the home screen.
+Then either open **Liquid Shaker** from the app launcher to jump directly to
+Android's preview/apply screen, choose **Settings → Wallpaper → Live
+Wallpapers → Liquid Shaker**, or long-press the home screen. The launcher entry
+falls back to the general live-wallpaper chooser on vendor builds that do not
+support the component-specific preview intent.
 
 The page is not duplicated into the app. Both builds copy it out of
 `../wallpaper/index.html`, so there is one copy of it in the repository and the
