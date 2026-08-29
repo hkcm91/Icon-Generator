@@ -839,16 +839,28 @@ const GAS_LIFT = 900;       // px/s^2 per g at a cell entirely full of gas
  * is left keeps the body of the shaker populated: with dispersion off
  * entirely the glitter drains completely into the floor, 480 flakes of 620
  * in the bottom tenth, which is not something anyone wants to look at. */
-/* Dispersion and rise are scaled together, three and a half times up from
- * where they were balanced. The equilibrium is set by their *ratio* — where
+/* Dispersion and rise are scaled together, a little over twice up from where
+ * they were first balanced. The equilibrium is set by their *ratio* — where
  * the buoyant flux up matches the dispersive flux down — so scaling both
- * leaves the resting gradient where it is and only shortens the time taken
- * to reach it: a flip resolved in about a minute before, and in under eight
- * seconds now. That this lands near the 1100 the dispersion once had is a
- * coincidence of arithmetic, not a return to it; at that value the rise was
- * quadratic and the normalisation below was wrong, and between them nothing
- * could separate at all. */
-const DISPERSE = 1050;
+ * leaves the resting gradient roughly where it is and mostly shortens the
+ * time taken to reach it: a flip resolved in about a minute, and in 27
+ * seconds now.
+ *
+ * There is a ceiling past which that stops being true. Raising the pair
+ * further sharpens the gradient, a sharper gradient strengthens the
+ * dispersion pushing back down it, and the two begin trading pushes:
+ * measured, going from 2.2 to 3.5 took the median flake from 8px/s to
+ * 149px/s and the ninetieth percentile to 332. That is not settling faster,
+ * it is vibrating, and it looks exactly like it sounds. */
+const DISPERSE = 660;
+/* A ceiling on the dispersive velocity, set well clear of anything the term
+ * does in normal operation so it changes nothing there, and low enough to
+ * stop the runaway above. Capping it proportionally to each flake's own rise
+ * instead looked more principled and was much worse: it took the tail out of
+ * the gradient and packed 471 flakes of 620 into the top quarter, because at
+ * equilibrium the dispersion has to match the rise, and a cap in the same
+ * units is a cap on the balance itself. */
+const DISPERSE_CAP = 180;
 const PHI_MAX = 1.0;         // solid fraction at which a bed stops settling
 const WAKE = 150;           // px/s^2 of wake attraction between near bubbles
 
@@ -1284,7 +1296,7 @@ function seed() {
        * same convection on the same terms, and what settles out is a
        * gradient instead: concentrated under the waterline, thinning down
        * through the body, holding that shape indefinitely. */
-      terminal: (35 + (r / unit) * 7.7) * unit,
+      terminal: (22 + (r / unit) * 4.84) * unit,
       // Flakes rock from side to side as they sink rather than dropping
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
@@ -2636,8 +2648,18 @@ function fixedStep(dt, time) {
     const hind = Math.pow(
       Math.max(0, 1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX), 4.65);
     const climb = p.terminal * gMag * (1.573 / (1 + 0.9 * broad)) * hind;
-    let tx = flow.x - gDir.x * climb - gDir.y * flut + disperse.x * DISPERSE;
-    let ty = flow.y - gDir.y * climb + gDir.x * flut + disperse.y * DISPERSE;
+    /* Dispersion is a perturbation on the drift, not a transport in its own
+     * right, and left unbounded it does not stay one. A stronger climb
+     * sharpens the gradient, a sharper gradient strengthens the dispersion
+     * pushing back, and past a point the two start trading pushes: raising
+     * the pair by a factor of 1.6 took the median flake from 8px/s to
+     * 149px/s, which is not settling faster, it is vibrating. Capping it at
+     * twice the flake's own rise keeps it in the role it is there for. */
+    let dx = disperse.x * DISPERSE, dy = disperse.y * DISPERSE;
+    const dm = Math.hypot(dx, dy), cap = DISPERSE_CAP;
+    if (dm > cap) { const q = cap / dm; dx *= q; dy *= q; }
+    let tx = flow.x - gDir.x * climb - gDir.y * flut + dx;
+    let ty = flow.y - gDir.y * climb + gDir.x * flut + dy;
 
     /* The surface is a ceiling. Buoyancy would otherwise carry the glitter
      * straight through the waterline and into the headspace, where there is

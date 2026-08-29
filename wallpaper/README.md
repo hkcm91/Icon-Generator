@@ -446,13 +446,27 @@ there. Measured over a minute of stillness it holds its shape: 318/137/86/79
 flakes by quarter at load, 321/129/91/79 a minute later, with the lateral
 balance at 0.97.
 
-**How fast it resolves is a separate knob from where it settles.** The
-equilibrium is set by the *ratio* of the buoyant flux to the dispersive one,
-so scaling both together leaves the resting gradient exactly where it is and
-only shortens the time taken to reach it. Scaled three and a half times up,
-a flip resolves in about five seconds rather than a minute, and the resting
-profile is unchanged and stable — 270/214/93/43 flakes by quarter, holding
-that shape across two minutes of stillness with a lateral balance of 0.99.
+**How fast it resolves is a separate knob from where it settles** — up to a
+point. The equilibrium is set by the *ratio* of the buoyant flux to the
+dispersive one, so scaling both together mostly leaves the resting gradient
+where it is and shortens the time taken to reach it. Scaled a little over
+twice up, a flip resolves in about half a minute rather than a full one.
+
+Past that the two stop being independent. A stronger climb sharpens the
+gradient, a sharper gradient strengthens the dispersion pushing back down
+it, and beyond a threshold the pair start trading pushes: measured, going
+from 2.2 to 3.5 took the median flake from 8px/s to 149px/s and the
+ninetieth percentile to 332. That is not settling faster, it is vibrating,
+and it looks exactly like it sounds. There is now a ceiling on the
+dispersive velocity, set well clear of anything the term does in normal
+operation so it changes nothing there, and low enough to stop the runaway.
+
+Capping it proportionally to each flake's own rise looked more principled
+and was much worse. At equilibrium the dispersion has to *match* the rise,
+so a cap in the same units is a cap on the balance itself: it took the tail
+out of the gradient and packed 471 flakes of 620 into the top quarter. A
+plain absolute ceiling leaves the balance alone and only catches the
+pathology.
 
 That scaling only worked once the dispersion term was normalised properly.
 It is a flux down the *relative* gradient — what matters is how much more
@@ -616,11 +630,13 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Gas lift on a bubble-rich cell | 114px/s^2, against 75 for the densest cell of the heavy phase |
 | Film drainage sets the size range | largest bubble 7px at 1.4s drainage, 31px at 10s |
 | Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
-| The resting gradient holds | 274/197/102/47 at ten seconds, 270/214/93/43 two minutes later |
+| The resting gradient holds | 394/92/63/71 flakes by quarter, median apparent speed 11px/s |
 | Laterally even | left/right balance 0.97 after a minute, against 0.80 under the square law |
 | A flake does not hinder itself | big flakes went from the slowest thing in the shaker to the fastest |
-| It floats back after a flip | 319/136/86/79 by quarter inverts to 63/115/221/221 in five seconds |
-| Rate is independent of the resting shape | scaling rise and dispersion together leaves the gradient, shortens the approach |
+| It floats back after a flip | resolves in about 30 seconds, against a minute before |
+| Rate is mostly independent of the resting shape | scaling rise and dispersion together shortens the approach — until they couple |
+| Where that stops being true | 2.2x: median flake 8px/s. 3.5x: 149px/s, and 332 at the ninetieth |
+| A proportional cap is the wrong cap | it packs 471 flakes of 620 into the top quarter; an absolute one does not bind |
 | Dispersion cannot go to zero | without it 480 flakes of 620 pack into a single tenth |
 | A tilted surface drives the liquid downhill | 43.8px/s with the slope term, 0.4px/s without |
 | A pure rotation sloshes | peak surface deflection 95px before the basis tilt, 219px after |
@@ -628,7 +644,7 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Orientation changes how fast a flake falls | 1.8x between edge-on and face-on, population mean unchanged |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost under continuous shake | median 19.3ms, p90 21.7ms (software rasteriser, no GPU) |
+| Frame cost under continuous shake | median 19.6ms, p90 21.7ms (software rasteriser, no GPU) |
 | Depth of field and aerial perspective | cost nothing: 24.5ms before, 23.6ms after |
 | Bubble shadows | 1.2ms, for the 15 or so bubbles large enough to get one |
 | Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |
