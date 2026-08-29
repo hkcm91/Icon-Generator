@@ -8,3 +8,8 @@ out
 tsconfig.tsbuildinfo
 .playwright-cli/
 codex-jobs/
+__pycache__/
+*.pyc
+renders/
+cache/
+*.mp4
