@@ -13,6 +13,34 @@ matter how hard you shake the phone — the two are complementary.
 Open `index.html` in a browser. On a phone it uses the real sensors; on a
 desktop, drag to tilt and flick to shake.
 
+### On a phone
+
+It needs to come off an `https://` origin. Chrome gates the motion sensors
+behind a secure context, so a file copied onto the handset will render but
+never move — which looks like a bug in the physics and is not one. Serving
+the folder over HTTPS is the whole of the setup.
+
+Three things then make it behave like a wallpaper rather than a web page,
+and none of them are about the drawing:
+
+- **It takes a screen wake lock**, because a wallpaper does not dim after
+  fifteen seconds and a web page does. The lock is dropped whenever the page
+  is hidden, so it is taken again on the way back.
+- **The first touch asks for fullscreen**, which is where the browser chrome
+  goes. Only a touch — otherwise dragging to tilt on a desktop would throw
+  the window into fullscreen on the first click.
+- **It is installable.** Add to Home Screen is as close as a web page gets
+  to being a wallpaper: launched from the home screen it opens fullscreen,
+  with no address bar and no tab. The manifest is built at runtime rather
+  than shipped as a second file, so this stays one self-contained page, and
+  the icon is drawn from the same palette and the same flake shapes as the
+  wallpaper itself.
+
+A *true* Android live wallpaper — one you set from the wallpaper picker,
+that runs behind the home screen — needs an APK wrapping this in a
+`WallpaperService`. That is a separate build, not something this folder
+produces.
+
 ## How it moves
 
 Three coupled pieces.

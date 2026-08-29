@@ -3179,7 +3179,104 @@ document.addEventListener("visibilitychange", () => {
   else { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); }
 });
 
+/* ------------------------------------------------------- running on a phone
+ *
+ * Three things stand between a page in a browser tab and something that
+ * behaves like a wallpaper, and none of them are about the drawing.
+ */
+
+/* The screen must not dim while you are watching it. A wallpaper never does;
+ * a web page will, in about fifteen seconds. The lock is dropped whenever the
+ * page is hidden, so it has to be taken again on the way back. */
+let wakeLock = null;
+async function keepAwake() {
+  if (!navigator.wakeLock || document.visibilityState !== "visible") return;
+  try { wakeLock = await navigator.wakeLock.request("screen"); }
+  catch (e) { /* refused, or unsupported: there is no second way to ask */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") keepAwake();
+});
+
+/* Browser chrome has to go. Fullscreen needs a gesture to grant it, so it is
+ * taken on the first touch — and only on a touch, so that dragging to tilt on
+ * a desktop does not throw the window into fullscreen on the first click. */
+function goImmersive(e) {
+  if (e.pointerType && e.pointerType !== "touch") return;
+  keepAwake();
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+  }
+  window.removeEventListener("pointerdown", goImmersive);
+}
+window.addEventListener("pointerdown", goImmersive);
+
+/* And it should be installable, because "add to home screen" is the closest
+ * a web page gets to being a wallpaper: launched from the home screen it
+ * opens fullscreen with no address bar and no tab. The manifest is built here
+ * rather than shipped as a second file so that this stays one self-contained
+ * page, and the icon is drawn from the same palette and the same flake shapes
+ * as the wallpaper, so the thing on the home screen looks like the thing it
+ * opens. */
+function installIcon(size) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createLinearGradient(0, 0, 0, size);
+  const ramp = CONFIG.ramp;
+  for (let i = 0; i < ramp.length; i++) {
+    grad.addColorStop(i / (ramp.length - 1), ramp[i]);
+  }
+  g.fillStyle = grad;
+  g.beginPath();
+  const r = size * 0.22;
+  g.moveTo(r, 0);
+  g.arcTo(size, 0, size, size, r); g.arcTo(size, size, 0, size, r);
+  g.arcTo(0, size, 0, 0, r);       g.arcTo(0, 0, size, 0, r);
+  g.closePath(); g.fill();
+  const stars = [[0.30, 0.34, 0.13], [0.68, 0.28, 0.09], [0.55, 0.62, 0.16],
+                 [0.24, 0.70, 0.07], [0.80, 0.72, 0.06]];
+  for (const [x, y, k] of stars) {
+    g.fillStyle = "rgba(255,255,255,.92)";
+    flakePath(g, x * size, y * size, k * size, 0);
+    g.fill();
+  }
+  return c.toDataURL("image/png");
+}
+
+function installManifest() {
+  const head = document.head;
+  let vp = head.querySelector('meta[name="viewport"]');
+  if (!vp) { vp = document.createElement("meta"); vp.name = "viewport"; head.appendChild(vp); }
+  vp.content = "width=device-width,initial-scale=1,viewport-fit=cover";
+
+  const theme = document.createElement("meta");
+  theme.name = "theme-color";
+  theme.content = CONFIG.ramp[0];
+  head.appendChild(theme);
+
+  const manifest = {
+    name: "Liquid Shaker",
+    short_name: "Shaker",
+    display: "fullscreen",
+    orientation: "portrait",
+    background_color: CONFIG.ramp[0],
+    theme_color: CONFIG.ramp[0],
+    start_url: location.href.split("#")[0],
+    icons: [192, 512].map((s) => ({
+      src: installIcon(s), sizes: s + "x" + s, type: "image/png", purpose: "any",
+    })),
+  };
+  const link = document.createElement("link");
+  link.rel = "manifest";
+  link.href = URL.createObjectURL(
+    new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+  head.appendChild(link);
+}
+
 start();
+installManifest();
 </script>
 </body>
 </html>
