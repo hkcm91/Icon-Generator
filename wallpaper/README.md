@@ -37,9 +37,17 @@ and none of them are about the drawing:
   wallpaper itself.
 
 A *true* Android live wallpaper — one you set from the wallpaper picker,
-that runs behind the home screen — needs an APK wrapping this in a
-`WallpaperService`. That is a separate build, not something this folder
-produces.
+that runs behind the home screen — needs an APK wrapping this page in a
+`WallpaperService`. That lives in [`../android`](../android), which builds
+this exact file into an app rather than reimplementing it.
+
+Under that host the page cannot get `devicemotion` — there is no browsing
+context delivering it — so the service reads the sensors itself and hands
+them in through `window.__shaker`, in the same units and the same device
+frame the web event uses. Both paths then land on the same code and there is
+only one motion model to keep honest. The same object carries the things
+only a wallpaper has: home-screen scroll, a tap on the glass, and a way for
+the host to take over the clock when the WebView has no vsync of its own.
 
 ## How it moves
 

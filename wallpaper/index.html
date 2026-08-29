@@ -3275,6 +3275,103 @@ function installManifest() {
   head.appendChild(link);
 }
 
+/* ------------------------------------------------ the native host, if any
+ *
+ * Inside an Android live wallpaper there is no browser to deliver
+ * devicemotion: the page is drawn into a wallpaper surface by a service that
+ * owns the sensors itself. So the service feeds them in through here, in the
+ * units and the device frame the web event already uses — raw metres per
+ * second squared, +y up the screen — which means the two paths land on the
+ * same code and there is only one motion model to keep honest.
+ */
+let hostOffset = null;
+
+window.__shaker = {
+  /** Accelerometer, straight off android.hardware.Sensor.TYPE_ACCELEROMETER.
+   *  `spin` is rotation about the viewing axis in degrees per second, which
+   *  is the gyroscope's z component converted from radians. */
+  motion(x, y, z, spin) {
+    onMotion({
+      accelerationIncludingGravity: { x, y, z },
+      rotationRate: spin === undefined ? null : { alpha: spin },
+    });
+  },
+
+  /* Home-screen page swipes. A wallpaper is wider than the screen and slides
+   * under the icons, and sliding a vessel sideways tilts the liquid in it —
+   * so this goes in through the surface, the same way turning the phone
+   * does, and the sloshing that follows is the wave dynamics doing what they
+   * already do rather than an animation laid over the top. */
+  offset(t) {
+    if (hostOffset === null) { hostOffset = t; return; }
+    /* Clamped, because the launcher reports a jump between distant pages as
+     * one step and a vessel does not get moved a metre instantaneously. */
+    const d = Math.max(-0.3, Math.min(0.3, t - hostOffset));
+    hostOffset = t;
+    if (!d) return;
+    const k = d * span * 0.32;
+    for (let i = 0; i < N; i++) {
+      h[i] -= k * (-1 + 2 * (i / (N - 1)));
+    }
+  },
+
+  /* A tap on the glass.
+   *
+   * Not a push radially away from the point, which is the obvious thing to
+   * write and does exactly nothing: a radial source is pure divergence, and
+   * an incompressible liquid cannot expand away from a poke, so the pressure
+   * projection deletes the whole of it. Measured, the flow was unchanged to
+   * the pixel per second.
+   *
+   * What a poke really does is drive a jet inward and dent the surface over
+   * it. The jet is not divergence-free either, but it is not divergence
+   * *only* — the projection keeps the part of it that curls, which is the
+   * pair of vortices a jet rolls up into, and that is the stir you see. */
+  tap(nx, ny) {
+    const x = nx * W, y = ny * H;
+    const R = Math.min(RX, RY) * 0.26, k = 1400;
+    for (let j = 1; j < GH - 1; j++) {
+      for (let i = 1; i < GW - 1; i++) {
+        const c = j * GW + i;
+        if (fsolid[c] || fair[c]) continue;
+        const dx = (i + 0.5) * cell - x, dy = (j + 0.5) * cell - y;
+        const d = Math.hypot(dx, dy);
+        if (d > R) continue;
+        const w = 1 - d / R;
+        fu[c] += gDir.x * k * w;
+        fv[c] += gDir.y * k * w;
+      }
+    }
+    // And the surface dips where it was struck.
+    const along = (x - CX) * tan.x + (y - CY) * tan.y;
+    const idx = Math.round((along + span) / (2 * span) * (N - 1));
+    for (let d = -3; d <= 3; d++) {
+      const j = idx + d;
+      if (j < 0 || j >= N) continue;
+      wv[j] -= 150 * (1 - Math.abs(d) / 4);
+    }
+  },
+
+  /** The service stops the loop when the wallpaper is not on screen. */
+  pause() { cancelAnimationFrame(raf); raf = 0; },
+  resume() { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); },
+
+  /* Hand the clock to the host.
+   *
+   * Drawn into a wallpaper surface by hand, the page is in a WebView that is
+   * not attached to a window, and an unattached WebView has no vsync to hang
+   * requestAnimationFrame off — so the loop either throttles hard or never
+   * runs. The host that is already waking up once per frame to draw can step
+   * the simulation itself instead. */
+  drive() { cancelAnimationFrame(raf); raf = 0; last = performance.now(); },
+  tick() {
+    const now = performance.now();
+    const dt = Math.min((now - last) / 1000 || 0.016, 0.05);
+    last = now;
+    render(step(dt));
+  },
+};
+
 start();
 installManifest();
 </script>

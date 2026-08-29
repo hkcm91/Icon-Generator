@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The picker's thumbnail. The same ramp the liquid uses. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <path android:pathData="M0,0h96v96h-96z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:startX="48" android:startY="0"
+                android:endX="48" android:endY="96"
+                android:type="linear">
+                <item android:offset="0" android:color="#FF0A5FD4" />
+                <item android:offset="0.5" android:color="#FF2AA8EE" />
+                <item android:offset="1" android:color="#FF3EC4E9" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#F2FFFFFF"
+        android:pathData="M48,26l5.6,11.4l12.6,1.8l-9.1,8.9l2.2,12.5l-11.3,-5.9l-11.3,5.9l2.2,-12.5l-9.1,-8.9l12.6,-1.8z" />
+    <path
+        android:fillColor="#CCFFFFFF"
+        android:pathData="M26,62l3,6.1l6.7,1l-4.8,4.7l1.1,6.7l-6,-3.2l-6,3.2l1.1,-6.7l-4.8,-4.7l6.7,-1z" />
+    <path
+        android:fillColor="#B3FFFFFF"
+        android:pathData="M70,16l2.4,4.9l5.4,0.8l-3.9,3.8l0.9,5.4l-4.8,-2.5l-4.8,2.5l0.9,-5.4l-3.9,-3.8l5.4,-0.8z" />
+</vector>
