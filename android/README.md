@@ -12,18 +12,47 @@ browser tab cannot.
 
 ## Build it
 
+Two ways, because the usual one needs Google's servers and not every machine
+can reach them.
+
+**With Gradle**, which is the real build — open `android/` in Android Studio
+and press Run, or:
+
 ```bash
-# from this directory, with Android Studio's SDK on ANDROID_HOME
 ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or open `android/` in Android Studio and press Run. Then: **Settings →
-Wallpaper → Live Wallpapers → Liquid Shaker**, or long-press the home screen.
+**Without Gradle**, using only what Debian and Ubuntu package:
 
-The page is not duplicated into the app. `app/build.gradle.kts` copies it out
-of `../wallpaper/index.html` at build time, so there is one copy of it in the
-repository and the APK cannot drift from what you tested.
+```bash
+sudo apt install aapt apksigner zipalign dalvik-exchange android-sdk-platform-23
+tools/build-apk.sh
+adb install -r build/liquid-shaker-debug.apk
+```
+
+That second path exists because this was written somewhere `dl.google.com` is
+unreachable — which takes out the Android Gradle Plugin, AndroidX, the SDK
+platforms and `aapt2` in one go. It compiles with `javac`, dexes with `dx`
+(Debian calls it `dalvik-exchange`; note that `/usr/bin/dx` is OpenDX, an
+unrelated visualisation tool that will be found first on `PATH`), packages
+with `aapt`, and signs with a debug key it generates. It is the reason the
+service is Java with no dependencies: nothing here needs AndroidX, so nothing
+here needs a Maven repository.
+
+The one difference between the two: Debian's newest platform is API 23, so the
+offline build compiles against that and declares `targetSdk 30`, while Gradle
+uses 34. Compiling against 23 is what keeps the source inside API 23 — the
+software fallback locks a normal canvas rather than `lockHardwareCanvas()`,
+which is API 26. Nothing is lost by that, since a detached WebView renders in
+software either way.
+
+Then: **Settings → Wallpaper → Live Wallpapers → Liquid Shaker**, or long-press
+the home screen.
+
+The page is not duplicated into the app. Both builds copy it out of
+`../wallpaper/index.html`, so there is one copy of it in the repository and the
+APK cannot drift from what you tested in a browser.
 
 ## What the service actually does
 
@@ -77,22 +106,23 @@ The page exposes `window.__shaker`:
 Everything on that table is exercised from the browser in the repository's test
 harness, against the same values the service sends.
 
-## Not verified
+## What is built, and what is still untested
 
-**This has never been compiled.** The container this was written in has no
-Android SDK and cannot reach `dl.google.com` to fetch one, so there is no
-`android.jar` to build against and nothing here has been through a compiler,
-let alone onto a handset. Treat it as a careful first draft: the structure and
-the Android APIs are the right ones, but expect to fix something on the first
-build.
+The APK builds and is signed with v1, v2 and v3 schemes, so it installs on
+anything from Android 5 upwards. Checked on the way out: the page inside the
+APK is byte-identical to `../wallpaper/index.html`; the dex contains the
+service and every one of the seven `window.__shaker` call sites, which match
+the seven the page exposes; and `aapt` reports the wallpaper component, so the
+picker will list it.
 
-What *has* been verified is the part where the two halves meet — the
-`window.__shaker` calls above are driven from a headless browser with the exact
-values and units the Kotlin sends, and checked against the browser's own
-`devicemotion` path. Rolling the phone 90 degrees produces an identical gravity
-vector down both routes.
+**It has never run on a handset.** There is no device or emulator here, so
+"it builds, it is signed, and it contains what it should" is the whole of the
+claim. The interface between the two halves is exercised in a headless browser
+with the exact values and units the service sends, and rolling the phone 90
+degrees produces an identical gravity vector down either route — but nothing
+has drawn a frame on real hardware.
 
-The likeliest thing to need attention is the `Presentation`: if the log shows
+The likeliest thing to want attention is the `Presentation`. If logcat shows
 *presentation refused, drawing the page by hand instead*, the hardware path was
 rejected on your device and you are on the software fallback, which will be
 noticeably slower.

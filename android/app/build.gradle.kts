@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 /* The wallpaper page is not duplicated into the app. It is copied out of
@@ -18,9 +17,7 @@ android {
 
     defaultConfig {
         applicationId = "com.hkcm.liquidshaker"
-        // 26 is the floor for SurfaceHolder.lockHardwareCanvas(), which the
-        // software fallback path needs.
-        minSdk = 26
+        minSdk = 21
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -29,19 +26,16 @@ android {
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/wallpaperAssets"))
 
     buildTypes {
-        release {
-            isMinifyEnabled = false
-        }
+        release { isMinifyEnabled = false }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 }
 
 tasks.named("preBuild") { dependsOn(copyWallpaperPage) }
 
-dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
-}
+/* No dependencies. Nothing here needs AndroidX: the service is a
+ * WallpaperService, a WebView and a SensorManager, all of them platform. That
+ * is also what lets tools/build-apk.sh work without a Maven repository. */
