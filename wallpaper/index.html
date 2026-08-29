@@ -72,7 +72,8 @@ const CONFIG = {
    * and still terminate correctly, so the container can be properly full. */
   fill: num("fill", 0.965),
   stars: num("stars", 620),
-  bubbles: num("bubbles", 70),
+  bubbles: num("bubbles", 110),
+  fizz: num("fizz", 300),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
   /* Blue-dominant. The green-teal is not in this ramp: it comes from the
@@ -888,6 +889,90 @@ function scatterForce(x, y, fx, fy) {
 }
 
 /** Bilinear deposit of one flake into the concentration accumulator. */
+/* Fizz: the fine, short-lived bubbles that appear where the liquid is being
+ * worked, and nowhere else.
+ *
+ * A liquid holds dissolved gas, and gas comes out of solution where the
+ * pressure drops. In a stirred liquid the lowest pressure is the core of a
+ * vortex — which is why a boat's propeller trails a line of bubbles, and why
+ * fizz in a shaken vessel appears in the curls rather than evenly. So these
+ * are seeded by vorticity: sample a few points, take the one sitting in the
+ * strongest swirl, and only while there is agitation to produce it.
+ *
+ * They are their own population rather than more of the ordinary bubbles.
+ * A bubble in the main pool is a persistent object with a size, a film and a
+ * life cycle; fizz is a puff that lasts a couple of seconds and is gone. It
+ * also traces the flow, being small enough to follow it almost exactly, so
+ * what it draws is the shape of the eddy that made it.
+ */
+const fizz = [];
+let fizzDebt = 0;
+
+/* Emitted in puffs, not one at a time. Cavitation follows a vortex line, so
+ * the gas comes out along it in a cluster and you see a streak of fizz
+ * curling with the eddy — spawning singly gave an even dust that read as
+ * more glitter rather than as bubbles being torn out of the liquid. */
+function spawnFizz() {
+  let bx = 0, by = 0, best = -1;
+  for (let t = 0; t < 8; t++) {
+    const x = CX + (Math.random() * 2 - 1) * RX * 0.94;
+    const y = CY + (Math.random() * 2 - 1) * RY * 0.94;
+    if (depthOf(x, y) > -8) continue;
+    const w = Math.abs(sampleCurl(x, y));
+    if (w > best) { best = w; bx = x; by = y; }
+  }
+  if (best < 0 || CONFIG.fizz < 1) return;
+  const spread = Math.min(RX, RY) * 0.07;
+  const n = 3 + ((Math.random() * 4) | 0);
+  for (let i = 0; i < n; i++) {
+    const p = fizz.length < CONFIG.fizz ? {} : fizz[(Math.random() * fizz.length) | 0];
+    p.x = bx + (Math.random() * 2 - 1) * spread;
+    p.y = by + (Math.random() * 2 - 1) * spread;
+    p.r = (1.1 + Math.random() * 2.1) * bubbleUnit;
+    p.vx = 0; p.vy = 0;
+    p.life = 0;
+    p.span = 1.0 + Math.random() * 2.0;
+    p.z = Math.random() * 2 - 1;
+    if (fizz.length < CONFIG.fizz) fizz.push(p);
+  }
+}
+
+function stepFizz(dt) {
+  /* How much gas is being driven out of solution. No agitation, no fizz —
+   * a shaker sitting still does not sparkle, it just sits there. */
+  const agit = Math.min(1.4, Math.hypot(accel.x, accel.y) * 1.2);
+  fizzDebt += agit * agit * 150 * dt;
+  while (fizzDebt >= 1) { spawnFizz(); fizzDebt -= 1; }
+
+  for (let i = fizz.length - 1; i >= 0; i--) {
+    const p = fizz[i];
+    p.life += dt;
+    if (p.life > p.span) { fizz.splice(i, 1); continue; }
+    sampleFlow(p.x, p.y, flow);
+    // Small enough to ride the flow almost exactly, plus a slow climb.
+    const rise = 26 * gMag;
+    p.vx += ((flow.x - gDir.x * rise) - p.vx) * Math.min(1, dt * 22);
+    p.vy += ((flow.y - gDir.y * rise) - p.vy) * Math.min(1, dt * 22);
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (depthOf(p.x, p.y) > -p.r) { p.life = p.span; }
+    clampInside(p, 2);
+  }
+}
+
+function drawFizz() {
+  for (let i = 0; i < fizz.length; i++) {
+    const p = fizz[i];
+    // In and out: a puff that arrives, holds, and thins away.
+    const t = p.life / p.span;
+    const a = Math.min(1, t * 6) * (1 - t * t);
+    if (a < 0.03) continue;
+    const r = p.r * (1 + p.z * 0.3) * (0.6 + 0.4 * Math.min(1, t * 5));
+    ctx.globalAlpha = a * (0.45 + 0.55 * (p.z + 1) * 0.5);
+    ctx.drawImage(fizzSprite, p.x + parallaxX(p.z) - r, p.y + parallaxY(p.z) - r, r * 2, r * 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
 /* Gas fraction: how much of each cell is bubble rather than liquid.
  *
  * A bubbly liquid weighs less than the same liquid without bubbles, and that
@@ -1242,7 +1327,7 @@ function floatSpawn(out, pad, cluster) {
 }
 
 function seed() {
-  stars.length = 0; bubbles.length = 0;
+  stars.length = 0; bubbles.length = 0; fizz.length = 0; fizzDebt = 0;
   const unit = Math.min(W, H) / 720;
   for (let i = 0; i < CONFIG.stars; i++) {
     // Skewed size distribution: mostly fine glitter with a scatter of big
@@ -1363,7 +1448,7 @@ function seed() {
  * the frame rate at 600 flakes — the gradient has to be rebuilt every frame
  * because it is positioned in user space. Bake each once and blit it scaled
  * instead. */
-let glowSprite = null, bubbleSmall = null, shadeSprite = null;
+let glowSprite = null, bubbleSmall = null, shadeSprite = null, fizzSprite = null;
 /* Two layers per bubble, because two different things set their orientation.
  * What the bubble refracts is fixed to gravity — the liquid it is looking
  * through is graded along that axis. What it reflects is fixed to the light,
@@ -1704,6 +1789,20 @@ function buildSprites() {
     grad.addColorStop(0, "rgba(6,42,96,.85)");
     grad.addColorStop(0.45, "rgba(6,42,96,.42)");
     grad.addColorStop(1, "rgba(6,42,96,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, s, s);
+  });
+
+  /* One fizz bubble, at the two or three pixels it is actually drawn. Bright
+   * rim, hollow middle — the same optics as its big sisters, with everything
+   * that cannot survive at this size left out. */
+  fizzSprite = sprite(16, (g, s) => {
+    const r = s / 2;
+    const grad = g.createRadialGradient(r, r, 0, r, r, r);
+    grad.addColorStop(0, "rgba(214,244,255,.10)");
+    grad.addColorStop(0.55, "rgba(226,248,255,.30)");
+    grad.addColorStop(0.82, "rgba(255,255,255,.92)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = grad;
     g.fillRect(0, 0, s, s);
   });
@@ -2444,6 +2543,9 @@ function render(time) {
 
   // Depth pass two: everything in front of the mid-plane, over the tint.
   drawParticles(starSplit, stars.length, bubbleSplit, bubbles.length, time);
+  // Fizz last: it is the brightest, smallest thing in the liquid and it
+  // belongs on top of the glitter it is swirling around.
+  drawFizz();
 
   /* Meniscus. Three passes: a soft glow bleeding down into the liquid, the
    * bright surface line itself, and a thin darker line above it. One flat
@@ -2809,6 +2911,8 @@ function fixedStep(dt, time) {
 
   // Every other step: merging is a slow process and the pair loop is the
   // most expensive thing the bubbles do.
+  stepFizz(dt);
+
   coalesceTick = !coalesceTick;
   if (coalesceTick) coalesce(dt * 2);
 

@@ -126,6 +126,27 @@ contents moving one way, so only the part that persists is removed: a
 running mean over a second and a half, which a half-second slosh barely
 registers in and a steady drift saturates. It takes the drift to 2.7px/s.
 
+**Fizz appears where the liquid is being worked, and nowhere else.** A
+liquid holds dissolved gas, and gas comes out of solution where the pressure
+drops — and in a stirred liquid the lowest pressure is the core of a vortex.
+That is why a propeller trails a line of bubbles, and why fizz in a shaken
+vessel shows up in the curls rather than evenly through the volume. So it is
+seeded by vorticity: sample eight points, take the one sitting in the
+strongest swirl, and only while there is agitation to produce it. Measured:
+none at all when the shaker is still, 300 while it is being shaken, and back
+to a handful within three seconds of stopping.
+
+It is emitted in puffs rather than one particle at a time, because
+cavitation follows a vortex line and the gas comes out along it — spawning
+singly gave an even dust that read as more glitter rather than as bubbles
+being torn out of the liquid.
+
+It is a separate population from the ordinary bubbles, not more of them. A
+bubble in the main pool is a persistent object with a size, a film and a
+life cycle; fizz is a puff that lasts a second or two and is gone. Being
+small enough to follow the flow almost exactly, what it draws is the shape
+of the eddy that made it.
+
 **Bubbles make the liquid lighter where they gather.** A bubbly liquid
 weighs less than the same liquid without bubbles, and where that mixture
 collects it rises while the liquid it displaces comes down somewhere else —
@@ -644,7 +665,10 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Orientation changes how fast a flake falls | 1.8x between edge-on and face-on, population mean unchanged |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost under continuous shake | median 19.6ms, p90 21.7ms (software rasteriser, no GPU) |
+| Frame cost held still | median 31.5ms, and no fizz on screen at all |
+| Frame cost under continuous shake | median 37ms (software rasteriser, no GPU) |
+| What the fizz costs | about 5ms, and only while the shaker is being shaken |
+| What 40 more bubbles cost | about 1ms, inside the run-to-run noise |
 | Depth of field and aerial perspective | cost nothing: 24.5ms before, 23.6ms after |
 | Bubble shadows | 1.2ms, for the 15 or so bubbles large enough to get one |
 | Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |
