@@ -409,6 +409,46 @@ mass climbs the screen from 0.423 to 0.299 over a minute, with 316 flakes of
 620 ending in the top fifth; inverted it turns round and goes the other way,
 0.344 to 0.544.
 
+**It starts where it ends up.** The shaker used to open with everything
+scattered uniformly through the container — measured, glitter and bubbles
+alike sat at 0.47 of the screen, dead centre — and took a minute or two to
+sort itself out, which is a minute or two of a wallpaper looking like it has
+not settled yet. Both populations are now seeded in the resting state,
+pressed up under the waterline and thinning downward, so the first frame is
+the one you would have got by waiting.
+
+**A flake must not hinder itself.** The concentration field is built by
+dropping each flake's whole area into the cell it sits in, and a big flake
+covers several cells' worth on its own: 35px of radius against a 14px cell
+is a solid fraction of nineteen, against a maximum of one. It pinned every
+large flake to a dead stop in liquid that was otherwise empty. Measured, the
+big flakes were the *slowest* thing in the shaker, moving 0.518 to 0.460
+over a minute while the fine glitter that is supposed to trail them went
+0.473 to 0.336. Hindrance is what the other particles do to you.
+
+**Rise speed is linear in radius, not quadratic.** The r-squared law is for
+spheres. These are flakes cut from one sheet of film, so they all share a
+thickness: buoyancy goes as the area, r-squared, while the drag on a disc
+moving broadside goes as its radius — so the speed goes as r, and the spread
+between the finest glitter and the largest flake is a factor of three rather
+than twenty-five.
+
+That is the difference between a suspension and two separate things. Under
+the square law the big flakes outran the convection and packed into a hard
+line at the surface while the fine glitter, too slow to beat it, stayed
+evenly mixed: 519 flakes of 620 in the top quarter and 39 in the next, and
+the lateral balance drifting to 0.80 as a single convection cell parked
+everything on one side. With the spread narrowed the whole population
+competes with the same convection on the same terms, and what settles out is
+a gradient held in place by the balance between buoyancy and dispersion —
+concentrated under the waterline, thinning down through the body, and stable
+there. Measured over a minute of stillness it holds its shape: 318/137/86/79
+flakes by quarter at load, 321/129/91/79 a minute later, with the lateral
+balance at 0.97.
+
+Flip it and the same gradient rebuilds at the other end: 313/118/89/100
+becomes 89/89/132/310 over a minute.
+
 **A drift has to end somewhere.** A flake climbing through a crowd of other
 flakes has to drag the liquid they displace down past itself, so a dense
 suspension moves far slower than a dilute one — Richardson and Zaki's
@@ -557,8 +597,10 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Gas lift on a bubble-rich cell | 114px/s^2, against 75 for the densest cell of the heavy phase |
 | Film drainage sets the size range | largest bubble 7px at 1.4s drainage, 31px at 10s |
 | Flake distribution at rest | emptiest fifth 0.47 of the fullest after 80s of stillness |
-| Glitter floats to the top | centre of mass climbs the screen 0.423 -> 0.299 in a minute, 316 of 620 flakes in the top fifth |
-| It floats back after a flip | glitter 0.344 -> 0.544 down the screen toward the new surface |
+| The resting gradient holds | 318/137/86/79 flakes by quarter at load, 321/129/91/79 a minute later |
+| Laterally even | left/right balance 0.97 after a minute, against 0.80 under the square law |
+| A flake does not hinder itself | big flakes went from the slowest thing in the shaker to the fastest |
+| It floats back after a flip | 313/118/89/100 by quarter inverts to 89/89/132/310 over a minute |
 | Dispersion cannot go to zero | without it 480 flakes of 620 pack into a single tenth |
 | A tilted surface drives the liquid downhill | 43.8px/s with the slope term, 0.4px/s without |
 | A pure rotation sloshes | peak surface deflection 95px before the basis tilt, 219px after |
@@ -566,7 +608,7 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Orientation changes how fast a flake falls | 1.8x between edge-on and face-on, population mean unchanged |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost under continuous shake | median 24.8ms, p90 27.6ms (software rasteriser, no GPU) |
+| Frame cost under continuous shake | median 17.6ms, p90 19.6ms (software rasteriser, no GPU) |
 | Depth of field and aerial perspective | cost nothing: 24.5ms before, 23.6ms after |
 | Bubble shadows | 1.2ms, for the 15 or so bubbles large enough to get one |
 | Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |

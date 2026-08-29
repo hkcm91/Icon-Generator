@@ -838,7 +838,7 @@ const GAS_LIFT = 900;       // px/s^2 per g at a cell entirely full of gas
  * is left keeps the body of the shaker populated: with dispersion off
  * entirely the glitter drains completely into the floor, 480 flakes of 620
  * in the bottom tenth, which is not something anyone wants to look at. */
-const DISPERSE = 150;
+const DISPERSE = 300;
 const PHI_MAX = 1.0;         // solid fraction at which a bed stops settling
 const WAKE = 150;           // px/s^2 of wake attraction between near bubbles
 
@@ -1192,6 +1192,22 @@ function burstRipple(b) {
   }
 }
 
+/* Where a buoyant thing sits once it has stopped moving: pressed up under
+ * the waterline, thinning downward into the body. The shaker used to open
+ * with everything scattered uniformly through the container and take a
+ * minute or two to sort itself out, which is a minute or two of a wallpaper
+ * looking like it has not settled yet. It now starts where it would end up.
+ * The power puts most of the population close to the surface while leaving
+ * a tail all the way down, which is what the drift actually looks like. */
+function floatSpawn(out, pad, cluster) {
+  const s = (Math.random() * 2 - 1) * span * 0.92;
+  const deep = Math.pow(Math.random(), cluster) * upExtent * 1.9 + pad;
+  const lift = level + surfaceAt(s) - deep;
+  out.x = CX + tan.x * s + up.x * lift;
+  out.y = CY + tan.y * s + up.y * lift;
+  clampInside(out, Math.min(RX, RY) * 0.03);
+}
+
 function seed() {
   stars.length = 0; bubbles.length = 0;
   const unit = Math.min(W, H) / 720;
@@ -1202,8 +1218,7 @@ function seed() {
     const t = Math.random();
     const r = (t < 0.72 ? 1.9 + t * 2.8 : 5.2 + (t - 0.72) * 30) * unit;
     stars.push({
-      x: CX + (Math.random() * 2 - 1) * RX * 0.9,
-      y: CY + (Math.random() * 2 - 1) * RY * 0.9,
+      x: 0, y: 0,
       vx: 0, vy: 0,
       r,
       spin: Math.random() * Math.PI * 2,
@@ -1231,7 +1246,24 @@ function seed() {
        * flake drops through the container in seconds and the fine glitter
        * still hangs there for minutes, which is the spread that makes a
        * shaker worth watching. */
-      terminal: (12 + (r / unit) * (r / unit) * 1.5) * unit,
+      /* Rise speed, linear in radius rather than quadratic.
+       *
+       * The r-squared law is for spheres. These are flakes cut from one
+       * sheet of film, so they all share a thickness: buoyancy goes as the
+       * area, r-squared, while the drag on a disc moving broadside goes as
+       * its radius — so the speed goes as r, and the spread between the
+       * finest glitter and the largest flake is a factor of three rather
+       * than twenty-five. That matters for whether anything holds together:
+       * under the square law the big flakes outran the convection and packed
+       * into a hard line at the surface while the fine glitter, too slow to
+       * beat it, stayed evenly mixed, and the two came apart completely —
+       * 519 flakes of 620 in the top quarter and 39 in the next.
+       *
+       * With the spread narrowed, the whole population competes with the
+       * same convection on the same terms, and what settles out is a
+       * gradient instead: concentrated under the waterline, thinning down
+       * through the body, holding that shape indefinitely. */
+      terminal: (10 + (r / unit) * 2.2) * unit,
       // Flakes rock from side to side as they sink rather than dropping
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
@@ -1247,6 +1279,7 @@ function seed() {
       z: Math.random() * 2 - 1,
       zDrift: (Math.random() - 0.5) * 0.09,
     });
+    floatSpawn(stars[stars.length - 1], r, 2.2);
   }
   bubbleUnit = unit;
   maxBubble = Math.min(RX, RY) * 0.13;
@@ -1258,8 +1291,7 @@ function seed() {
      * adds to this population rather than being the whole of it. */
     const r = bubbleSeedRadius();
     const b = {
-      x: CX + (Math.random() * 2 - 1) * RX * 0.9,
-      y: CY + (Math.random() * 2 - 1) * RY * 0.9,
+      x: 0, y: 0,
       vx: 0, vy: 0,
       phase: Math.random() * Math.PI * 2,
       // Bubbles used to teleport from the surface back to the bottom in one
@@ -1278,6 +1310,9 @@ function seed() {
       zDrift: (Math.random() - 0.5) * 0.07,
     };
     setBubbleSize(b, r);
+    // Bubbles climb faster than the glitter and so sit closer to the line,
+    // but they are also being made all through the body, hence the tail.
+    floatSpawn(b, r, 2.8);
     bubbles.push(b);
   }
   /* Draw order is depth order, and depth is now a real coordinate rather
@@ -2568,7 +2603,17 @@ function fixedStep(dt, time) {
      * what stops the drift under the waterline collapsing into a single
      * hard line: the more crowded it gets there, the slower the next arrival
      * pushes in. */
-    const hind = Math.pow(Math.max(0, 1 - sampleConc(p.x, p.y) / PHI_MAX), 4.65);
+    /* A flake must not hinder itself. The concentration field is built by
+     * dropping each flake's whole area into the cell it sits in, and a big
+     * flake covers several cells' worth on its own — 35px of radius against
+     * a 14px cell is a solid fraction of nineteen, which pins it to a dead
+     * stop in liquid that is otherwise empty. Measured, the big flakes were
+     * the slowest thing in the shaker, moving 0.518 to 0.460 over a minute
+     * while the fine glitter that is supposed to trail them went 0.473 to
+     * 0.336. Hindrance is what the *other* particles do to you. */
+    const own = Math.PI * p.r * p.r / (cell * cell);
+    const hind = Math.pow(
+      Math.max(0, 1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX), 4.65);
     const climb = p.terminal * gMag * (1.573 / (1 + 0.9 * broad)) * hind;
     let tx = flow.x - gDir.x * climb - gDir.y * flut + disperse.x * DISPERSE;
     let ty = flow.y - gDir.y * climb + gDir.x * flut + disperse.y * DISPERSE;
