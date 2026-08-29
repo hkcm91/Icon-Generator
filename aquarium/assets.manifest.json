@@ -1,0 +1,108 @@
+{
+  "name": "3D aquarium live wallpaper",
+  "description": "Every third-party asset slot for the aquarium wallpaper, with the licence it ships under. Checked by scripts/aquarium-assets.mjs; see docs/AQUARIUM-ASSETS.md for why the licences are filtered the way they are.",
+  "root": "assets",
+  "distribution": "extractable",
+  "distributionNote": "The wallpaper ships loose glTF inside an APK, which is a zip. Anything a user can rename-and-open counts as distributed standalone, so marketplace royalty-free licences are refused until distribution becomes 'packed'.",
+  "assets": [
+    {
+      "id": "fish-animated-core",
+      "role": "fish",
+      "title": "LowPoly Animated Fish",
+      "author": "Quaternius",
+      "license": "CC0-1.0",
+      "page": "https://quaternius.itch.io/lowpoly-animated-fish",
+      "formats": ["fbx", "obj", "blend"],
+      "files": ["fish/quaternius-animated-fish/"],
+      "notes": "Rigged with a swim animation per species. Convert to glTF on import; keep the rig, the wallpaper drives the swim clip by flow speed."
+    },
+    {
+      "id": "fish-animated-cute",
+      "role": "fish",
+      "title": "Animated Cute Fish Pack",
+      "author": "Quaternius",
+      "license": "CC0-1.0",
+      "page": "https://quaternius.com/packs/cutefish.html",
+      "formats": ["fbx", "obj", "blend"],
+      "files": ["fish/quaternius-cute-fish/"],
+      "notes": "Stylised alternative to the pack above. Pick one art direction; mixing the two reads as asset-flipped."
+    },
+    {
+      "id": "fish-bundle-gltf",
+      "role": "fish",
+      "title": "Animated Fish Bundle",
+      "author": "Quaternius",
+      "license": "CC0-1.0",
+      "page": "https://poly.pizza/bundle/Animated-Fish-Bundle-ZkGbjS8m8g",
+      "formats": ["gltf", "fbx", "obj"],
+      "files": ["fish/polypizza-animated-fish-bundle/"],
+      "notes": "Seven models served as glTF directly, so no conversion step. Same author as the itch packs; take whichever format saves the pipeline work."
+    },
+    {
+      "id": "coral-scans",
+      "role": "coral",
+      "title": "Coral type specimens (Open Access)",
+      "author": "Smithsonian Institution",
+      "license": "CC0-1.0",
+      "page": "https://3d.si.edu/corals",
+      "formats": ["obj", "glb", "ply"],
+      "files": ["coral/smithsonian/"],
+      "notes": "Photogrammetry at millions of triangles. Decimate to roughly 3k and bake normals before shipping. Take from 3d.si.edu, not Sketchfab, whose CC0 downloads were excluded from the Fab migration."
+    },
+    {
+      "id": "substrate-materials",
+      "role": "material",
+      "title": "PBR substrate set (sand, gravel, wet rock, algae, glass)",
+      "author": "ambientCG",
+      "license": "CC0-1.0",
+      "page": "https://ambientcg.com/",
+      "formats": ["png", "jpg"],
+      "files": ["materials/ambientcg/"],
+      "notes": "1K is enough at wallpaper viewing distance; 2K only for the substrate the camera sits closest to. Ship basis/KTX2, not PNG."
+    },
+    {
+      "id": "room-hdri",
+      "role": "lighting",
+      "title": "Interior HDRI for the light outside the glass",
+      "author": "Poly Haven",
+      "license": "CC0-1.0",
+      "page": "https://polyhaven.com/hdris",
+      "formats": ["hdr", "exr"],
+      "files": ["lighting/polyhaven/"],
+      "notes": "Only needed for the reflection in the front glass. A 1K HDRI, or a baked irradiance probe, keeps the APK small."
+    },
+    {
+      "id": "plants-procedural",
+      "role": "plant",
+      "title": "Aquatic plants (geometry nodes)",
+      "author": "this project",
+      "license": "owned",
+      "page": null,
+      "formats": ["blend", "gltf"],
+      "files": ["plants/"],
+      "notes": "Generated, not sourced — bend field driven by the same flow that carries the fish, as the shaker does for glitter."
+    },
+    {
+      "id": "tank-procedural",
+      "role": "tank",
+      "title": "Tank, glass, bezel, water volume",
+      "author": "this project",
+      "license": "owned",
+      "page": null,
+      "formats": ["gltf"],
+      "files": ["tank/"],
+      "notes": "Parametric. The refracting rim in wallpaper/index.html is the same construction at a different scale."
+    },
+    {
+      "id": "caustics-procedural",
+      "role": "effect",
+      "title": "Caustics, god rays, bubbles, silt",
+      "author": "this project",
+      "license": "owned",
+      "page": null,
+      "formats": ["glsl"],
+      "files": ["effects/"],
+      "notes": "Shader and particles. Licensing a caustics texture buys a loop that does not match the water it is cast by."
+    }
+  ]
+}
