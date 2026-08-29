@@ -181,6 +181,50 @@ They are deliberately irregular: evenly spaced shafts of equal width read as
 corduroy, so two incommensurate frequencies and a per-shaft width give them
 the uneven spacing real caustics have.
 
+**The wall has thickness.** Near the silhouette you are looking through a
+lot of glass at a glancing angle, and a ray reaching the eye from there has
+been bent inward on its way out — so what you see at the rim is not the
+liquid immediately behind it, but liquid from further in, brought out to the
+edge. A wide radial swath of the interior is squeezed into a narrow band,
+and the squeeze grows toward the edge because the angle does. That
+compression is what makes a thick glass object read as an object rather than
+as a picture with a border drawn round it, and there had only ever been a
+hairline where the wall should be.
+
+It is done by drawing the frame back onto itself in six bands, each taking a
+source deeper and wider than the band it fills. Two things fall out of that
+mapping and both are the point: the band pulls in more depth than it
+occupies, so what it shows is compressed by the ratio; and the order
+reverses, the outermost sliver showing the deepest liquid, which is the
+inversion you see in the rim of any thick glass.
+
+The first attempt had it backwards. Sampling through a magnification about
+the centre displaces the content inward, which sounds right, but the source
+rectangle ends up *narrower* than the destination — that is a stretch, not a
+squeeze, and it read as a ghosted copy of the interior rather than as a
+wall.
+
+Rectangular strips rather than a clipped annulus, because a per-frame clip
+against this outline is the most expensive thing in the renderer; the corners
+spill past the squircle and the glass layer's knockout trims them a moment
+later.
+
+**Read from a copy, not from the canvas being drawn to.** Two dozen
+drawImage calls that take the destination canvas as their own source cost
+20ms a frame — each one makes the browser snapshot the whole backing store,
+because it cannot know the regions do not overlap. Copying what the bezel
+needs into a scratch canvas first turns them into ordinary blits: a quarter
+of the screen copied once, rather than the whole of it two dozen times. It
+takes the bezel from 20ms to under 1ms.
+
+**Dispersion.** Glass bends the short wavelengths harder than the long ones,
+so at the steep angles the wall presents near its silhouette the colours
+separate — the pair of faint warm and cool hairlines you get along the edge
+of anything thick and transparent. Approximated as two offset strokes rather
+than by splitting channels, which canvas has no cheap way to do, and baked
+into the static glass layer rather than drawn per frame, because it belongs
+to the glass and the glass does not move.
+
 **The container edge is crisp.** It used to carry a 58px dark band blurred
 over 43px, which had two things wrong with it. It turned the whole border
 into a haze the liquid faded away into rather than filling up to; and it was
@@ -668,6 +712,7 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Frame cost held still | median 31.5ms, and no fizz on screen at all |
 | Frame cost under continuous shake | median 37ms (software rasteriser, no GPU) |
 | What the fizz costs | about 5ms, and only while the shaker is being shaken |
+| What the bezel costs | 20ms reading from the live canvas, 0.3-0.7ms reading from a copy |
 | What 40 more bubbles cost | about 1ms, inside the run-to-run noise |
 | Depth of field and aerial perspective | cost nothing: 24.5ms before, 23.6ms after |
 | Bubble shadows | 1.2ms, for the 15 or so bubbles large enough to get one |

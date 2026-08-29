@@ -111,6 +111,8 @@ function resize() {
   canvas.width = Math.floor(W * DPR);
   canvas.height = Math.floor(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (!bezelSrc) { bezelSrc = document.createElement("canvas"); bezelSrcCtx = bezelSrc.getContext("2d"); }
+  bezelSrc.width = canvas.width; bezelSrc.height = canvas.height;
   CX = W * 0.5; CY = H * 0.5;
   if (CONFIG.mode === "full") {
     // Fill the screen. The squircle keeps its identity at the corners; the
@@ -1598,6 +1600,16 @@ function buildLayers() {
 
     g.restore();
 
+    /* Dispersion. Glass bends the short wavelengths harder than the long
+     * ones, so at the steep angles the wall presents near its silhouette the
+     * colours separate — the pair of faint warm and cool hairlines you get
+     * along the edge of anything thick and transparent. Approximated as two
+     * offset strokes rather than by splitting channels, which canvas has no
+     * cheap way to do; and baked into this layer rather than drawn per frame,
+     * because it belongs to the glass and the glass does not move. */
+    softEdge(g, "#ffd9a8", short * 0.030, short * 0.008, 0.20);
+    softEdge(g, "#a8c4ff", short * 0.019, short * 0.006, 0.22);
+
     // Specular line along the glass itself. Thin and near-sharp: a wide
     // blurred rim reads as fog around the edge, not as a wall.
     softEdge(g, "#ffffff", short * 0.016, short * 0.004, 0.7);
@@ -2396,6 +2408,94 @@ function drawParticles(s0, s1, b0, b1, time) {
   ctx.globalAlpha = 1;
 }
 
+/* The wall has thickness, and near the silhouette you are looking through a
+ * lot of it at a glancing angle.
+ *
+ * A ray reaching the eye from the edge of the container has been bent inward
+ * on its way out, so what you see there is not the liquid immediately behind
+ * the glass — it is liquid from further in, brought out to the rim. A wide
+ * radial swath of the interior gets squeezed into a narrow band, and the
+ * squeeze grows toward the edge because the angle does. That compression is
+ * what makes a thick glass object read as an object rather than as a picture
+ * with a border drawn on it, and the shaker had only a hairline where the
+ * wall should be.
+ *
+ * Done by drawing the frame back onto itself, magnified about the centre —
+ * which is exactly a sample taken from further in — in a handful of bands
+ * with the magnification rising outward. Rectangular strips rather than a
+ * clipped annulus, because a per-frame clip against this outline is the most
+ * expensive thing in the renderer; the corners spill past the squircle and
+ * the glass layer's knockout trims them a moment later. Outermost band
+ * first, so no band ever samples a region another band has already rewritten.
+ */
+const BEZEL_BANDS = 6;
+const BEZEL_T = 0.075;     // wall thickness, as a fraction of the short half-axis
+const BEZEL_REACH = 2.6;   // how many wall-thicknesses deep the rim reaches for its sample
+
+/* Destination offset from the silhouette -> the offset it samples from.
+ *
+ * Continuous with the interior at the inner face, so the bezel joins the
+ * scene without a seam, and reaching `BEZEL_REACH` thicknesses deep at the
+ * silhouette itself. Two things follow from that and both are the point: the
+ * band pulls in far more depth than it occupies, so what it shows is
+ * compressed by that ratio; and the order reverses, the outermost sliver
+ * showing the deepest liquid, which is the inversion you see in the rim of
+ * any thick glass.
+ */
+function bezelDepth(d, T) { return T + (T - d) * BEZEL_REACH; }
+
+/* Read from a copy, not from the canvas being drawn to.
+ *
+ * Two dozen drawImage calls that take the destination canvas as their own
+ * source cost 20ms a frame: each one makes the browser snapshot the whole
+ * backing store, because it cannot know the regions do not overlap. Copying
+ * what the bezel needs into a scratch canvas first turns those into ordinary
+ * blits. Only the border is copied — every sample the rim takes lies within
+ * four wall-thicknesses of an edge — so it is a quarter of the screen once,
+ * rather than the whole of it two dozen times.
+ */
+let bezelSrc = null, bezelSrcCtx = null;
+
+function bezelCapture(T) {
+  const d = Math.ceil(T * (BEZEL_REACH + 1.6) * DPR);
+  const w = canvas.width, h = canvas.height;
+  bezelSrcCtx.drawImage(canvas, 0, 0, w, d, 0, 0, w, d);
+  bezelSrcCtx.drawImage(canvas, 0, h - d, w, d, 0, h - d, w, d);
+  const my = d, mh = h - d * 2;
+  if (mh > 0) {
+    bezelSrcCtx.drawImage(canvas, 0, my, d, mh, 0, my, d, mh);
+    bezelSrcCtx.drawImage(canvas, w - d, my, d, mh, w - d, my, d, mh);
+  }
+}
+
+function bezelBlit(dx, dy, dw, dh, sx, sy, sw, sh) {
+  if (dw <= 0.5 || dh <= 0.5 || sw <= 0.5 || sh <= 0.5) return;
+  // Source coordinates index the backing store; destination is in CSS pixels.
+  ctx.drawImage(bezelSrc, sx * DPR, sy * DPR, sw * DPR, sh * DPR, dx, dy, dw, dh);
+}
+
+function drawBezel() {
+  const T = Math.min(RX, RY) * BEZEL_T;
+  bezelCapture(T);
+  const x0 = CX - RX, x1 = CX + RX, y0 = CY - RY, y1 = CY + RY;
+  const wide = x1 - x0;
+  for (let k = 0; k < BEZEL_BANDS; k++) {
+    const a = T * (k / BEZEL_BANDS), b = T * ((k + 1) / BEZEL_BANDS);
+    const h = b - a;
+    const Da = bezelDepth(a, T), Db = bezelDepth(b, T);
+    const sh = Da - Db;                       // deeper than the band is thick
+    const u = 1 - (k + 0.5) / BEZEL_BANDS;    // 1 at the silhouette
+    ctx.globalAlpha = 0.14 + 0.8 * u * u;
+
+    bezelBlit(x0, y0 + a, wide, h, x0, y0 + Db, wide, sh);
+    bezelBlit(x0, y1 - b, wide, h, x0, y1 - Da, wide, sh);
+    const my = y0 + T, mh = (y1 - T) - my;
+    bezelBlit(x0 + a, my, h, mh, x0 + Db, my, sh, mh);
+    bezelBlit(x1 - b, my, h, mh, x1 - Da, my, sh, mh);
+  }
+  ctx.globalAlpha = 1;
+}
+
 /* The render loop deliberately uses no clip() at all.
  *
  * Canvas rasterises a clip against a 100-plus-point path on every use, and
@@ -2613,6 +2713,7 @@ function render(time) {
   ctx.lineJoin = "miter";
 
   // Glass shell, casing edge and corner knockout, all baked at resize.
+  drawBezel();
   ctx.drawImage(glassLayer, 0, 0, W, H);
 }
 
