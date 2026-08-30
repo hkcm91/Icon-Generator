@@ -73,9 +73,9 @@ const CONFIG = {
   fill: num("fill", 0.98),
   // The visible glitter population is doubled again, but most of that density
   // remains in the batched micro layer so it still reads as suspended foil
-  // instead of 15,600 individually drawn sprites.
-  stars: num("stars", 1500),
-  micro: num("micro", 14100),
+  // instead of 19,500 individually drawn sprites.
+  stars: num("stars", 1650),
+  micro: num("micro", 17850),
   bubbles: num("bubbles", 128),
   fizz: num("fizz", 180),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
@@ -145,9 +145,14 @@ function resize() {
   displayLevelVelocity = 0;
   displayCompression = 0;
   displayCompressionVelocity = 0;
+  displayBubbleOffset = 0;
+  displayBubbleVelocity = 0;
   displayBasisTime = 0;
   displaySolveAngle = Infinity;
   displaySolveCompression = Infinity;
+  displaySolveBubbleOffset = Infinity;
+  cascadeFocusHold = 0;
+  flipArmed = false;
   microPathsDirty = true;
   buildOutline();
   buildLayers();
@@ -1570,7 +1575,7 @@ function seed() {
        * same convection on the same terms, and what settles out is a
        * gradient instead: concentrated under the waterline, thinning down
        * through the body, holding that shape indefinitely. */
-      terminal: (32 + (r / unit) * 9.2) * unit,
+      terminal: (36 + (r / unit) * 10.2) * unit,
       /* Nominally identical film still falls at visibly different rates.
        * Larger cuts hold their edge-on attitude longer and slip faster,
        * while fine cuts spend more of the fall broadside. Keep that spread
@@ -1611,7 +1616,7 @@ function seed() {
       r: (0.55 + Math.random() * 1.25) * unit,
       hueIdx: (Math.random() * FLAKE_COLOURS.length) | 0,
       phase: Math.random() * Math.PI * 2,
-      terminal: (7 + Math.random() * 14) * unit,
+      terminal: (8 + Math.random() * 16) * unit,
       // Dust-size flecks remain suspended behind the heavier cut foil.
       settleScale: 0.52 + Math.random() * 0.30,
       density: Math.random() < 0.96 ? 1 : (Math.random() < 0.84 ? 0.10 : -0.26),
@@ -2310,6 +2315,8 @@ let upExtent = 1;    // along `up`
 
 let basisAngle = 0, basisReady = false;
 let inversionGuard = 0;   // suppress stale cross-flow after a face-over-face flip
+let cascadeFocusHold = 0; // longer memory that funnels a released resting bed
+let flipArmed = false, flipStartX = 0, flipStartY = 1;
 
 /* The air pocket is the largest single mass cue in the scene. Its silhouette
  * should not rotate in lock-step with the sensor while the heavier liquid and
@@ -2321,6 +2328,7 @@ let displaySpan = 1, displayUpExtent = 1;
 let displayAngle = 0, displayBasisReady = false;
 let displayAngleVelocity = 0, displayBasisTime = 0, displayFrameDt = 1 / 60;
 let displayCompression = 0, displayCompressionVelocity = 0;
+let displayBubbleOffset = 0, displayBubbleVelocity = 0;
 
 function updateDisplayBasis() {
   const now = performance.now();
@@ -2356,6 +2364,20 @@ function updateDisplayBasis() {
   displayTan.y = displayUp.x;
   displaySpan = Math.abs(displayTan.x) * RX + Math.abs(displayTan.y) * RY;
   displayUpExtent = Math.abs(displayUp.x) * RX + Math.abs(displayUp.y) * RY;
+
+  /* The headspace is one trapped bubble, not a waterline glued to the centre.
+   * Tangential acceleration and the turning surface displace its bulge along
+   * the interface; a lightly underdamped spring gives it lag, overshoot and a
+   * soft return. The wetting ends stay fixed at the glass. */
+  const alongAccel = accel.x * displayTan.x + accel.y * displayTan.y;
+  displayBubbleVelocity += (-alongAccel * 3.8 - displayAngleVelocity * 0.32 -
+    displayBubbleOffset * 7.5 - displayBubbleVelocity * 3.8) * displayFrameDt;
+  displayBubbleVelocity = Math.max(-0.72, Math.min(0.72, displayBubbleVelocity));
+  displayBubbleOffset += displayBubbleVelocity * displayFrameDt;
+  if (Math.abs(displayBubbleOffset) > 0.20) {
+    displayBubbleOffset = Math.sign(displayBubbleOffset) * 0.20;
+    displayBubbleVelocity *= -0.22;
+  }
 }
 
 /* Turning the container tilts the water in it.
@@ -2539,15 +2561,20 @@ function lensLiquidPolygon(lift) {
   const run = (b - a) * (2 * displaySpan / steps);
   const turn = Math.min(1, Math.abs(displayAngleVelocity) / 2.8);
   const breathing = 1 + displayCompression * 1.20;
-  const bow = Math.min(Math.min(RX, RY) * (0.058 + turn * 0.008), run * 0.105) *
+  const bow = Math.min(Math.min(RX, RY) * (0.090 + turn * 0.010), run * 0.145) *
     breathing;
   const skew = Math.max(-0.24, Math.min(0.24, displayAngleVelocity * 0.085));
+  const centre = 0.5 + displayBubbleOffset;
   for (let i = a; i <= b; i++) {
     const t = (i - a) / (b - a);
     /* The rear half of a moving surface remains fuller for a moment while the
      * leading contact line climbs the glass. This tiny skew is the visible
      * consequence of inertia; it vanishes completely once the turn settles. */
-    const d = bow * Math.pow(Math.sin(Math.PI * t), 2) *
+    /* Concentrate the fixed air volume into a deeper, readable centre while
+     * keeping narrow wetting shoulders at both contact lines. A broad, deep
+     * lens cannot fit at 98% fill and silently makes the toy look underfilled. */
+    const q = t <= centre ? t / centre : (1 - t) / (1 - centre);
+    const d = bow * Math.pow(Math.sin(Math.PI * 0.5 * q), 4.2) *
       (1 + skew * (t * 2 - 1));
     pts[i].x -= displayUp.x * d;
     pts[i].y -= displayUp.y * d;
@@ -2557,7 +2584,7 @@ function lensLiquidPolygon(lift) {
 
 let displayLevel = 0, displayLevelReady = false, displayLevelVelocity = 0;
 let displaySolved = 0, displaySolveAngle = Infinity, displaySolveTick = 0;
-let displaySolveCompression = Infinity;
+let displaySolveCompression = Infinity, displaySolveBubbleOffset = Infinity;
 
 /* The visible air pocket is one coherent free surface. Selecting the largest
  * trough from the physics field made the pocket jump whenever two troughs
@@ -2575,8 +2602,9 @@ function displayLiquidPolygon() {
     while (d < -Math.PI) d += Math.PI * 2;
   }
   const compressionDelta = Math.abs(displayCompression - displaySolveCompression);
+  const bubbleDelta = Math.abs(displayBubbleOffset - displaySolveBubbleOffset);
   if (!displayLevelReady || ((displaySolveTick & 1) === 0 &&
-      (Math.abs(d) > 0.0025 || compressionDelta > 0.002))) {
+      (Math.abs(d) > 0.0025 || compressionDelta > 0.002 || bubbleDelta > 0.002))) {
     let lo = -displayUpExtent * 1.05, hi = displayUpExtent * 1.05;
     for (let solve = 0; solve < 9; solve++) {
       const mid = (lo + hi) * 0.5;
@@ -2586,6 +2614,7 @@ function displayLiquidPolygon() {
     displaySolved = (lo + hi) * 0.5;
     displaySolveAngle = displayAngle;
     displaySolveCompression = displayCompression;
+    displaySolveBubbleOffset = displayBubbleOffset;
   }
   if (!displayLevelReady) {
     displayLevel = displaySolved;
@@ -2940,7 +2969,7 @@ const microFrontCanvas = document.createElement("canvas");
 const microBackCtx = microBackCanvas.getContext("2d");
 const microFrontCtx = microFrontCanvas.getContext("2d");
 
-/* Build both depth passes in one walk. With 14,100 flecks, traversing the
+/* Build both depth passes in one walk. With 17,850 flecks, traversing the
  * entire population once for the rear and again for the front cost more than
  * the actual seven batched fills. The split still renders on opposite sides
  * of the liquid tint; only the bookkeeping is shared. */
@@ -3098,6 +3127,37 @@ function paintHeadspace(poly) {
   ctx.fill();
 }
 
+/* A moving specular inside the trapped headspace makes its displaced bulge
+ * read as one surface bubble rather than an empty strip. It is anchored to
+ * the deepest point of the lens, so it follows the inertial offset above. */
+function paintSurfaceBubbleGlint(poly) {
+  let peak = poly[0], minLift = Infinity;
+  for (let i = 0; i <= DISPLAY_SURFACE_STEPS; i++) {
+    const lift = (poly[i].x - CX) * displayUp.x +
+      (poly[i].y - CY) * displayUp.y;
+    if (lift < minLift) { minLift = lift; peak = poly[i]; }
+  }
+  const depth = displayLevel - minLift;
+  if (depth < 4) return;
+  const r = Math.min(34, Math.max(15, displaySpan * 0.085));
+  const x = peak.x + displayUp.x * depth * 0.50;
+  const y = peak.y + displayUp.y * depth * 0.50;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(Math.atan2(displayTan.y, displayTan.x));
+  ctx.scale(1, Math.max(0.16, Math.min(0.34, depth / r * 0.48)));
+  const glow = ctx.createRadialGradient(-r * 0.24, -r * 0.18, 0,
+    -r * 0.06, 0, r);
+  glow.addColorStop(0, "rgba(255,255,255,.42)");
+  glow.addColorStop(0.34, "rgba(255,255,255,.16)");
+  glow.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 /* The render loop deliberately uses no clip() at all.
  *
  * Canvas rasterises a clip against a 100-plus-point path on every use, and
@@ -3110,7 +3170,7 @@ function paintHeadspace(poly) {
 function render(time) {
   const poly = displayLiquidPolygon();
   cacheDisplaySurface(poly);
-  /* Microglitter physics runs at 20 Hz. Rebuilding 14,100 path rectangles at
+  /* Microglitter physics runs at 20 Hz. Rebuilding 17,850 path rectangles at
    * the display's 60/120 Hz would waste most of the doubled population's
    * frame budget on identical geometry. */
   if (microPathsDirty) buildMicroPaths();
@@ -3252,6 +3312,7 @@ function render(time) {
    * physics can lag or lead this deliberately damped display surface, but no
    * glitter pixel is allowed to flash through the headspace. */
   paintHeadspace(poly);
+  paintSurfaceBubbleGlint(poly);
 
   /* Meniscus. Three passes: a soft glow bleeding down into the liquid, the
    * bright surface line itself, and a thin darker line above it. One flat
@@ -3382,6 +3443,22 @@ function fixedStep(dt, time) {
   const faceOn = Math.max(0, Math.min(1, (Math.abs(gravZ) - 0.32) / 0.55));
   inversionGuard = Math.max(inversionGuard,
     faceOn * Math.min(1, Math.abs(accel.z) * 1.8));
+  /* Detect the completed orientation change as well as the acceleration that
+   * caused it. A slow flip can pass face-on with almost no residual Z shake;
+   * remember the incoming gravity and arm the cascade only if the phone exits
+   * face-on pointing substantially the other way. Returning from a flat table
+   * in the same orientation does nothing. */
+  if (faceOn > 0.58 && !flipArmed) {
+    flipArmed = true;
+    flipStartX = gDir.x; flipStartY = gDir.y;
+  } else if (flipArmed && faceOn < 0.22 && gMag > 0.62) {
+    if (gDir.x * flipStartX + gDir.y * flipStartY < -0.45) {
+      inversionGuard = 1;
+      cascadeFocusHold = 1;
+    }
+    flipArmed = false;
+  }
+  cascadeFocusHold = Math.max(cascadeFocusHold, inversionGuard);
   const inputActivity = Math.min(1,
     Math.hypot(accel.x, accel.y, accel.z) * 0.72 +
     Math.abs(swirlInput) * 0.45 + basisKick);
@@ -3393,6 +3470,7 @@ function fixedStep(dt, time) {
   if (cascadeActivity < 0.004) cascadeActivity = 0;
   basisKick *= 0.74;
   inversionGuard *= Math.exp(-dt / 2.4);
+  cascadeFocusHold *= Math.exp(-dt / 5.2);
   fluidStep(dt);
   stepWaves(dt);
 
@@ -3584,6 +3662,15 @@ function fixedStep(dt, time) {
      * bed on the downhill wall, but the tangent edges get a soft carrier
      * return toward the body so glitter cannot remain pasted to both sides. */
     const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
+    /* A rested bed should release as a central curtain after a true
+     * face-over-face flip. The inversion guard is the short-lived record of
+     * that event, so use it to converge the newly released bed gently toward
+     * the centre while it begins to fall. Ordinary tilts and shakes never arm
+     * this term, avoiding the permanent centre column an always-on return made. */
+    const cascadeFocus = along * cascadeFocusHold *
+      (p.density > 0 ? 0.26 : 0.09);
+    tx -= tan.x * cascadeFocus;
+    ty -= tan.y * cascadeFocus;
     /* At rest only discourage flakes from entering the last sliver against
      * the glass. During a face-over-face flip the guard deliberately widens
      * this return zone, preventing the stale cross-flow from sweeping the
@@ -3653,6 +3740,10 @@ function fixedStep(dt, time) {
       tx += gasAvoid.x * voidSlip;
       ty += gasAvoid.y * voidSlip;
       const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
+      const cascadeFocus = along * cascadeFocusHold *
+        (p.density > 0 ? 0.30 : 0.10);
+      tx -= tan.x * cascadeFocus;
+      ty -= tan.y * cascadeFocus;
       const sideStart = span * (0.92 - 0.37 * inversionGuard);
       const sideDepth = Math.max(0, Math.abs(along) - sideStart);
       if (sideDepth > 0) {

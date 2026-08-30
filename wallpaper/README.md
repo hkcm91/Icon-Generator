@@ -622,6 +622,12 @@ lateral boundary layer widens temporarily. Three alternating sensor-driven
 flips held the glitter's mean lateral spread at 68–73px rather than walking it
 outward on every inversion.
 
+Once a real face-over-face reversal completes, the released resting bed also
+gets a five-second, decaying pull toward the new centreline. It produces the
+central waterfall seen in a physical shaker without forcing every ordinary
+tilt into a permanent centre column. The heavier cut foil now falls a little
+faster than before, while the fine glitter retains a wider, slower tail.
+
 The residual also passes through a 0.045g radial dead zone before it reaches
 the solver. That is above the stationary noise floor of the phone sensor but
 well below deliberate hand motion. Its attack is eased to give the liquid
@@ -653,6 +659,15 @@ area: each frame clips the liquid polygon against the container, measures the
 area, and nudges the surface level toward the target. It settles in a few
 frames and costs one shoelace sum.
 
+**The headspace behaves as one trapped surface bubble.** Its wetting points
+remain attached to the glass, but tangential acceleration displaces the
+deepest part of the lens along the surface. A lightly underdamped spring gives
+the bulge visible lag, a small overshoot, and a soft return instead of making
+it rotate as one smooth, rigid fluid pocket. The fixed air volume is
+concentrated into a deeper centre with narrow shoulders so it remains readable
+when the surface reaches the left or right edge, and a restrained moving
+specular makes the bubble shape clear without flashing.
+
 ### Fixed timestep
 
 The simulation runs on a fixed 1/60s tick with an accumulator. This is not
@@ -673,8 +688,8 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `fill` | `0.98` | Fraction of the sealed chamber holding liquid. The remaining air forms one stable, damped lens that remains visible at every screen edge |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `1500` | Medium and hero glitter count |
-| `micro` | `14100` | Cached microglitter count; with `stars`, 15,600 visible pieces |
+| `stars` | `1650` | Medium and hero glitter count |
+| `micro` | `17850` | Cached microglitter count; with `stars`, 19,500 visible pieces |
 | `bubbles` | `128` | Persistent air-bubble count; shake-generated fizz is separate |
 | `fizz` | `180` | Ceiling on the short-lived fine fizz spawned by strong vortices |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
