@@ -37,7 +37,7 @@ const SIZES = [1024, 512, 192];
 /* The container is square here, not phone-shaped, so the corner radius has to
  * be given explicitly: the page's default is a fraction of the short edge of
  * a screen, which on a square reads far too square for a tile. */
-const CORNER = Math.round(MASTER * 0.30);
+const CORNER = Math.round(MASTER * 0.5);
 
 /* The icon is captured mid-swirl, not at rest.
  *
