@@ -285,7 +285,7 @@ alpha *is* the loss of contrast with distance — what shows through is the
 liquid, which is exactly what absorption and scattering along a longer path
 leave you with. The ramp used to run 0.68 to 1.0 for flakes, barely a fifth
 of the range, and the fine glitter did not get it at all: every small flake
-was drawn at full strength however deep it sat. It now runs 0.34 to 1.0 and
+was drawn at full strength however deep it sat. It now runs 0.20 to 1.0 and
 covers the fast path, the glow, and the specular.
 
 Both together came out slightly *cheaper* than before, 24.5ms to 23.6ms,
@@ -305,7 +305,12 @@ drawn before the liquid tint and read as immersed; those in front are drawn
 over it and read as pressed against the glass. Light from the back wall
 crosses the full thickness of liquid before it reaches the eye, and putting
 those flakes under the tint layer is that absorption, for free. Tilting also
-shifts the layers against each other, since the viewing angle changes.
+shifts the layers against each other, since the viewing angle changes. The
+native host's Z accelerometer channel now drives spring-damped motion through
+the thickness as well: glitter, bubbles and fizz lag a normal shake, settle
+into different depth layers, and reorder as they cross the mid-plane. A
+tilted surface also exposes a translucent rear rim, so the meniscus reads as
+the top of a volume rather than a line painted over the liquid.
 
 **Bubbles are diverging lenses**, and that one fact sets their whole
 appearance. Light crossing from water into air bends away from the normal,
@@ -670,10 +675,10 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a discrete squircle on a backdrop |
-| `fill` | `0.965` | Fraction of the container holding liquid. The ullage is what sloshes — at `1` nothing moves |
+| `fill` | `0.93` | Fraction of the container holding liquid. The larger air pocket gives the surface room to slosh like a real shaker |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `760` | Glitter flake count |
+| `stars` | `900` | Glitter flake count |
 | `bubbles` | `110` | Bubble count |
 | `fizz` | `420` | Ceiling on the fine fizz, which is spawned by the flow rather than seeded |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
