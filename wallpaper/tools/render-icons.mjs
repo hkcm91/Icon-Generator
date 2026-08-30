@@ -41,19 +41,21 @@ const CORNER = Math.round(MASTER * 0.5);
 
 /* The icon is captured mid-swirl, not at rest.
  *
- * The glitter is buoyant, so left alone it rises, gathers in a band under
- * the surface and stays there — which empties the lower two thirds of the
- * tile and wastes most of the area. A shaker is only itself while it is
- * settling, so the vessel is held still long enough for gravity to converge,
- * shaken, and then photographed part-way through the float-back, with the
- * flakes still spread through the body of the liquid.
+ * The glitter settles rather than floats, so left alone it drains out of the
+ * body and packs into a bed against the downhill glass -- which empties the
+ * upper two thirds of the tile and wastes most of the area. A shaker is only
+ * itself while its contents are in transit, so the vessel is held still long
+ * enough for gravity to converge, shaken hard enough to lift the bed, and
+ * then photographed while the foil is still falling through the liquid.
  *
- * RELAX_S is the composition dial: shorter is busier and more chaotic,
- * longer drifts back towards the empty settled state. */
+ * RELAX_S is the composition dial and it is short, because settling is much
+ * faster than the float-back this used to wait on: at 0.45s the body had
+ * already cleared. SHAKE_G is how hard the bed gets lifted in the first
+ * place -- too gentle and there is nothing in the liquid to photograph. */
 const HOLD_S = Number(process.env.ICON_HOLD ?? 2);
 const SHAKE_S = Number(process.env.ICON_SHAKE ?? 1.2);
-const RELAX_S = Number(process.env.ICON_RELAX ?? 0.45);
-const SHAKE_G = Number(process.env.ICON_SHAKEG ?? 15);
+const RELAX_S = Number(process.env.ICON_RELAX ?? 0.18);
+const SHAKE_G = Number(process.env.ICON_SHAKEG ?? 22);
 const DT_MS = 1000 / 60;
 
 /* Held at a tilt rather than upright. A level waterline cuts the tile in half
@@ -70,29 +72,29 @@ const TILT_DEG = 18;
  * match, which leaves roughly the same fraction of the glass covered by far
  * fewer, far more legible objects.
  *
- * The fill drops too. At 0.965 the waterline is jammed into the top corner
- * and reads as a stray highlight; lower, it is unmistakably a surface, and
- * the headspace above it is what says "vessel" at a glance. */
+ * `zoom` also came down hard. It was 2.6 against the old seed; the reworked
+ * one cuts hero flakes several times larger, so the same value now oversizes
+ * everything and turns the batched micro layer into visible blocks. */
 const envNum = (k, d) => (process.env[k] !== undefined ? process.env[k] : d);
 
 const SUSPENSION = {
-  zoom: envNum('ICON_ZOOM', '2.6'),
-  stars: envNum('ICON_STARS', '130'),
-  bubbles: envNum('ICON_BUBBLES', '26'),
-  fill: envNum('ICON_FILL', '0.86'),
+  zoom: envNum('ICON_ZOOM', '1.5'),
+  stars: envNum('ICON_STARS', '260'),
+  bubbles: envNum('ICON_BUBBLES', '22'),
+  fill: envNum('ICON_FILL', '0.95'),
   // Icons are small objects seen whole, so the front face is a surface
   // that curves. A wallpaper has no edge to curve over and leaves this off.
   dome: envNum('ICON_DOME', '1'),
   /* The mark takes well over half the tile. The page's own default is sized
    * for a charm floating in a wallpaper; used for a tile it reads as an
    * emblem lost in the middle of a large empty container. */
-  glyphScale: envNum('ICON_GLYPHSCALE', '1.25'),
+  glyphScale: envNum('ICON_GLYPHSCALE', '1.0'),
   /* The batched micro layer draws axis-aligned squares sized straight from
    * each fleck's radius. On a phone those are sub-pixel and read as foil
    * dust; scaled up for a tile they are hard blocks, and 17,850 of them bury
    * the vessel in what looks like compression noise. A tile keeps a small
    * fraction of it for sparkle and lets the hero cuts carry the read. */
-  micro: envNum('ICON_MICRO', '900'),
+  micro: envNum('ICON_MICRO', '1500'),
 };
 
 /* Every colourway is generated from a single hue.
