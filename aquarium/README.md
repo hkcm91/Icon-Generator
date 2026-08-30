@@ -61,10 +61,25 @@ things turn that from sliding into swimming:
   enlarging the fish left the speeds behind: the big species ended up at
   0.1–0.2 BL/s, beating hard and going nowhere — swimming in place. A cruising
   fish does roughly 0.5–2.
+- **The tail wave is integrated, not evaluated.** `phase = w * t` recomputes
+  `w` from a continuously varying effort and multiplies it by a growing `t`, so
+  every change in `w` shifts the phase by `t · Δw` — measured at **1.57 radians
+  of spurious jump per frame**, which is a quarter cycle. The tail was noise
+  wearing the shape of a wave. Accumulating `wave += w · dt` instead leaves
+  1.5e-14 rad, which is floating point.
 - **Burst and coast.** Fish flick their tails and glide rather than travelling
   at a constant rate, and the tail beat follows effort, so a coasting fish
   beats slowly and a dashing one beats hard. A constant beat is most of what
-  read as sliding.
+  read as sliding. Dashes ramp in rather than switching on, and effort is eased
+  so the beat rate never steps.
+- **Turns start and stop.** The turn rate is a state eased toward the demand,
+  so a reversal is an S-curve rather than a constant-rate swing between two
+  corners, and a fish is nearly stopped as it passes edge-on — which is exactly
+  where its screen-space direction reverses. Heading now changes at 18°/s on
+  average, 114 at the 99th percentile, peaking at 409.
+- **Paths wander.** A slow per-fish wobble on the pitch, because nothing alive
+  travels on a ruled line to a waypoint. Goals are also biased ahead of the
+  fish, so it does not turn on the spot the moment it arrives.
 - **Personal space.** A light shove between neighbours; overlapping bodies read
   as one confused blob rather than as a school. The flow field's pull on fish
   was also cut by half, because `flowX` depends only on depth and was sliding
@@ -86,6 +101,11 @@ rather than asserted:
 // re-sorted by depth every frame
 for (const f of window.__aquarium.fish) travelled.get(f)  // ... / f.len
 ```
+
+`frames`, `dt` and `t` are published on the same hook. A harness that steps the
+clock cannot otherwise tell how many frames it drove — waiting on two nested
+`requestAnimationFrame`s runs the loop twice, the second with `dt` of zero —
+and will cheerfully measure its own stepping instead of the scene.
 
 ### What it settled
 

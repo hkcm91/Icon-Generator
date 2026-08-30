@@ -341,10 +341,14 @@ function retarget(f) {
    * signal, and the whole school drifted to the middle. Measured as vertical
    * spread collapsing from 259px to about 110. Layers drift, slowly. */
   if (rnd() < 0.12) f.band = ROAM.y0 + rnd() * (ROAM.y1 - ROAM.y0);
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const gx = W * (ROAM.x0 + rnd() * (ROAM.x1 - ROAM.x0));
     const gy = H * Math.max(ROAM.y0, Math.min(ROAM.y1, f.band + (rnd() - 0.5) * 0.26));
-    if (i === 5 || Math.abs(gx - f.x) > W * 0.3) { f.goalX = gx; f.goalY = gy; break; }
+    const far = Math.abs(gx - f.x) > W * 0.3;
+    // Mostly somewhere ahead. A fish handed a goal behind it turns on the spot
+    // the instant it arrives, which is the ping-pong that read as unnatural.
+    const ahead = Math.sign(gx - f.x) === f.facingTo || rnd() < 0.3;
+    if (i === 7 || (far && ahead)) { f.goalX = gx; f.goalY = gy; break; }
   }
   f.goalT = 5 + rnd() * 7;
   /* A fish must commit. Without this cooldown one pressed against an edge
@@ -360,25 +364,39 @@ function retarget(f) {
 function swim(f, dt, depth) {
   f.goalT -= dt;
   const dx = f.goalX - f.x, dy = f.goalY - f.y;
-  if (f.goalT <= 0 || dx * dx + dy * dy < (f.len * 1.3) ** 2) retarget(f);
+  if (f.goalT <= 0 || dx * dx + dy * dy < (f.len * 0.9) ** 2) retarget(f);
 
-  // Pitch toward the goal — eased, and nowhere near vertical. A fish climbs;
-  // it does not point itself at the surface like a rocket.
-  const want = Math.max(-0.62, Math.min(0.62, Math.atan2(dy, Math.abs(dx) + 1)));
-  f.head += (want - f.head) * Math.min(1, dt * 1.8);
+  /* Pitch toward the goal, plus a slow wander so the path is sinuous rather
+   * than a straight line to a waypoint — nothing alive travels on a ruled
+   * line. Eased gently: this is the fish's whole vertical steering. */
+  const wobble = 0.09 * Math.sin(t * 0.41 + f.pulse) + 0.05 * Math.sin(t * 0.77 + f.phase);
+  const want = Math.max(-0.62, Math.min(0.62, Math.atan2(dy, Math.abs(dx) + 1) + wobble));
+  f.head += (want - f.head) * Math.min(1, dt * 1.2);
 
   // Which way to face. The deadband keeps a fish whose goal is directly above
   // it from flickering between left and right.
   if (Math.abs(dx) > f.len * 0.9) f.facingTo = dx > 0 ? 1 : -1;
-  const swing = dt * (1.3 + 0.6 * f.bl);
-  f.facing += Math.max(-swing, Math.min(swing, f.facingTo - f.facing));
 
-  // Burst and coast. Fish accelerate in flicks and glide between them, and a
-  // fish side-on to its own heading has little to push against.
+  /* Turning has to start and stop rather than switch on. The rate is a state
+   * eased toward the demand, so a reversal is an S-curve; driving `facing` at
+   * a flat rate meant every turn began and ended on a corner, and the heading
+   * snapped at up to 5400 degrees a second. */
+  const demand = f.facingTo - f.facing;
+  const rate = Math.sign(demand) * Math.min(1, Math.abs(demand) * 1.8) * (1.0 + 0.4 * f.bl);
+  f.turnRate += (rate - f.turnRate) * Math.min(1, dt * 3);
+  f.facing = Math.max(-1, Math.min(1, f.facing + f.turnRate * dt));
+  // A little tilt into the turn.
+  f.bank += (f.turnRate * 0.10 - f.bank) * Math.min(1, dt * 3);
+
+  /* Burst and coast, with an attack: a dash that arrives instantly at full
+   * strength is a step change in speed. The floor is low so that a fish is
+   * nearly stopped as it passes edge-on, which is where its screen-space
+   * direction reverses — at the old floor of 28% that reversal was a snap. */
   f.dashIn -= dt;
-  if (f.dashIn <= 0) { f.dash = 1; f.dashIn = 3 + rnd() * 7; }
-  f.dash *= Math.exp(-dt / 0.9);
-  const drive = (0.28 + 0.72 * Math.abs(f.facing)) * (1 + f.dash * 0.85);
+  if (f.dashIn <= 0) { f.dashGoal = 1; f.dashIn = 3 + rnd() * 7; }
+  f.dashGoal *= Math.exp(-dt / 0.9);
+  f.dash += (f.dashGoal - f.dash) * Math.min(1, dt * 3.5);
+  const drive = (0.12 + 0.88 * Math.abs(f.facing)) * (1 + f.dash * 0.85);
   f.speed += (f.cruise * drive - f.speed) * Math.min(1, dt * 2.4);
 
   /* Personal space. Twelve fish in a phone-sized tank will cheerfully occupy
@@ -469,7 +487,8 @@ function spawnFish() {
       speed: 0,
       goalX: 0, goalY: 0, goalT: 0, reTimer: 0,
       band: 0.08 + 0.68 * ((i + 0.5) / CONFIG.fish),   // spread the layers at spawn
-      dash: 0, dashIn: 1 + rngTop() * 6,
+      dash: 0, dashGoal: 0, dashIn: 1 + rngTop() * 6,
+      turnRate: 0, bank: 0, effort: 1, wave: rngTop() * 6.283,
       beat: bl / sp.stride,
       phase: rngTop() * 6.283,
       pulse: rngTop() * 6.283,
@@ -546,7 +565,7 @@ function buildBackdrop() {
  *
  *   window.__aquarium.now = () => fixedMilliseconds;
  */
-const clock = { now: () => performance.now() };
+const clock = { now: () => performance.now(), frames: 0, dt: 0, t: 0 };
 // `fish` is attached below, once the school exists: a host or a capture tool
 // can then measure what the scene is actually doing rather than trusting a
 // comment about it. Swim speeds drifted badly out of scale once already.
@@ -566,6 +585,10 @@ function frame() {
   last = now;
   if (dt > 0.05) dt = 0.05;                 // a backgrounded tab must not teleport the scene
   t += dt;
+  // Published for tooling: without the real frame count and step, a capture
+  // harness cannot tell how many frames it drove and will happily measure its
+  // own stepping instead of the scene.
+  clock.frames++; clock.dt = dt; clock.t = t;
   fps += ((1 / Math.max(dt, 1e-4)) - fps) * 0.08;
   draws = 0;
 
@@ -622,22 +645,27 @@ function frame() {
 
     // Body wave. Amplitude grows toward the tail, which is the whole of what
     // separates swimming from sliding.
-    // Tail rate follows effort: a coasting fish beats slowly, a dashing one
-    // beats hard. A constant beat is most of what read as sliding rather than
-    // swimming.
-    const effort = 0.5 + 0.8 * (f.speed / Math.max(1, f.cruise));
-    const w = 2 * Math.PI * f.beat * (CONFIG.pose ? 1 : effort);
+    /* Tail rate follows effort: a coasting fish beats slowly, a dashing one
+     * beats hard. But the phase must be integrated rather than evaluated as
+     * w * t. Recomputing w each frame from a changing effort and multiplying
+     * it by a growing t shifts the phase by t * dw — measured at 1.57 radians
+     * of spurious jump per frame, so the tail was noise wearing the shape of a
+     * wave. Effort is eased too, so w itself does not step. */
+    const effTarget = CONFIG.pose ? 1 : 0.5 + 0.8 * (f.speed / Math.max(1, f.cruise));
+    f.effort += (effTarget - f.effort) * Math.min(1, dt * 2.5);
+    f.wave += 2 * Math.PI * f.beat * f.effort * dt;
     const kw = 4.2;
     const sp = f.sp;
     const size = f.len * depth;
-    const ca = Math.cos(f.head), sa = Math.sin(f.head);
+    const ca = Math.cos(f.head + f.bank), sa = Math.sin(f.head + f.bank);
     const px = f.x + f.z * 9 * DPR;                 // parallax, as the shaker does it
     const py = f.y;
     const glow = 0.78 + 0.22 * Math.sin(t * 0.8 + f.pulse);
 
     for (const p of f.pts) {
-      const phase = w * t - p.x * kw + f.phase;
-      const amp = sp.amp * (0.06 + Math.pow(p.x, 1.7)) * (1 + f.burst * 0.6 + f.dash * 0.5);
+      const phase = f.wave - p.x * kw + f.phase;
+      const amp = sp.amp * (0.06 + Math.pow(p.x, 1.7))
+        * (1 + f.burst * 0.6 + f.dash * 0.5 + Math.abs(f.turnRate) * 0.35);
       const d = amp * Math.sin(phase);
       const slope = amp * kw * Math.cos(phase);
       const th = Math.atan(slope);
