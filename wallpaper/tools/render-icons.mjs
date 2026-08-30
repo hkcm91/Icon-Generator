@@ -128,9 +128,9 @@ function colourway({ name, hue, glyph, sat = 1, lift = 0, glass }) {
     ramp,
     dense: hsl(hue - 55, 78 * sat, 66 + lift * 0.4),
     air: [
-      hsl(hue - 10, 40 * sat, 86 + lift * 0.25),
-      hsl(hue - 10, 55 * sat, 95),
-      hsl(hue - 10, 44 * sat, 79 + lift * 0.25),
+      hsl(hue - 10, 54 * sat, 87 + lift * 0.25),
+      hsl(hue - 10, 68 * sat, 95),
+      hsl(hue - 10, 58 * sat, 80 + lift * 0.25),
     ].join(','),
   };
 }
@@ -146,7 +146,7 @@ const COLOURWAYS = [
   // Colourless liquid, which is what most real shakers hold. Still not white:
   // drain the tint entirely and it matches the headspace, the waterline
   // disappears, and the tile stops reading as a vessel with something in it.
-  colourway({ name: 'clear',    hue: 200, glyph: 'heart', sat: 0.30, lift: 26 }),
+  colourway({ name: 'clear',    hue: 200, glyph: 'heart', sat: 0.42, lift: 30 }),
   // Glass: the fluid thins to a tint and the PNG keeps its alpha, so a
   // launcher composites the container over the wallpaper behind it.
   colourway({ name: 'glass',    hue: 200, glyph: 'bolt', sat: 0.55, lift: 18, glass: '1' }),

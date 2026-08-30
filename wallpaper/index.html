@@ -2740,10 +2740,13 @@ function drawDome(k) {
   const rx = RX, ry = RY, far = Math.max(rx, ry), near = Math.min(rx, ry);
 
   // The rim turning away from you.
-  const vig = ctx.createRadialGradient(CX, CY, near * 0.30, CX, CY, far * 1.02);
+  const vig = ctx.createRadialGradient(CX, CY, near * 0.52, CX, CY, far * 1.02);
   vig.addColorStop(0, "rgba(6,20,38,0)");
-  vig.addColorStop(0.70, "rgba(6,20,38," + (0.13 * k).toFixed(3) + ")");
-  vig.addColorStop(1, "rgba(4,14,30," + (0.42 * k).toFixed(3) + ")");
+  /* Light. A dome's rim does turn away, but it turns away over a narrow
+   * band right at the edge -- carry the darkening far enough in and it
+   * stops reading as curvature and starts reading as a dirty tile. */
+  vig.addColorStop(0.78, "rgba(6,20,38," + (0.03 * k).toFixed(3) + ")");
+  vig.addColorStop(1, "rgba(4,14,30," + (0.20 * k).toFixed(3) + ")");
   ctx.fillStyle = vig;
   ctx.fillRect(0, 0, W, H);
 
