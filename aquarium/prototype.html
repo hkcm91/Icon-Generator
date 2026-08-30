@@ -45,7 +45,7 @@ const params = new URLSearchParams(location.search);
 const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
 
 const CONFIG = {
-  fish:   num('fish', 12),      // 12 x 80 points is the frame budget, see the HUD
+  fish:   num('fish', 14),      // see the HUD: this is the frame budget
   points: num('points', 80),
   motes:  num('motes', 240),
   seed:   num('seed', 7),
@@ -329,7 +329,7 @@ function flowY(x, y, t) {
 /* The water is wider than the window. Goals are drawn from beyond both edges,
  * so fish swim out of frame and back in and the tank stops feeling like a box
  * exactly the size of the screen. Roughly a quarter of goals sit off-screen. */
-const ROAM = { x0: -0.20, x1: 1.20, y0: 0.06, y1: 0.80 };
+const ROAM = { x0: -0.30, x1: 1.30, y0: 0.05, y1: 0.80 };
 
 function retarget(f) {
   /* Somewhere else. Rejecting goals close to the fish's own x is what makes it
@@ -340,17 +340,24 @@ function retarget(f) {
    * goals uniformly made every fish a low-pass filter of the same uniform
    * signal, and the whole school drifted to the middle. Measured as vertical
    * spread collapsing from 259px to about 110. Layers drift, slowly. */
-  if (rnd() < 0.12) f.band = ROAM.y0 + rnd() * (ROAM.y1 - ROAM.y0);
-  for (let i = 0; i < 8; i++) {
+  if (rnd() < f.restless * 0.12) f.band = ROAM.y0 + rnd() * (ROAM.y1 - ROAM.y0);
+
+  /* Pick the farthest of several candidates rather than the first acceptable
+   * one. A threshold only guarantees a goal is not near; scoring by distance
+   * makes journeys long by preference, which is what turns a series of hops
+   * into a crossing. Being ahead is worth roughly twice the distance, since a
+   * fish handed a goal behind it turns on the spot the moment it arrives. */
+  let best = -1;
+  for (let i = 0; i < 10; i++) {
     const gx = W * (ROAM.x0 + rnd() * (ROAM.x1 - ROAM.x0));
-    const gy = H * Math.max(ROAM.y0, Math.min(ROAM.y1, f.band + (rnd() - 0.5) * 0.26));
-    const far = Math.abs(gx - f.x) > W * 0.3;
-    // Mostly somewhere ahead. A fish handed a goal behind it turns on the spot
-    // the instant it arrives, which is the ping-pong that read as unnatural.
-    const ahead = Math.sign(gx - f.x) === f.facingTo || rnd() < 0.3;
-    if (i === 7 || (far && ahead)) { f.goalX = gx; f.goalY = gy; break; }
+    const gy = H * Math.max(ROAM.y0, Math.min(ROAM.y1, f.band + (rnd() - 0.5) * f.bandWidth));
+    const ahead = Math.sign(gx - f.x) === f.facingTo;
+    const score = Math.hypot(gx - f.x, gy - f.y) * (ahead ? 1 : 0.5);
+    if (score > best) { best = score; f.goalX = gx; f.goalY = gy; }
   }
-  f.goalT = 5 + rnd() * 7;
+  // A fallback only: arrival normally ends a journey, and this is what rescues
+  // a fish whose goal it cannot reach.
+  f.goalT = (14 + rnd() * 18) * f.patience;
   /* A fish must commit. Without this cooldown one pressed against an edge
    * re-rolled its goal on every single frame — measured at 134 a minute against
    * an intended 6 to 12 — so it never travelled anywhere and the whole school
@@ -364,12 +371,13 @@ function retarget(f) {
 function swim(f, dt, depth) {
   f.goalT -= dt;
   const dx = f.goalX - f.x, dy = f.goalY - f.y;
-  if (f.goalT <= 0 || dx * dx + dy * dy < (f.len * 0.9) ** 2) retarget(f);
+  if (f.goalT <= 0 || dx * dx + dy * dy < (f.len * 0.7) ** 2) retarget(f);
 
   /* Pitch toward the goal, plus a slow wander so the path is sinuous rather
    * than a straight line to a waypoint — nothing alive travels on a ruled
    * line. Eased gently: this is the fish's whole vertical steering. */
-  const wobble = 0.09 * Math.sin(t * 0.41 + f.pulse) + 0.05 * Math.sin(t * 0.77 + f.phase);
+  const wobble = f.wob * Math.sin(t * f.wobF + f.pulse)
+               + f.wob * 0.55 * Math.sin(t * f.wobF * 1.9 + f.phase);
   const want = Math.max(-0.62, Math.min(0.62, Math.atan2(dy, Math.abs(dx) + 1) + wobble));
   f.head += (want - f.head) * Math.min(1, dt * 1.2);
 
@@ -393,10 +401,18 @@ function swim(f, dt, depth) {
    * nearly stopped as it passes edge-on, which is where its screen-space
    * direction reverses — at the old floor of 28% that reversal was a snap. */
   f.dashIn -= dt;
-  if (f.dashIn <= 0) { f.dashGoal = 1; f.dashIn = 3 + rnd() * 7; }
+  if (f.dashIn <= 0) { f.dashGoal = 1; f.dashIn = (2 + rnd() * 8) * f.patience; }
   f.dashGoal *= Math.exp(-dt / 0.9);
   f.dash += (f.dashGoal - f.dash) * Math.min(1, dt * 3.5);
-  const drive = (0.12 + 0.88 * Math.abs(f.facing)) * (1 + f.dash * 0.85);
+
+  // And occasionally one just hangs there, which is the cheapest way to stop a
+  // school reading as twelve copies of the same cruising animal.
+  f.hoverIn -= dt;
+  if (f.hoverIn <= 0) { f.hoverGoal = 1; f.hoverIn = 16 + rnd() * 30; }
+  f.hoverGoal *= Math.exp(-dt / 1.4);
+  f.hover += (f.hoverGoal - f.hover) * Math.min(1, dt * 2);
+
+  const drive = (0.12 + 0.88 * Math.abs(f.facing)) * (1 + f.dash * 0.85) * (1 - f.hover * 0.78);
   f.speed += (f.cruise * drive - f.speed) * Math.min(1, dt * 2.4);
 
   /* Personal space. Twelve fish in a phone-sized tank will cheerfully occupy
@@ -488,6 +504,15 @@ function spawnFish() {
       goalX: 0, goalY: 0, goalT: 0, reTimer: 0,
       band: 0.08 + 0.68 * ((i + 0.5) / CONFIG.fish),   // spread the layers at spawn
       dash: 0, dashGoal: 0, dashIn: 1 + rngTop() * 6,
+      hover: 0, hoverGoal: 0, hoverIn: 8 + rngTop() * 30,
+      /* Character. Identical parameters across the school is most of what
+       * makes generated animals read as generated: everything sets off at the
+       * same speed, wanders on the same curve and turns at the same moment. */
+      patience: 0.7 + rngTop() * 1.0,          // how long it holds a journey
+      restless: 0.4 + rngTop() * 1.4,          // how readily it changes layer
+      wob: 0.05 + rngTop() * 0.11,             // how sinuous its path is
+      wobF: 0.25 + rngTop() * 0.35,
+      bandWidth: 0.10 + rngTop() * 0.24,       // how far it strays from its layer
       turnRate: 0, bank: 0, effort: 1, wave: rngTop() * 6.283,
       beat: bl / sp.stride,
       phase: rngTop() * 6.283,

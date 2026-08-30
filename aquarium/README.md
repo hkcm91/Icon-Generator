@@ -80,6 +80,19 @@ things turn that from sliding into swimming:
 - **Paths wander.** A slow per-fish wobble on the pitch, because nothing alive
   travels on a ruled line to a waypoint. Goals are also biased ahead of the
   fish, so it does not turn on the spot the moment it arrives.
+- **Journeys are long.** `retarget` picks the farthest of ten candidates rather
+  than the first acceptable one — a threshold only guarantees a goal is not
+  near, whereas scoring by distance makes crossings the norm. With a tighter
+  arrival radius that took journeys from 2–3.5 second hops to **5.2 body
+  lengths over about 7 seconds**, and re-targeting from 17–28 a minute to 8.7.
+- **No two fish behave alike.** Each gets its own patience (how long it holds a
+  journey), restlessness (how readily it changes depth layer), band width (how
+  far it strays from that layer), and wobble amplitude and frequency (how
+  sinuous its route is). One in a while a fish simply hangs in the water for a
+  couple of seconds. Identical parameters across a school is most of what makes
+  generated animals read as generated: everything sets off at the same speed,
+  wanders on the same curve, and turns at the same moment. Average journey
+  length now varies by ±2.1 body lengths between individuals.
 - **Personal space.** A light shove between neighbours; overlapping bodies read
   as one confused blob rather than as a school. The flow field's pull on fish
   was also cut by half, because `flowX` depends only on depth and was sliding
@@ -123,9 +136,10 @@ and will cheerfully measure its own stepping instead of the scene.
 
 ### What it costs
 
-At the default 12 fish the HUD (`?hud=1`) reports **~1,270 points and ~1,150
-sprite draws per frame** — in the same range as the shaker's existing ~950
-particles, which is the budget this was designed against. The frame rate in
+At the default 14 fish the HUD (`?hud=1`) reports **~1,480 points and ~1,390
+sprite draws per frame**. That is near the top of the ~1,000–1,500 ceiling this
+was designed against — the shaker ships ~950 particles — so `?fish=12` is the
+setting to back off to if a handset struggles. The frame rate in
 that HUD comes from headless Chromium on a desktop container, so treat it as
 confirmation that the *draw count* is what was predicted, **not** as a phone
 measurement. Only the APK on a handset settles that.
