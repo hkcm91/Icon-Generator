@@ -2638,9 +2638,20 @@ function drawGlyph(name, cx, cy, size) {
   const p = glyphPath(name, cx, cy, size);
   if (!p) return;
 
-  const r = size * 0.5;
+  /* Every length below is in units of the icon's own 24-grid, not in
+   * fractions of the mark's overall size.
+   *
+   * Scaled to the bounding radius instead, the bevel came out wider than a
+   * music note's head: the chamfer and the glaze between them consumed the
+   * whole disc, it lost its face entirely, and it stopped reading as joined
+   * to the stem it is actually joined to. A bevel is a property of an edge,
+   * so it has to be sized against the stroke weight of the artwork -- about
+   * two grid units for this set -- and not against how big the glyph
+   * happens to be drawn. */
+  const u = size / 24;
   const lx = SHADOW_X, ly = SHADOW_Y;          // toward the light
-  const depth = r * 0.17, steps = 20;
+  const r = size * 0.5;
+  const depth = u * 1.5, steps = 20;
   const axis = (a, b) => {
     const g = ctx.createLinearGradient(cx + lx * r, cy + ly * r,
                                        cx - lx * r, cy - ly * r);
@@ -2653,10 +2664,10 @@ function drawGlyph(name, cx, cy, size) {
   // Cast into the liquid: soft and weak, because it is an absence of light in
   // a fluid rather than a silhouette on a surface.
   ctx.save();
-  ctx.filter = "blur(" + (r * 0.17).toFixed(2) + "px)";
+  ctx.filter = "blur(" + (u * 1.5).toFixed(2) + "px)";
   ctx.globalAlpha = 0.34;
   ctx.fillStyle = "#06203a";
-  ctx.translate(-lx * r * 0.17, -ly * r * 0.17);
+  ctx.translate(-lx * u * 1.5, -ly * u * 1.5);
   ctx.fill(p);
   ctx.restore();
 
@@ -2680,27 +2691,26 @@ function drawGlyph(name, cx, cy, size) {
   ctx.clip(p);
 
   // Chamfer: a constant-width band inside every edge.
-  ctx.lineWidth = r * 0.20;
+  ctx.lineWidth = u * 1.15;
   ctx.strokeStyle = axis("rgba(255,255,255,0.95)", "rgba(150,138,122,0.55)");
-  ctx.filter = "blur(" + (r * 0.028).toFixed(2) + "px)";
+  ctx.filter = "blur(" + (u * 0.22).toFixed(2) + "px)";
   ctx.stroke(p);
 
   // Glaze: the tight reflection sitting on the chamfer's lit side.
-  ctx.lineWidth = r * 0.065;
+  ctx.lineWidth = u * 0.42;
   ctx.strokeStyle = axis("rgba(255,255,255,0.98)", "rgba(255,255,255,0)");
-  ctx.filter = "blur(" + (r * 0.012).toFixed(2) + "px)";
+  ctx.filter = "blur(" + (u * 0.10).toFixed(2) + "px)";
   ctx.stroke(p);
 
   /* Subsurface. Porcelain is thin enough at an edge to pass a little light,
    * so the shadow side never reaches neutral grey -- it warms first. */
   ctx.globalCompositeOperation = "source-atop";
-  ctx.lineWidth = r * 0.10;
+  ctx.lineWidth = u * 0.7;
   ctx.strokeStyle = axis("rgba(255,228,190,0)", "rgba(255,214,166,0.5)");
-  ctx.filter = "blur(" + (r * 0.05).toFixed(2) + "px)";
+  ctx.filter = "blur(" + (u * 0.34).toFixed(2) + "px)";
   ctx.stroke(p);
 
   // Broad glaze sheen across the lit half.
-  ctx.globalCompositeOperation = "source-atop";
   ctx.filter = "none";
   const sheen = ctx.createLinearGradient(cx + lx * r * 1.1, cy + ly * r * 1.1,
                                          cx - lx * r * 0.2, cy - ly * r * 0.2);
