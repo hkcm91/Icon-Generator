@@ -15,6 +15,7 @@
     "screenshots": "node scripts/screenshots.mjs",
     "aquarium:assets": "node scripts/aquarium-assets.mjs",
     "aquarium:shot": "node scripts/aquarium-shot.mjs",
+    "aquarium:clip": "node scripts/aquarium-clip.mjs",
     "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false"
   },
   "dependencies": {

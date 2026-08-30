@@ -18,6 +18,7 @@ a fish that is generated on the device.
 open aquarium/prototype.html                       # or serve the folder
 open 'aquarium/prototype.html?pose=1&fish=4'       # look-dev: hold them still
 npm run aquarium:shot                              # re-render docs/screenshots
+npm run aquarium:clip                              # 12s mp4 into renders/
 ```
 
 Flags: `fish`, `points`, `motes`, `seed`, `speed`, `hud`, `pose`. `pose=1`
@@ -50,11 +51,28 @@ that HUD comes from headless Chromium on a desktop container, so treat it as
 confirmation that the *draw count* is what was predicted, **not** as a phone
 measurement. Only the APK on a handset settles that.
 
+### Seeing it move
+
+Stills cannot show the thing this exists to prove. `npm run aquarium:clip`
+records an mp4 into `renders/` (gitignored, like the Blender output), driving
+the page on a fixed timestep through `window.__aquarium.now` rather than
+recording in real time — capture is much slower than playback, and the clip
+comes out smooth and identical on every run regardless. `CLIP_SECONDS`,
+`CLIP_FPS`, `CLIP_BURST` and `CLIP_BURST_ALL` tune it.
+
+That clock hook is not only for capture: under a `WallpaperService` the WebView
+has no vsync of its own and the host has to drive the frame, which is the same
+arrangement the shaker makes through `window.__shaker`.
+
+It needs a system ffmpeg. The one Playwright bundles is a WebM-only build with
+no H.264 encoder, so `apt-get install ffmpeg` is a prerequisite for mp4.
+
 ### What a bought mesh cannot do
 
 Tapping a fish bursts it into points that the water carries off before they
-reassemble. The fish live in the same flow field as the motes, so this is a
-few lines rather than a feature.
+reassemble — that is the tap in the clip at about seven seconds. The fish live
+in the same flow field as the motes, so this is a few lines rather than a
+feature.
 
 ![A school mid-burst, dissolved into the water](../docs/screenshots/aquarium-burst.png)
 
