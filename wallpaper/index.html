@@ -109,7 +109,7 @@ const CONFIG = {
    *
    * Everything suspended in the liquid stays fully opaque. Only the fluid
    * itself thins — glitter and bubbles are objects, not tint. */
-  clear: Math.max(0, Math.min(1, num("clear", 0))),
+  glass: Math.max(0, Math.min(1, num("glass", 0))),
 };
 
 /** #rgb or #rrggbb to channel bytes. */
@@ -121,7 +121,7 @@ function parseHex(s) {
 const DENSE = parseHex(CONFIG.dense);
 // Peak alpha of the dense-phase blit, thinned along with the fluid it is
 // suspended in. 172 is the opaque-vessel value and stands at clear=0.
-const DYE_ALPHA = 172 * (1 - CONFIG.clear * 0.78);
+const DYE_ALPHA = 172 * (1 - CONFIG.glass * 0.78);
 
 /* Holographic foil comes in pairs, not flat colours. Each flake shifts from
  * the pale end to the saturated end across its own width, which is what
@@ -140,7 +140,7 @@ const FLAKE_COLOURS = [
 const canvas = document.getElementById("c");
 // Opaque by default: the compositor skips a whole blend when it knows there
 // is nothing behind. A clear vessel needs that blend, so it pays for it.
-const ctx = canvas.getContext("2d", { alpha: CONFIG.clear > 0 });
+const ctx = canvas.getContext("2d", { alpha: CONFIG.glass > 0 });
 const hint = document.getElementById("tap");
 const enableBtn = document.getElementById("enable");
 
@@ -2567,9 +2567,9 @@ function render(time) {
   /* Opaque, the fill covers the previous frame on its own. Clear, it does
    * not — so the canvas has to be emptied first or every frame accumulates
    * on the last and the tint walks to opaque within a second. */
-  if (CONFIG.clear) {
+  if (CONFIG.glass) {
     ctx.clearRect(0, 0, W, H);
-    ctx.globalAlpha = 1 - CONFIG.clear * 0.86;
+    ctx.globalAlpha = 1 - CONFIG.glass * 0.86;
   }
   ctx.fillRect(0, 0, W, H);
   ctx.globalAlpha = 1;
@@ -2597,7 +2597,7 @@ function render(time) {
   ctx.closePath();
   // Air in a clear vessel is the emptiest thing in it: almost all of this
   // has to go, or the headspace reads as a solid pale cap.
-  if (CONFIG.clear) ctx.globalAlpha = 1 - CONFIG.clear * 0.9;
+  if (CONFIG.glass) ctx.globalAlpha = 1 - CONFIG.glass * 0.9;
   ctx.fill();
   ctx.globalAlpha = 1;
 
