@@ -50,9 +50,10 @@ const CORNER = Math.round(MASTER * 0.5);
  *
  * RELAX_S is the composition dial: shorter is busier and more chaotic,
  * longer drifts back towards the empty settled state. */
-const HOLD_S = 2;
-const SHAKE_S = 1.2;
-const RELAX_S = 0.45;
+const HOLD_S = Number(process.env.ICON_HOLD ?? 2);
+const SHAKE_S = Number(process.env.ICON_SHAKE ?? 1.2);
+const RELAX_S = Number(process.env.ICON_RELAX ?? 0.45);
+const SHAKE_G = Number(process.env.ICON_SHAKEG ?? 15);
 const DT_MS = 1000 / 60;
 
 /* Held at a tilt rather than upright. A level waterline cuts the tile in half
@@ -241,7 +242,7 @@ for (const [i, way] of COLOURWAYS.entries()) {
   await page.goto(`${origin}/?${q}`, { waitUntil: 'load' });
 
   await page.evaluate(
-    ({ ax, ay, dt, hold, shake, relax }) => {
+    ({ ax, ay, dt, hold, shake, relax, shakeG }) => {
       window.__shaker.drive();
 
       /* Reported every frame, as a real sensor would. The page low-passes the
@@ -264,8 +265,8 @@ for (const [i, way] of COLOURWAYS.entries()) {
       run(shake, (u) => {
         const t = u * shake * Math.PI * 2;
         window.__shaker.motion(
-          ax + 15 * Math.sin(t * 5.5),
-          ay + 12 * Math.sin(t * 3.7 + 1.1),
+          ax + shakeG * Math.sin(t * 5.5),
+          ay + shakeG * 0.8 * Math.sin(t * 3.7 + 1.1),
           0,
           260 * Math.sin(t * 2.3),
         );
@@ -273,7 +274,8 @@ for (const [i, way] of COLOURWAYS.entries()) {
 
       run(relax, () => window.__shaker.motion(ax, ay, 0, 0));
     },
-    { ax: AX, ay: AY, dt: DT_MS, hold: HOLD_S, shake: SHAKE_S, relax: RELAX_S },
+    { ax: AX, ay: AY, dt: DT_MS, hold: HOLD_S, shake: SHAKE_S, relax: RELAX_S,
+      shakeG: SHAKE_G },
   );
 
   for (const size of SIZES) {
