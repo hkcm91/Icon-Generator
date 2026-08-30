@@ -2622,7 +2622,9 @@ function glyphPath(name, cx, cy, size) {
 /* Porcelain.
  *
  * Glazed ceramic is not white plastic, and the difference is mostly in three
- * places. Its body is warm and slightly off-white rather than neutral. Its
+ * places. Its body carries a trace of warmth rather than being neutral -- a trace,
+ * because past that it stops reading as glaze and starts reading as old
+ * ivory, and against a warm liquid it loses its separation altogether. Its
  * glaze gives one broad soft reflection and one tight bright one, not a
  * single blob. And it is faintly translucent, so an edge lit from behind
  * carries a little warmth through it rather than going straight to shadow.
@@ -2674,17 +2676,17 @@ function drawGlyph(name, cx, cy, size) {
   // Side wall, back to front. Warm in shadow: porcelain never goes blue-grey.
   for (let i = steps; i >= 1; i--) {
     const t = i / steps;
-    const v = 0.52 + 0.34 * (1 - t);
+    const v = 0.63 + 0.31 * (1 - t);
     ctx.save();
     ctx.translate(-lx * depth * t, -ly * depth * t);
-    ctx.fillStyle = "rgb(" + ((196 * v) | 0) + "," + ((186 * v) | 0) + "," +
-                    ((172 * v) | 0) + ")";
+    ctx.fillStyle = "rgb(" + ((224 * v) | 0) + "," + ((220 * v) | 0) + "," +
+                    ((213 * v) | 0) + ")";
     ctx.fill(p);
     ctx.restore();
   }
 
   // Face.
-  ctx.fillStyle = axis("#fffdf8", "#ded5c8");
+  ctx.fillStyle = axis("#ffffff", "#eceae5");
   ctx.fill(p);
 
   ctx.save();
@@ -2692,7 +2694,7 @@ function drawGlyph(name, cx, cy, size) {
 
   // Chamfer: a constant-width band inside every edge.
   ctx.lineWidth = u * 1.15;
-  ctx.strokeStyle = axis("rgba(255,255,255,0.95)", "rgba(150,138,122,0.55)");
+  ctx.strokeStyle = axis("rgba(255,255,255,0.98)", "rgba(191,185,175,0.50)");
   ctx.filter = "blur(" + (u * 0.22).toFixed(2) + "px)";
   ctx.stroke(p);
 
@@ -2706,7 +2708,7 @@ function drawGlyph(name, cx, cy, size) {
    * so the shadow side never reaches neutral grey -- it warms first. */
   ctx.globalCompositeOperation = "source-atop";
   ctx.lineWidth = u * 0.7;
-  ctx.strokeStyle = axis("rgba(255,228,190,0)", "rgba(255,214,166,0.5)");
+  ctx.strokeStyle = axis("rgba(255,240,222,0)", "rgba(255,228,198,0.30)");
   ctx.filter = "blur(" + (u * 0.34).toFixed(2) + "px)";
   ctx.stroke(p);
 
