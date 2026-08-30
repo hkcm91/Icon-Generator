@@ -60,6 +60,7 @@ public class ShakerWallpaperService extends WallpaperService {
         private SurfaceHolder softHolder;
 
         private boolean pageReady;
+        private boolean pageRequested;
         private int surfaceW, surfaceH;
 
         private SensorManager sensors;
@@ -87,7 +88,7 @@ public class ShakerWallpaperService extends WallpaperService {
                 web.setWebChromeClient(new WebChromeClient() {
                     @Override
                     public boolean onConsoleMessage(ConsoleMessage m) {
-                        Log.i(TAG, m.message());
+                        Log.i(TAG, m.sourceId() + ":" + m.lineNumber() + " " + m.message());
                         return true;
                     }
                 });
@@ -101,8 +102,6 @@ public class ShakerWallpaperService extends WallpaperService {
                     else if (isVisible()) js("window.__shaker&&window.__shaker.resume()");
                 }
             });
-            web.loadUrl(PAGE);
-
             root = new FrameLayout(ShakerWallpaperService.this);
             root.addView(web, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -169,7 +168,10 @@ public class ShakerWallpaperService extends WallpaperService {
                 virtualDisplay = vd;
                 presentation = p;
                 softDrawing = false;
-                Log.i(TAG, "hosting the page on a virtual display (hardware accelerated)");
+                layoutRoot(width, height);
+                requestPage();
+                Log.i(TAG, "hosting the page on a virtual display (hardware accelerated), surface="
+                        + width + "x" + height);
             } catch (Throwable t) {
                 Log.w(TAG, "presentation refused, drawing the page by hand instead", t);
                 /* Released here rather than through the field: if show() threw,
@@ -203,9 +205,8 @@ public class ShakerWallpaperService extends WallpaperService {
             hostDrivesClock = true;
             if (pageReady) js("window.__shaker&&window.__shaker.drive()");
 
-            root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                         View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
-            root.layout(0, 0, width, height);
+            layoutRoot(width, height);
+            requestPage();
             softDrawing = true;
 
             final Choreographer choreographer = Choreographer.getInstance();
@@ -229,6 +230,21 @@ public class ShakerWallpaperService extends WallpaperService {
                 frameCallback = null;
             }
             softHolder = null;
+        }
+
+        private void layoutRoot(int width, int height) {
+            if (root == null) return;
+            root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                         View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+            root.layout(0, 0, width, height);
+        }
+
+        /** Load only after the WebView has a non-zero layout. */
+        private void requestPage() {
+            if (pageRequested || web == null || web.getWidth() < 2 || web.getHeight() < 2) return;
+            pageRequested = true;
+            Log.i(TAG, "loading page at " + web.getWidth() + "x" + web.getHeight());
+            web.loadUrl(PAGE);
         }
 
         /* A software canvas rather than lockHardwareCanvas(), which needs API

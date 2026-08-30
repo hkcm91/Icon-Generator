@@ -72,22 +72,26 @@ const TILT_DEG = 18;
  * The fill drops too. At 0.965 the waterline is jammed into the top corner
  * and reads as a stray highlight; lower, it is unmistakably a surface, and
  * the headspace above it is what says "vessel" at a glance. */
+const envNum = (k, d) => (process.env[k] !== undefined ? process.env[k] : d);
+
 const SUSPENSION = {
-  zoom: '2.6',
-  stars: '130',
-  bubbles: '26',
-  fill: '0.86',
+  zoom: envNum('ICON_ZOOM', '2.6'),
+  stars: envNum('ICON_STARS', '130'),
+  bubbles: envNum('ICON_BUBBLES', '26'),
+  fill: envNum('ICON_FILL', '0.86'),
   // Icons are small objects seen whole, so the front face is a surface
   // that curves. A wallpaper has no edge to curve over and leaves this off.
-  dome: '1',
+  dome: envNum('ICON_DOME', '1'),
   /* The mark takes well over half the tile. The page's own default is sized
    * for a charm floating in a wallpaper; used for a tile it reads as an
    * emblem lost in the middle of a large empty container. */
-  glyphScale: '1.25',
-  /* The mark takes about half the tile. The page's own default is sized for
-   * a charm floating in a wallpaper, which in a launcher grid reads as an
-   * emblem lost in the middle of a large empty container. */
-  glyphScale: '1.0',
+  glyphScale: envNum('ICON_GLYPHSCALE', '1.25'),
+  /* The batched micro layer draws axis-aligned squares sized straight from
+   * each fleck's radius. On a phone those are sub-pixel and read as foil
+   * dust; scaled up for a tile they are hard blocks, and 17,850 of them bury
+   * the vessel in what looks like compression noise. A tile keeps a small
+   * fraction of it for sparkle and lets the hero cuts carry the read. */
+  micro: envNum('ICON_MICRO', '900'),
 };
 
 /* Every colourway is generated from a single hue.
@@ -222,6 +226,7 @@ for (const [i, way] of COLOURWAYS.entries()) {
     mode: 'full',
     corner: String(CORNER),
     ramp: way.ramp.join(','),
+    micro: SUSPENSION.micro,
     dense: way.dense,
     air: way.air,
     glass: way.glass ?? '0',

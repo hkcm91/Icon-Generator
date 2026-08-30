@@ -261,11 +261,13 @@ export function stageDirectorInstruction(
   // that happen to resemble a card alias (for example, “and” previously
   // selected Moon and Stars from “subject and frame”).
   const targets = selectedCards.length ? selectedCards : namedCards.length ? namedCards : failedCards;
-  const confirmsGeneration = /^(?:(?:yes|ok(?:ay)?)[,.]?\s*)?(?:please\s+)?(?:now(?:\s+please)?|go ahead(?:\s+now)?|do it(?:\s+now)?|start(?:\s+(?:it|them|those))?(?:\s+now)?|run (?:it|them|those)(?:\s+now)?)(?:\s+please)?[.!]*$/i.test(cleaned);
+  const confirmsGeneration = /^(?:(?:yes|ok(?:ay)?)[,.]?\s*)?(?:please\s+)?(?:now(?:\s+please)?|go(?: ahead(?:\s+now)?)?|do it(?:\s+now)?|implement(?:\s+(?:it|them|those))?|start(?:\s+(?:it|them|those))?(?:\s+now)?|run (?:it|them|those)(?:\s+now)?)(?:\s+please)?[.!]*$/i.test(cleaned);
   const createsNamedCard = namedCards.length > 0 && /\b(?:create|recreate|make|remake)\b/i.test(cleaned);
+  const startsFillingCards = /\b(?:start|begin|continue|keep)\s+(?:filling|generating|rendering|making)\b|\bfill(?:ing)?\s+(?:the\s+)?(?:selected\s+)?(?:cards?|icons?)\b/i.test(cleaned);
   const wantsGeneration = /\b(?:generate|regenerate|render|redo|recreate|remake)\b|\b(?:make|try)\s+(?:it|them|those|again)\b|\btest\b[^.]{0,80}\bselected\b/i.test(cleaned)
     || confirmsGeneration
-    || createsNamedCard;
+    || createsNamedCard
+    || startsFillingCards;
   const nextMemory = appendMemory(memory, context.familyPrompt, cleaned);
   const generationDirection = [
     'ICON DIRECTOR CONVERSATION: Follow every compatible instruction below.',
@@ -313,12 +315,18 @@ export function stageDirectorInstruction(
       ? patch.selection.names.length
       : context.cards.filter((card) => card.selected).length;
   const action = wantsGeneration && selectedAfterPatch > 0 ? 'generate-selected' as const : undefined;
+  const directedNames = targets.map((card) => card.name);
+  const directionReply = directedNames.length
+    ? `Updated ${directedNames.length === 1 ? directedNames[0] : `${directedNames.length} selected cards`}.`
+    : requestedTheme
+      ? `Using the ${requestedTheme} theme for this family.`
+      : 'Using that direction for this family.';
   return {
     reply: action
       ? `Generation requested for ${selectedAfterPatch} selected card${selectedAfterPatch === 1 ? '' : 's'}.`
       : wantsGeneration
         ? 'I can generate here, but no cards are selected. Select the cards you want and ask me to generate again.'
-        : '',
+        : directionReply,
     memory: nextMemory,
     patch,
     action,
