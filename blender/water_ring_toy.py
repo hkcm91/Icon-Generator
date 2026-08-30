@@ -130,8 +130,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     case.add_argument("--height", type=float, default=0.0,
                       help="case height in metres (Z); 0 derives it from the "
                            "render aspect so the case fills the frame")
-    case.add_argument("--thickness", type=float, default=0.46,
-                      help="case depth in metres (Y)")
+    case.add_argument("--thickness", type=float, default=0.80,
+                      help="case depth in metres (Y). It is what limits how "
+                           "long the pegs can be, so a shallow toy has short "
+                           "pegs whatever else you set")
     case.add_argument("--corner", type=float, default=0.16,
                       help="case corner radius as a fraction of the short "
                            "side")
@@ -141,10 +143,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     case.add_argument("--profile-n", type=float, default=7.0,
                       help="edge profile exponent; higher = flatter faces "
                            "and a tighter rim")
+    case.add_argument("--shell", action="store_true",
+                      help="wrap the window in an opaque moulded frame. Off "
+                           "by default: the toy is the glass, edge to edge, "
+                           "which is what a wallpaper wants — a bezel on a "
+                           "phone screen is a picture of a bezel")
     case.add_argument("--bezel", type=float, default=0.105,
-                      help="opaque frame width as a fraction of case width. "
-                           "It also sets how big the button can be, since "
-                           "the button lives in the chin")
+                      help="--shell only: frame width as a fraction of case "
+                           "width. It also sets how big the button can be, "
+                           "since the button then lives in the chin")
     case.add_argument("--segments", type=int, default=96,
                       help="mesh resolution around the plan curve")
     case.add_argument("--glass", type=float, default=0.022,
@@ -194,12 +201,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                            "Under 1 a ring can be threaded on and worked "
                            "back off; the closer to 1, the more a landing "
                            "sticks and the less the board ever changes")
-    play.add_argument("--hook-tilt", type=float, default=38.0,
+    play.add_argument("--hook-length", type=float, default=1.90,
+                      help="peg length as a fraction of the chamber depth. "
+                           "Over 1 is fine and usually right: the peg leans "
+                           "up, so most of its length is height rather than "
+                           "depth. Clamped so a ring can still float past "
+                           "in front of it")
+    play.add_argument("--hook-hang", type=float, default=0.45,
+                      help="how far a hooked ring tips toward its peg, as a "
+                           "fraction of --hook-tilt. At 1 the ring is square "
+                           "to the peg and, on a steep peg, seen almost "
+                           "edge-on; at 0 it hangs face-on the way gravity "
+                           "would actually hold it")
+    play.add_argument("--hook-tilt", type=float, default=62.0,
                       help="how far the pegs lean up out of the back wall, "
                            "in degrees. A peg pointing straight at an "
                            "orthographic camera is a dot; leaning it up "
-                           "gives it a length to read, and gives a ring "
-                           "something to actually hang on")
+                           "turns its length into height on screen, and "
+                           "spends less of the chamber depth doing it, so a "
+                           "steeper peg can also be a longer one")
     play.add_argument("--hook-bob", type=float, default=0.022,
                       help="how far the pegs drift on their stalks, in "
                            "metres; 0 bolts them down")
@@ -480,6 +500,13 @@ def hook_post(name: str, shaft_r: float, length: float, knob_r: float,
 
     obj = join(parts, name)
     activate(obj)
+    # Join keeps the *first* part's object rotation, and the first part was
+    # built with one. Left there it is the next thing overwritten when the
+    # peg is given its lean, and the post ends up pointing somewhere it was
+    # never meant to — which from a dead-on camera reads as a peg that is
+    # simply short. Baking it into the mesh leaves the object at identity,
+    # so the lean is the only rotation it has.
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
     bpy.ops.object.shade_smooth()
     return obj
 
@@ -733,33 +760,43 @@ def simple_material(name: str, colour: tuple[float, float, float],
 
 
 def build_case(args, size: Vector) -> dict:
-    """Opaque frame with a through-window, and the clear pane that fills it.
+    """The clear pane, and the opaque frame around it if there is one.
 
-    The case is a pillow the size of the frame; the window is that pillow
-    with a straight prism cut clean through it. The pane then sits in the
-    hole, so the silhouette of the frame and the silhouette of the glass are
-    the same curve rather than two curves that nearly agree.
+    With `--shell` the case is a pillow the size of the frame and the window
+    is that pillow with a straight prism cut clean through it, so the
+    silhouette of the frame and the silhouette of the glass are the same
+    curve rather than two curves that nearly agree. Without it — the
+    default — there is no frame at all: the pane is the whole toy, edge to
+    edge, and the chamber gets the width the bezel was taking.
     """
     corner = args.corner * min(size.x, size.z)
-    outer = plan_curve(size.x, size.z, args.squircle_n, corner, args.segments)
 
-    case = pillow("Ringtoy_Case", outer, size.y, args.profile_n,
-                  max(8, args.segments // 3))
+    case = None
+    if args.shell:
+        outer = plan_curve(size.x, size.z, args.squircle_n, corner,
+                           args.segments)
+        case = pillow("Ringtoy_Case", outer, size.y, args.profile_n,
+                      max(8, args.segments // 3))
 
-    bezel = args.bezel * size.x
-    win = Vector((size.x - bezel * 2.0, size.y, size.z - bezel * 2.0))
-    win_corner = max(0.0, corner - bezel)
-    win_plan = plan_curve(win.x, win.z, args.squircle_n, win_corner,
-                          args.segments)
+        bezel = args.bezel * size.x
+        win = Vector((size.x - bezel * 2.0, size.y, size.z - bezel * 2.0))
+        win_corner = max(0.0, corner - bezel)
+        win_plan = plan_curve(win.x, win.z, args.squircle_n, win_corner,
+                              args.segments)
 
-    cutter = prism("Ringtoy_Window_Cut", win_plan, size.y * 3.0)
-    boolean(case, cutter)
-    bpy.data.objects.remove(cutter, do_unlink=True)
+        cutter = prism("Ringtoy_Window_Cut", win_plan, size.y * 3.0)
+        boolean(case, cutter)
+        bpy.data.objects.remove(cutter, do_unlink=True)
 
-    colour = CASE_COLOUR
-    if args.case_colour:
-        colour = tuple(float(c) for c in args.case_colour.split(","))
-    case.data.materials.append(case_material(colour))
+        colour = CASE_COLOUR
+        if args.case_colour:
+            colour = tuple(float(c) for c in args.case_colour.split(","))
+        case.data.materials.append(case_material(colour))
+    else:
+        win = Vector((size.x, size.y, size.z))
+        win_corner = corner
+        win_plan = plan_curve(win.x, win.z, args.squircle_n, win_corner,
+                              args.segments)
 
     # The pane is a pillow of its own so the window bulges the way a moulded
     # lens does; flat glass over a curved bezel reads as a screenshot.
@@ -859,14 +896,56 @@ def ring_hole(args) -> float:
     return args.ring_radius - args.ring_tube * 2.0
 
 
-def hook_length(inner: Vector) -> float:
-    """How far a peg reaches into the chamber.
+def hook_collar(args) -> float:
+    """Radius of the disc at the base of a peg.
 
-    It has to be short enough that a ring can float past in front of it —
-    otherwise the pegs are a wall and nothing ever crosses them — and long
-    enough that a ring which does line up gets threaded rather than nudged.
+    Wider than the ring's hole by construction: it is what stops a ring
+    walking off the back of the peg, and a collar narrower than the hole is
+    not a stop, it is a ramp.
     """
-    return inner.y * 0.58
+    return ring_hole(args) * 1.16
+
+
+def hook_mount(args, inner: Vector) -> float:
+    """Y the peg's collar sits at.
+
+    Forward of the back wall, not on it. The collar is perpendicular to the
+    peg, so once the peg leans the collar leans with it and its rim swings
+    back through the wall — which the render shows as a white crescent
+    behind the glass. Standing it off is also what the stalk the pegs are
+    described as floating on would do.
+    """
+    lean_up = math.sin(math.radians(args.hook_tilt))
+    return inner.y * 0.5 - hook_collar(args) * lean_up - inner.y * 0.02
+
+
+def hook_length(args, inner: Vector) -> float:
+    """How long a peg is, clamped to what the chamber can hold.
+
+    Length buys height on screen, which is the whole reason to want it: a
+    peg leaning up by `--hook-tilt` spends `sin(tilt)` of its length on
+    height and only `cos(tilt)` on depth, so it can be longer than the
+    chamber is deep and still fit.
+
+    What it must not do is fill the depth. A ring has to be able to float
+    past in front of a peg — that is how it lines up with one — so the peg
+    is clamped to leave a ring's thickness of clear water ahead of its tip.
+    Past that the pegs stop being pegs and become a wall.
+    """
+    wanted = inner.y * args.hook_length
+    lean = max(0.1, math.cos(math.radians(args.hook_tilt)))
+    hole = ring_hole(args)
+    # Measured from where the peg is actually mounted, and counting the knob
+    # on the end of it. Clamping on the bare chamber depth instead leaves the
+    # knob poking out through the front glass, which the render will happily
+    # show you.
+    base = hook_mount(args, inner)
+    # A ring's full thickness of clear water ahead of the knob, plus half
+    # again: a ring has to fit *entirely* in front of a peg to drift across
+    # it, and a clamp that only leaves its centre room lets it pass through.
+    room = (base + inner.y * 0.5 - hole * args.hook_grip
+            - args.ring_tube * 3.0)
+    return min(wanted, max(inner.y * 0.2, room / lean))
 
 
 def hook_layout(args, inner: Vector, fill_z: float
@@ -902,7 +981,7 @@ def build_hooks(args, built: dict, fill_z: float) -> list[bpy.types.Object]:
     resting against it.
     """
     inner = built["interior"]
-    length = hook_length(inner)
+    length = hook_length(args, inner)
     hole = ring_hole(args)
     # Every diameter here comes off the ring's hole, because every one of
     # them is really a statement about the ring. The knob is what a ring has
@@ -911,12 +990,12 @@ def build_hooks(args, built: dict, fill_z: float) -> list[bpy.types.Object]:
     # stop at all, it is a ramp.
     shaft = hole * args.hook_fit
     knob = hole * args.hook_grip
-    collar = hole * 1.16
+    collar = hook_collar(args)
     # The pegs sit against the back wall, which is the deepest water in
     # the chamber; a plain white plastic reads as charcoal from there.
     material = simple_material("ringtoy_hook", HOOK_COLOUR, 0.22, 0.35)
 
-    back = inner.y * 0.5
+    back = hook_mount(args, inner)
     # Leaning the post up means -Y rotates toward +Z, so a ring that slides
     # on has to climb to come off again. It is what turns a peg into a hook.
     tilt = -math.radians(args.hook_tilt)
@@ -924,7 +1003,7 @@ def build_hooks(args, built: dict, fill_z: float) -> list[bpy.types.Object]:
     hooks = []
     for i, (x, z) in enumerate(hook_layout(args, inner, fill_z)):
         post = hook_post(f"Ringtoy_Hook_{i}", shaft, length, knob, collar)
-        post.location = (x, back - shaft * 0.2, z)
+        post.location = (x, back, z)
         post.rotation_euler = (tilt, 0.0, 0.0)
         post.data.materials.append(material)
         hooks.append(post)
@@ -960,10 +1039,13 @@ def build_rings(args, built: dict, fill_z: float,
 
         if i < seated:
             hook = hooks[order[i % len(order)]]
-            # Square to the peg, not square to the camera: a hoop on an
-            # angled peg is seen as an ellipse, and reading it as one is
-            # most of what says the peg goes *through* the ring.
-            ring.rotation_euler = (-math.radians(args.hook_tilt),
+            # Tipped toward the peg, but not square to it. Square is what
+            # a rigid-body solver would have needed to avoid starting the
+            # ring inside the peg; nothing needs it now, and on a steep peg
+            # it shows the ring almost edge-on. Gravity would hang it much
+            # closer to face-on, which is also how you can see it.
+            ring.rotation_euler = (-math.radians(args.hook_tilt *
+                                                 args.hook_hang),
                                    rng.uniform(-0.10, 0.10),
                                    rng.uniform(-0.06, 0.06))
             ring.location = hang_point(args, hook)
@@ -981,7 +1063,7 @@ def build_rings(args, built: dict, fill_z: float,
 
 
 def build_jets(args, built: dict, fill_z: float) -> list[dict]:
-    """A button on the bezel, a nozzle in the floor, and the jet between.
+    """A button on the front, a nozzle in the floor, and the jet between.
 
     The jet is a wind field with a tube falloff — a column of moving water
     rather than a point that shoves everything radially. Rigid bodies and
@@ -998,10 +1080,18 @@ def build_jets(args, built: dict, fill_z: float) -> list[dict]:
 
     offsets = [0.0] if args.buttons == 1 else \
         [-size.x * 0.20, size.x * 0.20]
-    # Sized off the chin rather than off the case, so widening the bezel
-    # widens the button with it and the two never disagree.
-    chin = args.bezel * size.x
-    button_r = chin * 0.52
+    if args.shell:
+        # Sized off the chin rather than off the case, so widening the bezel
+        # widens the button with it and the two never disagree.
+        chin = args.bezel * size.x
+        button_r = chin * 0.52
+        button_z = -size.z * 0.5 + chin * 0.5
+    else:
+        # No chin to sit in, so it sits on the glass: proud of the front
+        # face, low enough to be over its own nozzle, and sized off the case
+        # because there is nothing else to size it off.
+        button_r = size.x * 0.075
+        button_z = -size.z * 0.5 + size.x * 0.14
     button_mat = simple_material("ringtoy_button", BUTTON_COLOUR, 0.28)
 
     jets = []
@@ -1028,8 +1118,7 @@ def build_jets(args, built: dict, fill_z: float) -> list[dict]:
 
         button = button_body(f"Ringtoy_Button_{i}", button_r,
                              size.y * 0.55)
-        button.location = (x, -size.y * 0.5 - size.y * 0.12,
-                           -size.z * 0.5 + chin * 0.5)
+        button.location = (x, -size.y * 0.5 - size.y * 0.12, button_z)
         button.data.materials.append(button_mat)
 
         jets.append({"field": field, "nozzle": nozzle, "button": button,
@@ -1495,6 +1584,8 @@ def simulate_rings(args, built: dict) -> None:
     dt = 1.0 / max(1, args.fps)
     radius, tube = args.ring_radius, args.ring_tube
     hole = ring_hole(args)
+    shaft = hole * args.hook_fit
+    peg_length = hook_length(args, inner)
     floor = -inner.z * 0.5
 
     # The box a ring centre may occupy. Depth is the tight one: the chamber
@@ -1591,6 +1682,29 @@ def simulate_rings(args, built: dict) -> None:
                 if b["hook"] is None:
                     b["v"] -= kick * dt
 
+        # Rings and pegs: either on it, or clear of it. Nothing here
+        # collides them, so without this a ring can park with a peg crossing
+        # its stock and stay there — the one arrangement that reads as a
+        # mistake rather than as a toy. Inside the hole is left alone: that
+        # is a ring on its way to being caught.
+        for entry in state:
+            if entry["hook"] is not None:
+                continue
+            p = entry["p"]
+            for hook_i, hook in enumerate(hooks):
+                base = Vector(hook.location) + offsets[hook_i]
+                axis = hook.matrix_world.to_3x3() @ Vector((0.0, -1.0, 0.0))
+                along = max(0.0, min(peg_length, (p - base).dot(axis)))
+                near = base + axis * along
+                if abs(p.y - near.y) > radius * 0.9 + tube:
+                    continue
+                flat = Vector((p.x - near.x, 0.0, p.z - near.z))
+                gap = flat.length
+                if gap <= hole or gap >= radius + shaft:
+                    continue
+                entry["v"] += flat * (
+                    (radius + shaft - gap) / gap * 3.0) * dt
+
         for index, entry in enumerate(state):
             entry["p"] = entry["p"] + entry["v"] * dt
             p, v = entry["p"], entry["v"]
@@ -1634,7 +1748,7 @@ def simulate_rings(args, built: dict) -> None:
                 euler.z += (0.25 * math.sin(phase + index * 1.7) -
                             euler.z) * 1.2 * dt
             else:
-                target_x = -math.radians(args.hook_tilt)
+                target_x = -math.radians(args.hook_tilt * args.hook_hang)
                 euler.x += (target_x - euler.x) * 5.0 * dt
                 euler.z += (0.0 - euler.z) * 5.0 * dt
 

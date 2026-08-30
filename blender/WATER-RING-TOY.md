@@ -1,20 +1,24 @@
 # Water ring toy — Blender pipeline
 
 The handheld water game from the nineties, built as a seamless phone-portrait
-loop for a live wallpaper: a coral case, a sealed water window, little plastic
-rings, pegs to land them on, and a button on the chin that fires a jet of water
-and bubbles up through the chamber and throws the rings around.
+loop for a live wallpaper: a sealed water chamber, little plastic rings, pegs
+to land them on, and a button that fires a jet of water and bubbles up through
+the chamber and throws the rings around.
+
+It is glass edge to edge by default — no moulded frame, because a bezel on a
+phone screen is a picture of a bezel, and the chamber would rather have the
+width. `--shell` puts the coral case back on.
 
 Nothing is hand-placed. `water_ring_toy.py` builds the whole scene — geometry,
 materials, the ring motion, the button presses, the jet, the bubbles, the
 lighting and the camera — from CLI flags, so a change is a flag rather than a
 trip through the UI.
 
-![A frame from the loop, fourteen frames after a press](../docs/screenshots/water-ring-toy.png)
+![A frame from the loop, thirteen frames after a press](../docs/screenshots/water-ring-toy.png)
 
-Above: fourteen frames into a press. The bubble column is still coming off the
-nozzle over the button, the rings in the bottom have been stirred, and the pink
-ring has just been lifted off its peg.
+Above: thirteen frames into a press. Bubbles are still coming off the nozzle
+over the button, rings hang on two of the five pegs, and the pink ring is the
+one this press has just taken off its peg.
 
 It is built on [`liquid_shaker.py`](./liquid_shaker.py) and imports its plan
 curve, pillow loft, fill-line boolean and render plumbing directly rather than
@@ -59,7 +63,7 @@ well under a second. Everything you wait for is Cycles.
 
 ## How it moves
 
-**One button, one jet.** A press drops the button into the chin, opens a wind
+**One button, one jet.** A press pushes the button into the glass, opens a wind
 field in a column above the nozzle, releases a burst of bubbles into it, and
 raises a swell on the surface a few frames later. All four read the same
 envelope, `jet_level()`, so the bubbles are *in* the push rather than
@@ -94,13 +98,33 @@ therefore measured in the screen plane, with a separate depth test for whether
 the ring is near enough to be threaded at all. That is the same question the
 viewer is answering.
 
-**The pegs lean out of the back wall** by `--hook-tilt`. A peg pointing
-straight at an orthographic camera is a dot; leaning it up gives it a length
-to read and gives a ring something to hang on. They also drift on their
-stalks — `--hook-bob` — because a wallpaper is looked at for a long time and a
-board that is perfectly rigid behind moving water reads as a painted backdrop.
-The float is computed by one shared function so the keyframer and the solver
-cannot disagree about where a peg is.
+**The pegs lean out of the back wall** by `--hook-tilt`, and that lean is what
+makes them visible. A peg pointing straight at an orthographic camera is a
+dot. Leaning it up spends `sin(tilt)` of its length on height and only
+`cos(tilt)` on depth, so a steeper peg is both taller on screen *and* cheaper
+in the one dimension that is scarce — which is why `--hook-length` can exceed
+1.0 and the default leans as far as 62°.
+
+What limits them is the chamber, not the flag. `hook_length()` clamps to what
+fits: measured from where the peg is actually mounted, counting the knob on
+the end, and leaving a full ring's thickness of clear water ahead of the tip
+so a ring can still float past in front of one — which is how a ring lines up
+with a peg in the first place. Past that the pegs stop being pegs and become a
+wall. If you want taller pegs than you are getting, the flag to reach for is
+`--thickness`: depth is the budget the length is drawn from.
+
+The pegs are mounted forward of the back wall rather than on it, because the
+collar is perpendicular to the peg and swings back through the wall once the
+peg leans. They also drift — `--hook-bob` — because a wallpaper is looked at
+for a long time and a board that is perfectly rigid behind moving water reads
+as a painted backdrop. The float is computed by one shared function so the
+keyframer and the solver cannot disagree about where a peg is.
+
+**A hooked ring hangs nearer face-on than square to its peg**, by
+`--hook-hang`. Square was a constraint of the rigid-body attempt — a ring
+face-on to a leaning peg starts the sim intersecting it — and nothing needs it
+now. On a peg leaning 62° a square ring is seen almost edge-on, and gravity
+would hang it much closer to flat anyway.
 
 **Peg proportions come off the ring, not off the peg.** `--hook-fit` is the
 shaft as a fraction of the ring's hole and is the slop in the joint;
@@ -140,8 +164,13 @@ anyway, which is why the rewind survives being looked at.
 
 ## Flags worth knowing
 
-**`--bezel`** is the opaque frame as a fraction of case width, and it also
-sets how big the button can be, since the button lives in the chin.
+**`--shell`** brings back the opaque moulded frame, and **`--bezel`** is how
+wide it is. With the shell on, the button lives in the chin and is sized off
+it; with the shell off — the default — the button sits on the front glass and
+is sized off the case.
+
+**`--thickness`** is the chamber depth, and it is the budget the pegs are paid
+out of. A shallow toy has short pegs whatever else you set.
 
 **`--fill`** is the water level. The air gap at the top is where the jet
 breaks the surface, so 1.0 gives you a beautiful still and no splash.
@@ -197,3 +226,9 @@ cosmetic and the field animates correctly.
 A ring can only be caught by a peg that is free. Two rings never share one,
 which is right, but it does mean a chamber with more rings than pegs will
 always have rings loose in the bottom — which is also the toy.
+
+Nothing collides rings with pegs, so a free ring is pushed clear of any peg
+crossing its stock rather than bounced off it. A ring drawn overlapping a peg
+is usually not that case at all: with an orthographic camera a ring floating
+well in front of a peg looks like it is on it, and the chamber is deep enough
+for that to happen honestly.
