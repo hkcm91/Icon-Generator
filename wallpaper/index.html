@@ -2726,62 +2726,96 @@ function drawGlyph(name, cx, cy, size) {
  * A flat pane and a domed one differ in three places, and every one of them
  * is about where the surface normal points rather than about the liquid:
  *
- *  - the centre of a bulge faces you and transmits, while the rim turns away
- *    and reflects the room instead, so a dome darkens toward its edge,
- *  - the reflection of the light source sits high on the curve and is
- *    foreshortened across it, rather than lying flat and centred,
+ *  - the rim turns away from you and reflects the room instead of
+ *    transmitting, so a dome shades just inside its own edge,
+ *  - the reflection of the light source is a band hugging the edge the light
+ *    comes from, not a pool in the middle,
  *  - light entering near the far rim leaves brightened, so the edge opposite
  *    the light carries a thin crescent.
+ *
+ * Every one of those follows the silhouette. The first version of this drew
+ * radial gradients centred on the vessel, and a radial gradient laid over a
+ * squircle reads as exactly what it is: a disc sitting in the middle of the
+ * tile. Curvature has to be drawn where the normal actually turns, which is
+ * at the outline -- so everything below is stroked along it.
  *
  * Drawn before the glass layer so its corner knockout still trims this, and
  * scaled by `strength` so the whole effect is one dial.
  */
-function drawDome(k) {
-  const rx = RX, ry = RY, far = Math.max(rx, ry), near = Math.min(rx, ry);
+/** The stretch of outline whose outward normal faces the light, inset toward
+ *  the centre. Returned as one open run, so a stroke over it never cuts a
+ *  chord across the vessel where the lit arc wraps the array. */
+function rimRun(minDot, inset) {
+  const n = outline.length, lit = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const dx = outline[i].x - CX, dy = outline[i].y - CY;
+    const m = Math.hypot(dx, dy) || 1;
+    lit[i] = (dx / m) * SHADOW_X + (dy / m) * SHADOW_Y > minDot;
+  }
+  let start = -1;
+  for (let i = 0; i < n; i++) if (lit[i] && !lit[(i - 1 + n) % n]) { start = i; break; }
+  if (start < 0) return null;
+  const pts = [];
+  for (let j = 0; j < n; j++) {
+    const i = (start + j) % n;
+    if (!lit[i]) break;
+    pts.push({ x: CX + (outline[i].x - CX) * inset,
+               y: CY + (outline[i].y - CY) * inset });
+  }
+  return pts.length > 1 ? pts : null;
+}
 
-  // The rim turning away from you.
-  const vig = ctx.createRadialGradient(CX, CY, near * 0.52, CX, CY, far * 1.02);
-  vig.addColorStop(0, "rgba(6,20,38,0)");
-  /* Light. A dome's rim does turn away, but it turns away over a narrow
-   * band right at the edge -- carry the darkening far enough in and it
-   * stops reading as curvature and starts reading as a dirty tile. */
-  vig.addColorStop(0.78, "rgba(6,20,38," + (0.03 * k).toFixed(3) + ")");
-  vig.addColorStop(1, "rgba(4,14,30," + (0.20 * k).toFixed(3) + ")");
-  ctx.fillStyle = vig;
-  ctx.fillRect(0, 0, W, H);
-
-  /* The light's own reflection. Squashed across the axis it lies on, because
-   * a reflection on a curved surface is compressed in the direction the
-   * surface is bending — a round highlight is what makes a dome read as a
-   * flat disc with a blob painted on it. */
+function strokeRun(pts, width, blur, style) {
+  if (!pts) return;
   ctx.save();
-  ctx.translate(CX + SHADOW_X * rx * 0.40, CY + SHADOW_Y * ry * 0.40);
-  ctx.rotate(LIGHT_ANGLE);
-  ctx.scale(1, 0.5);
-  const R = far * 0.80;
-  const sheen = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
-  sheen.addColorStop(0, "rgba(255,255,255," + (0.26 * k).toFixed(3) + ")");
-  sheen.addColorStop(0.5, "rgba(255,255,255," + (0.06 * k).toFixed(3) + ")");
-  sheen.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = sheen;
   ctx.beginPath();
-  ctx.arc(0, 0, R, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = width;
+  ctx.strokeStyle = style;
+  if (blur > 0) ctx.filter = "blur(" + blur.toFixed(2) + "px)";
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawDome(k) {
+  const near = Math.min(RX, RY);
+
+  /* Shade just inside the whole rim, following the outline. */
+  ctx.save();
+  ctx.beginPath();
+  traceOutline(ctx);
+  ctx.filter = "blur(" + (near * 0.075).toFixed(2) + "px)";
+  ctx.lineWidth = near * 0.20;
+  ctx.strokeStyle = "rgba(8,24,44," + (0.26 * k).toFixed(3) + ")";
+  ctx.stroke();
   ctx.restore();
 
-  // Light leaving the far rim.
+  /* The light's reflection, as a streak running along the lit rim. A dome
+   * reflects a source in a band that hugs the edge it is lit from; the blob
+   * in the middle this used to draw was the shape of the gradient, not the
+   * shape of the surface. */
+  strokeRun(rimRun(0.28, 0.80), near * 0.10, near * 0.065,
+            "rgba(255,255,255," + (0.55 * k).toFixed(3) + ")");
+  strokeRun(rimRun(0.52, 0.86), near * 0.045, near * 0.030,
+            "rgba(255,255,255," + (0.50 * k).toFixed(3) + ")");
+
+  /* Light leaving the far rim: the counter-crescent that tells you the thing
+   * is solid and curved rather than a hollow ring. */
   ctx.save();
   ctx.beginPath();
   traceOutline(ctx);
   const cres = ctx.createLinearGradient(
-    CX + SHADOW_X * rx, CY + SHADOW_Y * ry,
-    CX - SHADOW_X * rx, CY - SHADOW_Y * ry);
+    CX + SHADOW_X * RX, CY + SHADOW_Y * RY,
+    CX - SHADOW_X * RX, CY - SHADOW_Y * RY);
   cres.addColorStop(0, "rgba(255,255,255,0)");
   cres.addColorStop(0.55, "rgba(255,255,255,0)");
-  cres.addColorStop(1, "rgba(255,255,255," + (0.55 * k).toFixed(3) + ")");
+  cres.addColorStop(1, "rgba(255,255,255," + (0.5 * k).toFixed(3) + ")");
   ctx.strokeStyle = cres;
-  ctx.lineWidth = near * 0.038;
-  ctx.filter = "blur(" + (near * 0.014).toFixed(2) + "px)";
+  ctx.lineWidth = near * 0.034;
+  ctx.filter = "blur(" + (near * 0.012).toFixed(2) + "px)";
   ctx.stroke();
   ctx.restore();
 }
