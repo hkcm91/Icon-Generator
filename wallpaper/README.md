@@ -673,7 +673,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a discrete squircle on a backdrop |
-| `fill` | `0.995` | Fraction of the sealed chamber holding liquid. The remaining air forms one stable, damped lens |
+| `fill` | `0.98` | Fraction of the sealed chamber holding liquid. The remaining air forms one stable, damped lens that remains visible at every screen edge |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `1500` | Medium and hero glitter count |
