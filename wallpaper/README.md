@@ -4,6 +4,12 @@ A full-screen liquid shaker that actually responds to the phone: tilt it and
 the liquid finds level, shake it and the whole thing sloshes and throws the
 glitter around. One self-contained HTML file, no build step, no dependencies.
 
+> There are two wallpapers in this folder. This one is `index.html`, a 2-D
+> fluid seen side-on through glass. The other is **[`milk.html`](./MILK.md)** —
+> a translucent 3-D body of a milky scattering medium, raymarched, that sags
+> under gravity and wobbles when the phone moves. They share the motion model
+> and the host interface and nothing else.
+
 This is the half that reacts. The [Blender pipeline](../blender) bakes the
 hero loop at full render quality, but a baked loop plays back identically no
 matter how hard you shake the phone — the two are complementary.

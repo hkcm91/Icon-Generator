@@ -1,8 +1,10 @@
 # Liquid shaker — Android live wallpaper
 
-Wraps [`../wallpaper/index.html`](../wallpaper) in a `WallpaperService`, so the
-thing you set from the wallpaper picker is the page you have been testing in a
-browser — not a reimplementation of it.
+Wraps [`../wallpaper/index.html`](../wallpaper) — or
+[`../wallpaper/milk.html`](../wallpaper/MILK.md), see
+[below](#which-wallpaper-it-hosts) — in a `WallpaperService`, so the thing you
+set from the wallpaper picker is the page you have been testing in a browser,
+not a reimplementation of it.
 
 That is the whole design intent. The physics, the optics and the look took a
 long time to get right and they all live in the page; porting them to Kotlin
@@ -50,9 +52,30 @@ software either way.
 Then: **Settings → Wallpaper → Live Wallpapers → Liquid Shaker**, or long-press
 the home screen.
 
-The page is not duplicated into the app. Both builds copy it out of
-`../wallpaper/index.html`, so there is one copy of it in the repository and the
-APK cannot drift from what you tested in a browser.
+The pages are not duplicated into the app. Both builds copy them out of
+`../wallpaper/`, so there is one copy of each in the repository and the APK
+cannot drift from what you tested in a browser.
+
+### Which wallpaper it hosts
+
+Two pages ship in the APK, and they present the identical `window.__shaker`
+interface — same methods, same units, same device frame — so the service does
+not need to know which one it is running, and neither page is a special case
+anywhere in this app. Which one it loads is one string:
+
+```xml
+<!-- android/app/src/main/res/values/strings.xml -->
+<string name="wallpaper_page">index.html</string>   <!-- the liquid shaker -->
+<string name="wallpaper_page">milk.html</string>    <!-- the milky blob -->
+```
+
+A query string is allowed there, so `milk.html?tint=lilac&q=1` is a valid
+value; [`../wallpaper/MILK.md`](../wallpaper/MILK.md) lists that page's
+parameters.
+
+Reading it is the first `R` reference in this source. Gradle generates `R.java`
+as a matter of course, but `tools/build-apk.sh` had no step producing it, so
+that build now runs an explicit `aapt package -m -J` pass before `javac`.
 
 ## What the service actually does
 

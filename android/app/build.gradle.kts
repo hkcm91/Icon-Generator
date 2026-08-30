@@ -2,12 +2,17 @@ plugins {
     id("com.android.application")
 }
 
-/* The wallpaper page is not duplicated into the app. It is copied out of
- * ../wallpaper at build time, so there is one copy of it in the repository
+/* The wallpaper pages are not duplicated into the app. They are copied out of
+ * ../wallpaper at build time, so there is one copy of each in the repository
  * and the APK cannot drift from the version you have been testing in a
- * browser. */
+ * browser.
+ *
+ * Both pages ship, and the service picks between them at load time from the
+ * `wallpaper_page` string resource — they present the same host interface, so
+ * nothing else in the app knows or cares which one it is running. */
 val copyWallpaperPage by tasks.registering(Copy::class) {
     from(rootProject.file("../wallpaper/index.html"))
+    from(rootProject.file("../wallpaper/milk.html"))
     into(layout.buildDirectory.dir("generated/wallpaperAssets"))
 }
 

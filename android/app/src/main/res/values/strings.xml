@@ -3,4 +3,12 @@
     <string name="app_name">Liquid Shaker</string>
     <string name="wallpaper_name">Liquid Shaker</string>
     <string name="wallpaper_description">Tilt to pour it, shake to throw the glitter.</string>
+
+    <!-- Which page in assets/ the service hosts. Both are copied in by the
+         build and both speak the same host interface, so this is the only
+         thing that has to change to run the other one:
+           index.html  the liquid shaker
+           milk.html   the milky blob
+         A query string is allowed, e.g. milk.html?tint=lilac&q=1 -->
+    <string name="wallpaper_page">index.html</string>
 </resources>

@@ -37,7 +37,12 @@ import android.widget.FrameLayout;
 public class ShakerWallpaperService extends WallpaperService {
 
     private static final String TAG = "LiquidShaker";
-    private static final String PAGE = "file:///android_asset/index.html";
+    /* Which page to host, from res/values/strings.xml rather than baked in
+     * here. Both pages the build copies into assets/ present the same
+     * window.__shaker interface — same methods, same units, same device frame
+     * — so the service does not need to know which one it has, and swapping
+     * wallpapers is a one-line resource change rather than a second Engine. */
+    private static final String ASSETS = "file:///android_asset/";
 
     @Override
     public Engine onCreateEngine() {
@@ -101,7 +106,7 @@ public class ShakerWallpaperService extends WallpaperService {
                     else if (isVisible()) js("window.__shaker&&window.__shaker.resume()");
                 }
             });
-            web.loadUrl(PAGE);
+            web.loadUrl(ASSETS + ShakerWallpaperService.this.getString(R.string.wallpaper_page));
 
             root = new FrameLayout(ShakerWallpaperService.this);
             root.addView(web, new ViewGroup.LayoutParams(

@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Milk</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #efeaea; overflow: hidden;
+    overscroll-behavior: none; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #tap {
+    position: fixed; inset: auto 0 8% 0; text-align: center;
+    font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #9a8f92; pointer-events: none; transition: opacity .6s;
+  }
+  #tap.hide { opacity: 0; }
+  #enable {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    padding: 14px 22px; border: 0; border-radius: 999px;
+    background: #d9a48c; color: #fff; font: 600 16px system-ui, sans-serif;
+    box-shadow: 0 6px 20px rgba(217,164,140,.45); display: none;
+  }
+  #nogl {
+    position: fixed; inset: 0; display: none; place-items: center;
+    padding: 0 32px; text-align: center;
+    font: 500 15px/1.6 system-ui, -apple-system, sans-serif; color: #6b6265;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="tap">tilt me</div>
+<button id="enable">Enable motion</button>
+<div id="nogl">This wallpaper needs WebGL 2.</div>
+<script>
+"use strict";
+
+/* Milk — a milky translucent blob, raymarched, as an interactive wallpaper.
+ *
+ * The sibling page in ./index.html is a 2-D liquid: a fluid solver seen
+ * side-on through glass. This one is the other half of the idea — a single
+ * soft three-dimensional body of a dense scattering medium, which is a
+ * different problem entirely, because almost everything you recognise about
+ * milk happens *inside* it rather than at its surface.
+ *
+ * Three pieces, and the whole look lives in the second one:
+ *
+ *   - A SIGNED DISTANCE FIELD, six spheres smooth-unioned into one body and
+ *     sphere-traced. Metaballs are what give an organic form that can move and
+ *     merge without any topology to maintain.
+ *
+ *   - A PARTICIPATING MEDIUM. The camera ray refracts into the body, a second
+ *     march measures how far it travels before it leaves, and that thickness
+ *     drives everything: Beer-Lambert extinction along the path, in-scattering
+ *     of the light that gets absorbed, and the light piped through the thin
+ *     parts from behind. This is the difference between milk and white
+ *     plastic. A surface shader — however soft its falloff — has no notion of
+ *     how much material is behind the pixel, so its thin edges are exactly as
+ *     dense as its middle, and that reads as an opaque marble every time.
+ *
+ *   - THE PHONE. Gravity squashes the body along its own axis, the way a
+ *     droplet resting on a table is wider than it is tall; shaking it drives
+ *     six independent springs, one per metaball, so the blob lurches, lags and
+ *     ripples internally instead of sliding about as a rigid lump.
+ *
+ * The simulation runs on a fixed timestep for the same reason the shaker does
+ * — see FIXED_DT.
+ */
+
+const params = new URLSearchParams(location.search);
+const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
+
+/* Palettes. Each is a `pale` (the neutral the medium scatters, which is what a
+ * thin edge is), a `deep` (what a long path through it leaves), a backdrop
+ * pair, a glow and a rim.
+ *
+ * The deep colour is not painted on: it is inverted into a per-channel
+ * *absorption* coefficient, and the colour that reaches the eye is the ratio
+ * of scattering to extinction that falls out of it. So it only ever appears
+ * where the body is genuinely thick, and the gradient between the two is a
+ * consequence of the shape rather than a ramp laid over it.
+ */
+const PALETTES = {
+  cream:  { pale: [1.00, 0.975, 0.95], deep: [0.86, 0.47, 0.32],
+            bgA: [0.775, 0.745, 0.735], bgB: [0.475, 0.435, 0.445],
+            glow: [1.00, 0.96, 0.92], rim: [1.00, 0.74, 0.55] },
+  rose:   { pale: [1.00, 0.965, 0.965], deep: [0.84, 0.35, 0.46],
+            bgA: [0.775, 0.735, 0.745], bgB: [0.470, 0.420, 0.455],
+            glow: [1.00, 0.94, 0.95], rim: [1.00, 0.64, 0.72] },
+  mint:   { pale: [0.975, 1.00, 0.985], deep: [0.31, 0.76, 0.62],
+            bgA: [0.740, 0.775, 0.760], bgB: [0.420, 0.470, 0.455],
+            glow: [0.95, 1.00, 0.97], rim: [0.62, 1.00, 0.86] },
+  lilac:  { pale: [0.985, 0.975, 1.00], deep: [0.46, 0.36, 0.84],
+            bgA: [0.745, 0.735, 0.785], bgB: [0.430, 0.420, 0.485],
+            glow: [0.96, 0.95, 1.00], rim: [0.70, 0.62, 1.00] },
+  blue:   { pale: [0.965, 0.985, 1.00], deep: [0.22, 0.53, 0.88],
+            bgA: [0.735, 0.765, 0.790], bgB: [0.405, 0.450, 0.495],
+            glow: [0.94, 0.97, 1.00], rim: [0.55, 0.78, 1.00] },
+};
+
+const CONFIG = {
+  tint: PALETTES[params.get("tint")] ? params.get("tint") : "cream",
+  balls: Math.max(2, Math.min(8, Math.round(num("balls", 6)))),
+  steps: Math.max(24, Math.min(160, Math.round(num("steps", 72)))),
+  inner: Math.max(6, Math.min(48, Math.round(num("inner", 20)))),
+  /* Density of the medium, in inverse world units.
+   *
+   * What this really sets is where the transition from white to the deep
+   * colour falls, and the only value that looks like milk is the one that
+   * puts it inside the range of thicknesses the body actually presents —
+   * about 1.4 units through the middle and nothing at the silhouette. Too
+   * high and every pixel is already at the asymptote, which is a flat wash of
+   * the deep colour with white nowhere in it; too low and the transition
+   * never starts and it is a soap bubble. */
+  density: num("density", 1.0),
+  smooth: num("smooth", 0.24),        // metaball blend radius
+  /* Render scale. Sphere tracing is fill-rate bound, so this is the dial that
+   * matters on a phone — not the metaball count, which costs the same whether
+   * it is drawn over ten pixels or a million. */
+  quality: num("q", 0),
+  seed: num("seed", 20260830),
+};
+
+const PAL = PALETTES[CONFIG.tint];
+
+const canvas = document.getElementById("c");
+const hint = document.getElementById("tap");
+const enableBtn = document.getElementById("enable");
+
+const gl = canvas.getContext("webgl2", {
+  alpha: false, antialias: false, depth: false, stencil: false,
+  powerPreference: "high-performance", preserveDrawingBuffer: false,
+});
+if (!gl) {
+  document.getElementById("nogl").style.display = "grid";
+  canvas.style.display = "none";
+}
+
+/* ------------------------------------------------------------------ shader */
+
+const VERT = `#version 300 es
+void main(){
+  /* A full-screen triangle rather than a quad: one primitive, no seam down
+   * the diagonal, and the vertices come from gl_VertexID so there is no
+   * buffer to bind. */
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+const FRAG = (C) => `#version 300 es
+precision highp float;
+out vec4 fragColor;
+
+#define NB ${C.balls}
+#define STEPS ${C.steps}
+#define ISTEPS ${C.inner}
+
+uniform vec2  uRes;
+uniform float uTime;
+uniform vec4  uBalls[NB];     // xyz centre, w radius
+uniform vec3  uWobble;        // squash-stretch axis, length = amount
+uniform vec3  uPale, uDeep, uBgA, uBgB, uGlow, uRim;
+uniform float uDensity, uSmooth, uScroll, uBound;
+
+/* Milk is not glass, and its index of refraction is barely above water's. The
+ * temptation is to crank it for a showier caustic; at 1.5 the body starts
+ * behaving like a lens and reads as acrylic. */
+#define IOR 1.36
+
+/* The lights are fixed in screen space and never turn with the phone. Gravity
+ * turns the *body* — that is what the sag term does — but a highlight that
+ * followed gravity around would give every frame its own private sun, which
+ * is the single most reliable way to make a 3-D render look fake. */
+const vec3 L1 = normalize(vec3(-0.42,  0.72,  0.55));   // key, front upper left
+const vec3 L2 = normalize(vec3( 0.55, -0.30, -0.78));   // back right, for transmission
+
+float smin(float a, float b, float k){
+  float h = clamp(0.5 + 0.5*(b - a)/k, 0.0, 1.0);
+  return mix(b, a, h) - k*h*(1.0 - h);
+}
+
+/* The body, as a distance field.
+ *
+ * The squash-stretch is applied by warping the sample point through the
+ * INVERSE of the deformation, which deforms the shape by the deformation
+ * itself. That makes the field no longer a true distance — an anisotropic
+ * scale does not preserve one — so the result is multiplied by the smaller of
+ * the two scale factors, which is the standard conservative bound. Without
+ * that the sphere trace overshoots wherever the body is squeezed and the
+ * silhouette breaks into notches.
+ *
+ * The scale is volume preserving: stretch by s along the axis, squeeze by
+ * 1/sqrt(s) across it, so s * (1/sqrt(s))^2 == 1. A blob that changed volume
+ * as it wobbled would read as breathing rather than as jelly.
+ */
+float map(vec3 p){
+  float k = 1.0;
+  float m = length(uWobble);
+  if (m > 1e-4){
+    vec3 ax = uWobble / m;
+    float s = 1.0 + m;
+    float t = inversesqrt(s);
+    float along = dot(p, ax);
+    p = (p - ax*along)/t + ax*(along/s);
+    k = min(s, t);
+  }
+  float d = length(p - uBalls[0].xyz) - uBalls[0].w;
+  for (int i = 1; i < NB; i++){
+    d = smin(d, length(p - uBalls[i].xyz) - uBalls[i].w, uSmooth);
+  }
+  return d * k;
+}
+
+vec3 calcNormal(vec3 p){
+  const vec2 e = vec2(1.0, -1.0) * 0.0016;
+  return normalize(e.xyy*map(p + e.xyy) + e.yyx*map(p + e.yyx)
+                 + e.yxy*map(p + e.yxy) + e.xxx*map(p + e.xxx));
+}
+
+/* The backdrop, as a function of direction rather than of screen position.
+ *
+ * That is what lets the same function serve three jobs — the pixels around
+ * the blob, what is seen *through* it after refraction, and what it reflects
+ * — so the displaced image behind the body belongs to the same room as the
+ * pixels beside it. Written in screen space it would not: refracting a ray
+ * would sample a backdrop that does not exist anywhere off screen, and the
+ * body would show a copy of the wallpaper rather than a view through itself.
+ */
+vec3 backdrop(vec2 q){
+  vec3 c = mix(uBgA, uBgB, smoothstep(0.0, 1.0, clamp(0.52 - q.y*0.46, 0.0, 1.0)));
+  float r = length((q - vec2(-0.16, 0.40)) * vec2(1.00, 0.62));
+  c += uGlow * (1.0 - smoothstep(0.0, 1.25, r)) * 0.22;      // soft studio glow
+  c *= 1.0 - 0.34 * smoothstep(0.35, 1.75, length(q));       // vignette
+  return c;
+}
+
+/* The 3.0 is not free choice: it is what makes the mapping agree with screen
+ * space along the primary ray, so the backdrop seen beside the body and the
+ * backdrop seen through it are the same picture rather than two different
+ * gradients that happen to meet at the silhouette. */
+vec3 bgDir(vec3 d){ return backdrop(d.xy / (abs(d.z) + 0.55) * 3.0); }
+
+/* What the surface reflects is not what is behind the camera's shoulder.
+ *
+ * A studio has bright sources off frame, and reflecting only the visible
+ * backdrop makes the rim darker than the body — which is backwards, and the
+ * single thing that most reliably turns something translucent into something
+ * that looks like painted rubber. So the environment is the backdrop lifted
+ * clear of it, with the sources themselves in it.
+ *
+ * The lift is deliberately small. Raised far enough to be bright in every
+ * direction it stops mattering which way the surface faces, and since the
+ * Fresnel term goes to one all the way round the silhouette, what you get is
+ * a uniform white line traced round the body — a drawn outline, not an edge.
+ * Nearly all of the brightness at the rim should come from the two lobes,
+ * which have a direction and therefore vary along it. */
+vec3 envRefl(vec3 d){
+  vec3 c = bgDir(d) * 0.80 + 0.26;
+  c += vec3(1.0) * pow(max(dot(d, L1), 0.0), 8.0) * 0.95;
+  c += uRim * pow(max(dot(d, L2), 0.0), 5.0) * 0.55;
+  return c;
+}
+
+/* A shadow, because nothing else in the frame says where the body is.
+ *
+ * The backdrop is otherwise sampled by direction alone, which puts it at
+ * infinity — and something floating in front of an infinite gradient has no
+ * position in the scene at all, only a size. So for the primary ray the
+ * backdrop is given a plane to live on, and the balls are tested against the
+ * light ray from the point where the camera ray crosses it.
+ *
+ * It is the real balls, not a blurred ellipse under the body: the shadow
+ * changes shape as the blob does, stretches when it stretches, and swings
+ * across the backdrop when it is shaken, all without being animated.
+ */
+float planeShadow(vec3 ro, vec3 rd){
+  const float PZ = -0.95;
+  if (rd.z >= -1e-4) return 0.0;
+  vec3 p = ro + rd * ((PZ - ro.z) / rd.z);
+  float occ = 0.0;
+  for (int i = 0; i < NB; i++){
+    vec3 v = uBalls[i].xyz - p;
+    float s = dot(v, L1);
+    if (s <= 0.0) continue;
+    // Perpendicular miss distance, kept squared: this runs for every pixel of
+    // backdrop on the screen, and the comparison does not need the root.
+    float d2 = max(dot(v, v) - s*s, 0.0);
+    // Softer the further the caster is from the surface, as a real one is.
+    float hard = uBalls[i].w * 0.30;
+    float soft = uBalls[i].w + 0.10 + s*0.55;
+    occ = max(occ, 1.0 - smoothstep(hard*hard, soft*soft, d2));
+  }
+  return occ;
+}
+
+vec3 bgPrimary(vec3 ro, vec3 rd){
+  return bgDir(rd) * (1.0 - planeShadow(ro, rd) * 0.26);
+}
+
+/* Cream that has not been stirred in.
+ *
+ * One product of three sines rather than a hashed lattice noise, and rather
+ * than the two octaves this started with. It is evaluated once per interior
+ * march step — twenty times per pixel of body — and it is then integrated
+ * along the path, so any detail finer than the body is averaged away before
+ * anyone sees it. The second octave cost real milliseconds to add texture that
+ * the integral immediately took back out. */
+float swirl(vec3 p){
+  p *= 2.2;
+  float a = sin(p.x + uTime*0.13) * sin(p.y*1.19 - uTime*0.09) * sin(p.z*0.87 + uTime*0.07);
+  return clamp(0.5 + 0.50*a, 0.0, 1.0);
+}
+
+vec3 tonemap(vec3 c){
+  c = max(c, 0.0);
+  // Shoulder only above the highlights; these are pastels and a full filmic
+  // curve drains them.
+  return c / (1.0 + max(c - 0.86, 0.0) * 0.95);
+}
+
+void main(){
+  vec2 q = (gl_FragCoord.xy - 0.5*uRes) / min(uRes.x, uRes.y);
+  vec3 ro = vec3(uScroll, 0.0, 3.9);
+  vec3 rd = normalize(vec3(q, -2.4));
+
+  // The angular width of one pixel, for the silhouette coverage below.
+  float px = 1.0 / (min(uRes.x, uRes.y) * 2.4);
+
+  /* Everything is inside this sphere, and skipping the march for rays that
+   * miss it is most of the frame — well over half the screen is backdrop.
+   *
+   * It is measured each frame from where the balls actually are rather than
+   * being a constant covering the worst case they could reach. The worst case
+   * is 2.3 units and the body normally sits inside 1.1, and the difference is
+   * not the handful of pixels that clear the smaller sphere: it is that every
+   * ray passing anywhere near the body runs the full march between the two
+   * intersections, so a bound twice too wide has thousands of background
+   * pixels marching a corridor that was empty all along.
+   */
+  float bq = dot(ro, rd);
+  float bc = dot(ro, ro) - uBound*uBound;
+  float bh = bq*bq - bc;
+  if (bh < 0.0){ fragColor = vec4(tonemap(bgPrimary(ro, rd)), 1.0); return; }
+  bh = sqrt(bh);
+  float t0 = max(-bq - bh, 0.0), t1 = -bq + bh;
+
+  float t = t0, dmin = 1e9, tmin = t0;
+  bool hit = false;
+  for (int i = 0; i < STEPS; i++){
+    float d = map(ro + rd*t);
+    float rel = d / max(t, 1e-3);          // distance as an angle, not a length
+    if (rel < dmin){ dmin = rel; tmin = t; }
+    if (d < 0.0008){ hit = true; break; }
+    t += max(d, 0.0015);
+    if (t > t1) break;
+  }
+
+  /* Analytic edge coverage. A sphere trace already knows how close it came to
+   * the surface, so a ray that misses by less than a pixel is a partly covered
+   * pixel rather than a missed one — antialiasing for free, from a quantity
+   * the march computes anyway. Supersampling the whole frame to get the same
+   * silhouette would cost the entire render again. */
+  float alpha = 1.0;
+  if (!hit){
+    alpha = 1.0 - smoothstep(0.0, px*1.7, dmin);
+    if (alpha < 0.003){ fragColor = vec4(tonemap(bgPrimary(ro, rd)), 1.0); return; }
+    t = tmin;                                // shade the closest approach
+  }
+
+  vec3 pos = ro + rd*t;
+  vec3 n = calcNormal(pos);
+
+  /* --- into the medium -------------------------------------------------- */
+
+  vec3 rr = refract(rd, n, 1.0/IOR);
+  if (dot(rr, rr) < 1e-6) rr = reflect(rd, n);
+
+  /* March to the far side, from inside. The field is negative in there, so
+   * -map is the distance to the boundary and stepping by it is the same
+   * sphere trace running the other way. What comes back is how much material
+   * this pixel is looking through, which is the one number the whole material
+   * hangs off. */
+  vec3 ip = pos + rr*0.012;
+  float th = 0.0, dens = 0.0;
+  for (int i = 0; i < ISTEPS; i++){
+    float d = -map(ip);
+    if (d < 0.002) break;
+    float st = clamp(d, 0.02, 0.35);
+    dens += st * swirl(ip);
+    th += st;
+    ip += rr*st;
+  }
+  float sw = th > 1e-4 ? dens/th : 0.5;      // path-averaged cream
+
+  /* Scattering and absorption are separate coefficients, and keeping them
+   * separate is the whole reason the body has a colour.
+   *
+   * Milk scatters almost neutrally — that is why it is white — and absorbs
+   * selectively. So the scattering coefficient is grey and only the
+   * absorption carries the tint, inverted out of the deep colour. Extinction
+   * is their sum; the single-scattering albedo, which is the colour the
+   * medium sends back to the eye, is their ratio.
+   *
+   * Folding the tint into extinction alone (which is the obvious thing to
+   * write, and what this did) makes the light come back out white however
+   * deep it went: the colour then exists only in what the *backdrop* loses on
+   * its way through, so it survives as a thin fringe at the silhouette and
+   * nowhere else. The body was porcelain.
+   */
+  float od = th * uDensity * (0.55 + 0.90*sw);
+  const float ss = 1.0;                        // scattering, neutral
+  /* Milk absorbs very little — it is a scattering medium almost to the
+   * exclusion of anything else, which is why it is white rather than
+   * coloured. At an absorption this low the albedo stays near neutral and
+   * the tint is what a long path leaves behind rather than the body's colour;
+   * pushed much past here the whole thing turns to a single flat wash of the
+   * deep colour and the white goes out of it entirely. */
+  vec3 sa = (1.0 - uDeep) * 0.62;              // absorption, tinted
+  vec3 sigma = sa + ss;
+  vec3 albedo = ss / sigma;
+  vec3 trans = exp(-od * sigma);
+
+  /* Multiple scattering, wrapped. In a dense medium light does not stop at the
+   * terminator: it enters the lit side, bounces a few dozen times and leaves
+   * somewhere round the curve, which is why milk and wax and skin have no hard
+   * shadow edge. Remapping N.L from -1..1 rather than clamping it at zero is
+   * the cheap standing-in for that, and at this density it is the honest
+   * answer — the mean free path is short enough that a real solve would come
+   * back looking much the same. */
+  float wrapKey = pow(clamp(dot(n, L1)*0.5 + 0.5, 0.0, 1.0), 1.5);
+
+  /* And the light that comes through from behind, which is the other half of
+   * translucency and the half that is usually missing. It is strongest where
+   * the eye is looking along the light's own direction of travel (forward
+   * scattering) and it is killed by thickness, so it lights the rim and the
+   * thin lobes and nothing else. */
+  float backLit = pow(clamp(dot(rd, L2), 0.0, 1.0), 3.0) * exp(-th*uDensity*1.5);
+
+  vec3 inscatter = uPale * (0.20 + 1.10*wrapKey) + uRim * backLit * 1.30;
+
+  /* Radiance leaving the surface toward the eye: what the backdrop sends
+   * through, attenuated, plus what the medium scatters back.
+   *
+   * The second term is the single-scattering integral for a uniform source
+   * done in closed form — albedo * J * (1 - exp(-sigma*T)) — and both limits
+   * of it are the thing being drawn. Where the path is short, (1 - trans)
+   * goes as sigma*T, the extinction cancels against the albedo and what is
+   * left is ss*T: neutral, faint haze, so a thin edge stays white whatever
+   * the tint. Where it is long the exponential dies and what is left is the
+   * albedo itself, which is the deep colour. The ramp between them is not
+   * painted anywhere; it is the geometry's own thickness. */
+  vec3 col = bgDir(rr)*trans + albedo*inscatter*(1.0 - trans);
+
+  /* --- and the surface -------------------------------------------------- */
+
+  float fres = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 5.0);
+  float F = 0.035 + 0.965*fres;
+  col = mix(col, envRefl(reflect(rd, n)), F*0.44);
+
+  /* Two lobes for the key, not one. A single tight highlight is a pinprick on
+   * a body this large and reads as a dot stuck on the render; a single broad
+   * one is a smear with no source in it. Real glossy surfaces give both, and
+   * the pair is what makes the size of the light legible. */
+  vec3 h1 = normalize(L1 - rd);
+  float nh1 = max(dot(n, h1), 0.0);
+  col += vec3(1.0) * pow(nh1, 620.0) * 2.2;
+  col += vec3(1.0) * pow(nh1, 46.0) * 0.22;
+  vec3 h2 = normalize(L2 - rd);
+  col += uRim * pow(max(dot(n, h2), 0.0), 60.0) * 0.55;
+
+  // The halo at a grazing angle: a lot of material seen through very little
+  // of it, which is the brightest place on anything translucent.
+  col += mix(uPale, uRim, 0.35) * pow(fres, 1.4) * 0.14;
+
+  col = mix(bgPrimary(ro, rd), col, alpha);
+
+  /* Dither. These are wide, smooth, low-contrast gradients over a phone
+   * screen, which is the exact case 8-bit output bands in. */
+  float dit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+  fragColor = vec4(tonemap(col) + dit/255.0, 1.0);
+}`;
+
+let prog = null, uni = {};
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(s) + "\n" + src);
+  }
+  return s;
+}
+
+function buildProgram() {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, FRAG(CONFIG)));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(p));
+  }
+  prog = p;
+  gl.useProgram(p);
+  for (const name of ["uRes", "uTime", "uBalls", "uWobble", "uPale", "uDeep",
+                      "uBgA", "uBgB", "uGlow", "uRim", "uDensity", "uSmooth",
+                      "uScroll", "uBound"]) {
+    uni[name] = gl.getUniformLocation(p, name);
+  }
+  gl.uniform3fv(uni.uPale, PAL.pale);
+  gl.uniform3fv(uni.uDeep, PAL.deep);
+  gl.uniform3fv(uni.uBgA, PAL.bgA);
+  gl.uniform3fv(uni.uBgB, PAL.bgB);
+  gl.uniform3fv(uni.uGlow, PAL.glow);
+  gl.uniform3fv(uni.uRim, PAL.rim);
+  gl.uniform1f(uni.uDensity, CONFIG.density);
+  gl.uniform1f(uni.uSmooth, CONFIG.smooth);
+}
+
+/* ------------------------------------------------------------------ canvas */
+
+let W = 0, H = 0, RS = 1;
+
+function resize() {
+  W = Math.max(1, Math.floor(window.innerWidth));
+  H = Math.max(1, Math.floor(window.innerHeight));
+  const dpr = window.devicePixelRatio || 1;
+  /* Not the full device pixel ratio. A sphere trace runs the whole marching
+   * loop per pixel, so cost is linear in area and a 3x phone would spend nine
+   * times what a logical pixel costs — for detail that a body this soft has
+   * nowhere to put. The silhouette, which is the only high-frequency thing on
+   * screen, is antialiased analytically instead. */
+  RS = CONFIG.quality > 0 ? CONFIG.quality : Math.min(dpr, 1.25);
+  canvas.width = Math.max(1, Math.floor(W * RS));
+  canvas.height = Math.max(1, Math.floor(H * RS));
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.uniform2f(uni.uRes, canvas.width, canvas.height);
+}
+
+/* ------------------------------------------------------------------ motion
+ *
+ * Lifted wholesale from ./index.html, deliberately: the split of the
+ * accelerometer into a low-passed gravity and a residual shake is the same
+ * measurement whatever is being driven by it, and the two pages agreeing on
+ * it means a fix to the motion model is a fix to both.
+ */
+
+const gDir = { x: 0, y: -1 };      // unit gravity, screen frame, +y up
+let gMag = 1;
+const accel = { x: 0, y: 0 };      // container acceleration, units of g
+const gravRaw = { x: 0, y: -1 };
+let swirlInput = 0;
+let haveAccelGravity = false;
+
+function setGravityVector(x, y) {
+  gMag = Math.min(1, Math.hypot(x, y));
+  // Flat on a table there is no meaningful in-plane direction; keep the last
+  // good one rather than snapping to sensor noise.
+  if (gMag > 0.04) { gDir.x = x / gMag; gDir.y = y / gMag; }
+}
+
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x === null) return;
+  hint.classList.add("hide");
+  haveAccelGravity = true;
+
+  /* Device axes already run +x right and +y up the screen, and this renderer
+   * works in the same frame — so unlike the 2-D page, which draws with +y
+   * down, nothing is flipped here. Units of g. */
+  const sx = a.x / 9.81, sy = a.y / 9.81;
+
+  const k = 0.06;
+  gravRaw.x += (sx - gravRaw.x) * k;
+  gravRaw.y += (sy - gravRaw.y) * k;
+  // The accelerometer reads the reaction to gravity, so down is -reading.
+  setGravityVector(-gravRaw.x, -gravRaw.y);
+
+  accel.x = sx - gravRaw.x;
+  accel.y = sy - gravRaw.y;
+
+  if (e.rotationRate) {
+    swirlInput = Math.max(-3, Math.min(3, (e.rotationRate.alpha || 0) / 360));
+  }
+}
+
+function onOrientation(e) {
+  if (haveAccelGravity) return;
+  if (e.beta === null && e.gamma === null) return;
+  hint.classList.add("hide");
+  const b = (e.beta || 0) * Math.PI / 180;
+  const gm = (e.gamma || 0) * Math.PI / 180;
+  // Screen-plane gravity out of the spec's Z-X'-Y'' rotation, with +y up.
+  setGravityVector(Math.cos(b) * Math.sin(gm), -Math.sin(b));
+}
+
+function listenMotion() {
+  window.addEventListener("deviceorientation", onOrientation, true);
+  window.addEventListener("devicemotion", onMotion, true);
+}
+
+const needsPermission =
+  typeof DeviceMotionEvent !== "undefined" &&
+  typeof DeviceMotionEvent.requestPermission === "function";
+
+if (needsPermission) {
+  enableBtn.style.display = "block";
+  enableBtn.addEventListener("click", async () => {
+    try {
+      await DeviceMotionEvent.requestPermission();
+      if (typeof DeviceOrientationEvent?.requestPermission === "function") {
+        await DeviceOrientationEvent.requestPermission();
+      }
+    } catch (_) { /* denied — the pointer fallback still works */ }
+    enableBtn.style.display = "none";
+    listenMotion();
+  });
+} else {
+  listenMotion();
+}
+
+/* Pointer fallback, so the thing is testable on a desktop: drag to tilt, flick
+ * to shake, click to poke. Both drive the same two channels the sensors feed,
+ * so the fallback exercises the real physics rather than a side path. */
+let dragging = false, lastPointer = null, dragMoved = false;
+canvas.addEventListener("pointerdown", (e) => {
+  dragging = true; dragMoved = false;
+  lastPointer = { x: e.clientX, y: e.clientY };
+  hint.classList.add("hide");
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  const dx = e.clientX - lastPointer.x, dy = e.clientY - lastPointer.y;
+  lastPointer = { x: e.clientX, y: e.clientY };
+  if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
+  accel.x = Math.max(-3, Math.min(3, dx * 0.05));
+  accel.y = Math.max(-3, Math.min(3, -dy * 0.05));
+  const nx = (e.clientX - W * 0.5) / (Math.min(W, H) * 0.5);
+  const ny = -(e.clientY - H * 0.5) / (Math.min(W, H) * 0.5);
+  const len = Math.hypot(nx, ny) || 1;
+  setGravityVector(nx / len, ny / len);
+});
+const endDrag = (e) => {
+  if (dragging && !dragMoved && e && e.clientX !== undefined) {
+    window.__milk.tap(e.clientX / W, e.clientY / H);
+  }
+  dragging = false;
+  accel.x = 0; accel.y = 0;
+};
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+canvas.addEventListener("pointerleave", endDrag);
+
+/* ----------------------------------------------------------------- the body
+ *
+ * Six metaballs, each on a slow orbit of its own and each hung off that orbit
+ * by a spring.
+ *
+ * One spring for the whole blob would have been less code and would have got
+ * the lurch — the body arriving a moment after the phone does — but nothing
+ * else. Six springs of different stiffness give the thing an inside: a shake
+ * arrives at the small balls first and the large one last, so the form
+ * ripples through itself on the way back to rest rather than translating
+ * rigidly and stopping. Stiffness scales with 1/radius for the honest reason,
+ * that a small lobe of a real body has less mass hanging off the same
+ * restoring force and therefore a higher natural frequency.
+ */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+const NB = CONFIG.balls;
+const balls = [];
+{
+  const rnd = mulberry32(CONFIG.seed);
+  for (let i = 0; i < NB; i++) {
+    /* The first is the core: big, nearly still, so the body always has a
+     * middle. The rest orbit far enough out to read as lobes rather than as
+     * bumps — the whole reason for a metaball body is that the silhouette
+     * changes shape, and satellites tucked inside the core give a shape that
+     * is an ellipsoid at every moment. Not so far that they come away from it,
+     * though — see the displacement cap below, which is what guarantees the
+     * body stays one connected thing. */
+    const core = i === 0;
+    balls.push({
+      r: core ? 0.42 : 0.23 + 0.13 * rnd(),
+      orb: core ? 0.05 : 0.22 + 0.20 * rnd(),
+      f: [0.09 + 0.14 * rnd(), 0.09 + 0.14 * rnd(), 0.07 + 0.12 * rnd()],
+      ph: [rnd() * 6.283, rnd() * 6.283, rnd() * 6.283],
+      p: [0, 0, 0], v: [0, 0, 0],
+    });
+  }
+}
+
+const wob = [0, 0, 0];        // squash-stretch axis * amount
+const wobV = [0, 0, 0];
+let swirlAngle = 0;
+let simTime = 0;
+let bound = 2.3;              // radius of the sphere the body currently fits in
+const ballBuf = new Float32Array(NB * 4);
+
+/* Fixed timestep, for exactly the reason the shaker documents: a spring
+ * integrated with semi-implicit Euler has a stability limit and a damping
+ * behaviour that both depend on the step, so a variable step makes the jelly
+ * stiffer at 120fps than at 30 and can make it explode on a dropped frame. */
+const FIXED_DT = 1 / 60;
+
+function step(dt) {
+  simTime += dt;
+
+  // A twist about the viewing axis carries the orbits round with it, so
+  // spinning the phone stirs the form instead of merely tilting it.
+  swirlAngle += swirlInput * dt * 2.2;
+  swirlInput *= Math.pow(0.02, dt);
+
+  const ca = Math.cos(swirlAngle), sa = Math.sin(swirlAngle);
+
+  /* Shake forcing. In the non-inertial frame of a body being carried about,
+   * its contents feel -a; the springs then do the lagging. Sign is the whole
+   * point — force the springs with +a and the blob leads the phone, which no
+   * physical object has ever done. */
+  const fx = -accel.x * 5.2, fy = -accel.y * 5.2;
+
+  for (let i = 0; i < NB; i++) {
+    const b = balls[i];
+    let rx = b.orb * Math.sin(6.283 * b.f[0] * simTime + b.ph[0]);
+    let ry = b.orb * Math.sin(6.283 * b.f[1] * simTime + b.ph[1]);
+    const rz = b.orb * 0.7 * Math.sin(6.283 * b.f[2] * simTime + b.ph[2]);
+    const tx = rx * ca - ry * sa, ty = rx * sa + ry * ca;
+    rx = tx; ry = ty;
+
+    const K = 62 * (0.30 / b.r);          // small lobes are stiffer
+    const C = 2 * 0.34 * Math.sqrt(K);
+    const ax = (rx - b.p[0]) * K - b.v[0] * C + fx;
+    const ay = (ry - b.p[1]) * K - b.v[1] * C + fy;
+    const az = (rz - b.p[2]) * K - b.v[2] * C;
+    b.v[0] += ax * dt; b.v[1] += ay * dt; b.v[2] += az * dt;
+    b.p[0] += b.v[0] * dt; b.p[1] += b.v[1] * dt; b.p[2] += b.v[2] * dt;
+
+    /* Capped, so that a hard enough shake cannot fling a lobe off the body.
+     * The springs alone do not guarantee it: the forcing is unbounded, and a
+     * satellite that travelled far enough from the core would stop overlapping
+     * it and the blob would come apart into droplets. Measured over a minute
+     * of shaking, the furthest a satellite gets from the core is 0.58 units
+     * against the 0.65 at which the two would separate. */
+    const d = Math.hypot(b.p[0], b.p[1], b.p[2]);
+    if (d > 0.62) {
+      const k = 0.62 / d;
+      b.p[0] *= k; b.p[1] *= k; b.p[2] *= k;
+      b.v[0] *= k; b.v[1] *= k; b.v[2] *= k;
+    }
+
+    ballBuf[i * 4] = b.p[0];
+    ballBuf[i * 4 + 1] = b.p[1];
+    ballBuf[i * 4 + 2] = b.p[2];
+    ballBuf[i * 4 + 3] = b.r;
+  }
+
+  /* Squash and stretch.
+   *
+   * Two things drive it and they are different in kind. Gravity is a standing
+   * deformation: a soft body resting under its own weight is wider than it is
+   * tall, and the target is a squeeze along the gravity axis proportional to
+   * how much of gravity lies in the screen plane — so a phone lying flat has
+   * a round blob and a phone held upright has a sagging one, which is what
+   * makes the tilt readable at all. Shaking is a transient: the body is
+   * stretched along the direction it is being dragged, and the spring runs
+   * that out over about a second.
+   */
+  const sag = -0.16 * gMag;
+  const tx = gDir.x * sag + accel.x * 0.16;
+  const ty = gDir.y * sag + accel.y * 0.16;
+  const K = 44, C = 2 * 0.42 * Math.sqrt(K);
+  wobV[0] += ((tx - wob[0]) * K - wobV[0] * C) * dt;
+  wobV[1] += ((ty - wob[1]) * K - wobV[1] * C) * dt;
+  wobV[2] += ((0 - wob[2]) * K - wobV[2] * C) * dt;
+  wob[0] += wobV[0] * dt; wob[1] += wobV[1] * dt; wob[2] += wobV[2] * dt;
+
+  // Capped for the same reason the displacement is: the bounding sphere.
+  let wm = Math.hypot(wob[0], wob[1], wob[2]);
+  if (wm > 0.45) {
+    const k = 0.45 / wm;
+    wob[0] *= k; wob[1] *= k; wob[2] *= k;
+    wm = 0.45;
+  }
+
+  /* The sphere the shader traces against, measured rather than assumed.
+   *
+   * Each ball reaches |centre| + radius; the smooth union bulges past that by
+   * roughly half the blend radius where two of them meet; and the stretch
+   * scales the whole thing by 1 + |wobble| along its axis. Erring high is
+   * only slow, but erring low clips the body, so the margin is real.
+   */
+  let ext = 0;
+  for (let i = 0; i < NB; i++) {
+    const b = balls[i];
+    ext = Math.max(ext, Math.hypot(b.p[0], b.p[1], b.p[2]) + b.r);
+  }
+  bound = (ext + CONFIG.smooth * 0.5) * (1 + wm) + 0.05;
+}
+
+/* ------------------------------------------------------------------- render */
+
+let scroll = 0, scrollTarget = 0;
+
+function render() {
+  // The home-screen offset moves the camera, not the blob: a wallpaper is
+  // wider than the screen and slides under the icons, and what that gives you
+  // is parallax against the backdrop rather than a body sliding about in a
+  // fixed frame.
+  scroll += (scrollTarget - scroll) * 0.12;
+  gl.uniform1f(uni.uScroll, scroll);
+  gl.uniform1f(uni.uTime, simTime);
+  gl.uniform4fv(uni.uBalls, ballBuf);
+  gl.uniform3fv(uni.uWobble, wob);
+  gl.uniform1f(uni.uBound, bound);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+/* ---------------------------------------------------------------- the clock */
+
+let raf = 0, last = 0, acc = 0;
+let diagOn = false, diagSince = 0, diagFrames = 0;
+
+function advance(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (!(dt > 0)) dt = FIXED_DT;
+  acc += Math.min(dt, 0.1);          // a long stall is dropped, not caught up
+  let n = 0;
+  while (acc >= FIXED_DT && n < 6) { step(FIXED_DT); acc -= FIXED_DT; n++; }
+  render();
+
+  if (diagOn) {
+    diagFrames++;
+    if (now - diagSince >= 2000) {
+      console.log("milk: " + (diagFrames * 1000 / (now - diagSince)).toFixed(1)
+        + " fps, " + canvas.width + "x" + canvas.height);
+      diagSince = now; diagFrames = 0;
+    }
+  }
+}
+
+function frame(now) { raf = requestAnimationFrame(frame); advance(now); }
+
+function start() {
+  if (!gl) return;
+  buildProgram();
+  resize();
+  // Settle the springs so the first frame is the one you would have got by
+  // waiting, rather than six balls arriving at the centre from nowhere.
+  for (let i = 0; i < 90; i++) step(FIXED_DT);
+  last = performance.now();
+  if (!raf) raf = requestAnimationFrame(frame);
+}
+
+window.addEventListener("resize", resize);
+// A live wallpaper is hidden whenever the launcher is not showing; stopping
+// the loop there is the difference between a wallpaper and a battery leak.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { cancelAnimationFrame(raf); raf = 0; }
+  else { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); }
+});
+
+/* ------------------------------------------------ the native host, if any
+ *
+ * Inside an Android live wallpaper there is no browser delivering
+ * devicemotion: the page is drawn into a wallpaper surface by a service that
+ * owns the sensors itself. The surface below is the one ../android already
+ * speaks — same method names, same units, same device frame — so the same
+ * WallpaperService hosts either page without knowing which it has.
+ *
+ * `window.__shaker` is the name that service calls; `window.__milk` is the
+ * honest one for this page. They are the same object.
+ */
+let hostOffset = null;
+
+const HOST = {
+  /** Accelerometer, straight off android.hardware.Sensor.TYPE_ACCELEROMETER.
+   *  `spin` is rotation about the viewing axis in degrees per second. */
+  motion(x, y, z, spin) {
+    onMotion({
+      accelerationIncludingGravity: { x, y, z },
+      rotationRate: spin === undefined ? null : { alpha: spin },
+    });
+  },
+
+  /** Home-screen page swipes, 0..1 across the whole launcher. */
+  offset(t) {
+    scrollTarget = (t - 0.5) * 0.34;
+    if (hostOffset === null) { hostOffset = t; return; }
+    /* And the body lags the camera, because being dragged sideways is being
+     * dragged sideways whether it is a hand or a launcher doing it. Clamped:
+     * a jump between distant pages is reported as one step, and nothing soft
+     * gets moved that far instantaneously. */
+    const d = Math.max(-0.3, Math.min(0.3, t - hostOffset));
+    hostOffset = t;
+    for (let i = 0; i < NB; i++) balls[i].v[0] -= d * 9.0;
+  },
+
+  /* A poke. A soft body struck at a point dents inward there and bulges
+   * across, so this is a stretch along the perpendicular to the strike as
+   * much as a push along it — which is the volume-preserving squash the
+   * wobble term already does, given an impulse. */
+  tap(nx, ny) {
+    /* Screen to world, on the plane the body sits in. The shader normalises
+     * by the short edge and the camera is 3.9 out with a focal length of 2.4,
+     * so a pixel maps to `q * 3.9/2.4` there — without that factor the poke
+     * lands about a quarter of the screen away from the finger. */
+    const s = Math.min(W, H);
+    const px = ((nx * W - W * 0.5) / s) * 1.625;
+    const py = -((ny * H - H * 0.5) / s) * 1.625;
+    const len = Math.hypot(px, py) || 1;
+    wobV[0] -= (px / len) * 2.6;
+    wobV[1] -= (py / len) * 2.6;
+    for (let i = 0; i < NB; i++) {
+      const b = balls[i];
+      const dx = b.p[0] - px, dy = b.p[1] - py;
+      const d = Math.hypot(dx, dy) + 0.25;
+      b.v[0] += (dx / d) * 1.6 / d;
+      b.v[1] += (dy / d) * 1.6 / d;
+    }
+  },
+
+  /** The service stops the loop when the wallpaper is not on screen. */
+  pause() { cancelAnimationFrame(raf); raf = 0; },
+  resume() { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); },
+
+  /* Hand the clock to the host. Drawn into a wallpaper surface, the page sits
+   * in a WebView that is not attached to a window, and an unattached WebView
+   * has no vsync to hang requestAnimationFrame off — so the host that is
+   * already waking once a frame to draw steps this instead. */
+  drive() { cancelAnimationFrame(raf); raf = 0; last = performance.now(); },
+  tick() { advance(performance.now()); },
+
+  /** Frame timing to the console, for a host with no other way to see it. */
+  diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; },
+
+  /** The simulation state, for measuring it. Everything quoted in MILK.md
+   *  comes out of here, driven through tick() on a hand-held clock so that
+   *  two runs of the same input are comparable. */
+  state() {
+    return {
+      t: simTime,
+      bound,
+      wobble: wob.slice(),
+      grav: [gDir.x, gDir.y, gMag],
+      balls: balls.map((b) => b.p.slice()),
+    };
+  },
+};
+
+window.__milk = HOST;
+window.__shaker = HOST;
+
+/* ------------------------------------------------------- running on a phone
+ *
+ * The same three things that stand between a page in a browser tab and
+ * something that behaves like a wallpaper, and none of them are about the
+ * drawing. See ./README.md.
+ */
+
+let wakeLock = null;
+async function keepAwake() {
+  if (!navigator.wakeLock || document.visibilityState !== "visible") return;
+  try { wakeLock = await navigator.wakeLock.request("screen"); }
+  catch (e) { /* refused, or unsupported: there is no second way to ask */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") keepAwake();
+});
+
+function goImmersive(e) {
+  // Only on a touch, so that dragging to tilt on a desktop does not throw the
+  // window into fullscreen on the first click.
+  if (e.pointerType && e.pointerType !== "touch") return;
+  keepAwake();
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+  }
+  window.removeEventListener("pointerdown", goImmersive);
+}
+window.addEventListener("pointerdown", goImmersive);
+
+/* Installable, because "add to home screen" is the closest a web page gets to
+ * being a wallpaper. The manifest is built here rather than shipped as a
+ * second file so this stays one self-contained page, and the icon is drawn
+ * from the palette the wallpaper is using, so the thing on the home screen
+ * looks like the thing it opens. */
+function rgb(c, k) {
+  return "rgb(" + c.map((v) => Math.round(Math.min(1, v * (k || 1)) * 255)).join(",") + ")";
+}
+
+function installIcon(size) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  g.fillStyle = rgb(PAL.bgA);
+  g.fillRect(0, 0, size, size);
+  const grad = g.createRadialGradient(
+    size * 0.38, size * 0.34, size * 0.04,
+    size * 0.5, size * 0.5, size * 0.46);
+  grad.addColorStop(0, rgb(PAL.pale));
+  grad.addColorStop(0.55, rgb(PAL.pale, 0.97));
+  grad.addColorStop(1, rgb(PAL.deep));
+  g.fillStyle = grad;
+  g.beginPath();
+  g.ellipse(size * 0.5, size * 0.52, size * 0.36, size * 0.32, 0, 0, 6.283);
+  g.fill();
+  return c.toDataURL("image/png");
+}
+
+function installManifest() {
+  const head = document.head;
+  const theme = document.createElement("meta");
+  theme.name = "theme-color";
+  theme.content = rgb(PAL.bgA);
+  head.appendChild(theme);
+
+  const manifest = {
+    name: "Milk",
+    short_name: "Milk",
+    display: "fullscreen",
+    orientation: "portrait",
+    background_color: rgb(PAL.bgA),
+    theme_color: rgb(PAL.bgA),
+    start_url: location.href.split("#")[0],
+    icons: [192, 512].map((s) => ({
+      src: installIcon(s), sizes: s + "x" + s, type: "image/png", purpose: "any",
+    })),
+  };
+  const link = document.createElement("link");
+  link.rel = "manifest";
+  link.href = URL.createObjectURL(
+    new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+  head.appendChild(link);
+}
+
+start();
+if (gl) installManifest();
+</script>
+</body>
+</html>
