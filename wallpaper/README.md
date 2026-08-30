@@ -503,25 +503,17 @@ unchanged, so this adds spread rather than emptying the body faster:
 measured mean factor 1.035, with an edge-on flake moving 1.8x faster than a
 face-on one.
 
-**The glitter is buoyant, and that is the whole toy.** These flakes are
-lighter than the gel they are suspended in — which is how a liquid-motion
-shaker is actually built, the liquid loaded until it outweighs the film — so
-they do not sink, they climb, and they gather in a drift under the
-waterline. Turning the shaker over puts that drift at the bottom and you
-watch it float back up. Modelled the other way round it was a sedimentation
-tank: everything ended on the floor, and a flip only gave you the same thing
-upside down. Measured upright from a mixed start, the glitter's centre of
-mass climbs the screen from 0.423 to 0.299 over a minute, with 316 flakes of
-620 ending in the top fifth; inverted it turns round and goes the other way,
-0.344 to 0.544.
+**The glitter is a mixed-density sedimenting suspension.** Most commercial
+PET foil is denser than a water/glycerol carrier, so it cascades downhill
+after a flip instead of floating to the waterline. The model uses 82–86%
+settling flakes, a near-neutral minority, and a very small buoyant minority.
+That mixture makes a satisfying resting bed without making the body above it
+look mechanically empty.
 
-**It starts where it ends up.** The shaker used to open with everything
-scattered uniformly through the container — measured, glitter and bubbles
-alike sat at 0.47 of the screen, dead centre — and took a minute or two to
-sort itself out, which is a minute or two of a wallpaper looking like it has
-not settled yet. Both populations are now seeded in the resting state,
-pressed up under the waterline and thinning downward, so the first frame is
-the one you would have got by waiting.
+**It starts plausibly settled.** Both glitter scales are seeded through the
+body with a bias toward the downhill glass. The opening frame therefore reads
+as a shaker that has been resting, while still leaving enough suspended foil
+for the first movement to catch and circulate.
 
 **A flake must not hinder itself.** The concentration field is built by
 dropping each flake's whole area into the cell it sits in, and a big flake
@@ -532,25 +524,10 @@ big flakes were the *slowest* thing in the shaker, moving 0.518 to 0.460
 over a minute while the fine glitter that is supposed to trail them went
 0.473 to 0.336. Hindrance is what the other particles do to you.
 
-**Rise speed is linear in radius, not quadratic.** The r-squared law is for
-spheres. These are flakes cut from one sheet of film, so they all share a
-thickness: buoyancy goes as the area, r-squared, while the drag on a disc
-moving broadside goes as its radius — so the speed goes as r, and the spread
-between the finest glitter and the largest flake is a factor of three rather
-than twenty-five.
-
-That is the difference between a suspension and two separate things. Under
-the square law the big flakes outran the convection and packed into a hard
-line at the surface while the fine glitter, too slow to beat it, stayed
-evenly mixed: 519 flakes of 620 in the top quarter and 39 in the next, and
-the lateral balance drifting to 0.80 as a single convection cell parked
-everything on one side. With the spread narrowed the whole population
-competes with the same convection on the same terms, and what settles out is
-a gradient held in place by the balance between buoyancy and dispersion —
-concentrated under the waterline, thinning down through the body, and stable
-there. Measured over a minute of stillness it holds its shape: 318/137/86/79
-flakes by quarter at load, 321/129/91/79 a minute later, with the lateral
-balance at 0.97.
+**Settle speed is linear in radius, not quadratic.** These are thin plates cut
+from one sheet of film rather than spheres. The narrowed speed spread lets
+hero flakes cross in seconds while the microglitter remains aloft for much
+longer, which is the layered cascade a physical shaker gets from mixed sizes.
 
 **How fast it resolves is a separate knob from where it settles** — up to a
 point. The equilibrium is set by the *ratio* of the buoyant flux to the
@@ -675,11 +652,12 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a discrete squircle on a backdrop |
-| `fill` | `0.93` | Fraction of the container holding liquid. The larger air pocket gives the surface room to slosh like a real shaker |
+| `fill` | `0.975` | Fraction of the sealed chamber holding liquid. The remaining air forms a small migrating lens |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `900` | Glitter flake count |
-| `bubbles` | `110` | Bubble count |
+| `stars` | `720` | Medium and hero glitter count |
+| `micro` | `1380` | Batched microglitter count |
+| `bubbles` | `72` | Persistent bubble count; shake-generated fizz is separate |
 | `fizz` | `420` | Ceiling on the fine fizz, which is spawned by the flow rather than seeded |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
