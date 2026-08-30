@@ -652,11 +652,11 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a discrete squircle on a backdrop |
-| `fill` | `0.975` | Fraction of the sealed chamber holding liquid. The remaining air forms a small migrating lens |
+| `fill` | `0.96` | Fraction of the sealed chamber holding liquid. The remaining air forms one stable gravity-following lens |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `720` | Medium and hero glitter count |
-| `micro` | `1380` | Batched microglitter count |
+| `stars` | `980` | Medium and hero glitter count |
+| `micro` | `2320` | Batched microglitter count |
 | `bubbles` | `72` | Persistent bubble count; shake-generated fizz is separate |
 | `fizz` | `420` | Ceiling on the fine fizz, which is spawned by the flow rather than seeded |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |

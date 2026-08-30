@@ -45,7 +45,7 @@ forwards the page's console into logcat and turns on frame timing, so you
 should see a line every two seconds:
 
 ```
-I/LiquidShaker: shaker fps=58.2 js=6.4ms canvas=1080x2400 stars=720 micro=1380 bubbles=72 fizz=0
+I/LiquidShaker: shaker fps=58.2 js=6.4ms canvas=1080x2400 stars=980 micro=2320 bubbles=72 fizz=0
 ```
 
 ## What to find out, in order
