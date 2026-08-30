@@ -70,9 +70,9 @@ const CONFIG = {
    * meniscus is trimmed to its true contact points and split into segments,
    * the surface can sit in the corner arc — or press against the ceiling —
    * and still terminate correctly, so the container can be properly full. */
-  fill: num("fill", 0.96),
-  stars: num("stars", 980),
-  micro: num("micro", 2320),
+  fill: num("fill", 0.965),
+  stars: num("stars", 1120),
+  micro: num("micro", 2780),
   bubbles: num("bubbles", 108),
   fizz: num("fizz", 420),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
@@ -133,6 +133,7 @@ function resize() {
   }
   boundsAngle = Infinity;
   displayLevelReady = false;
+  displayBasisReady = false;
   displaySolveAngle = Infinity;
   buildOutline();
   buildLayers();
@@ -1489,6 +1490,13 @@ function seed() {
        * gradient instead: concentrated under the waterline, thinning down
        * through the body, holding that shape indefinitely. */
       terminal: (24 + (r / unit) * 7.2) * unit,
+      /* Nominally identical film still falls at visibly different rates.
+       * Larger cuts hold their edge-on attitude longer and slip faster,
+       * while fine cuts spend more of the fall broadside. Keep that spread
+       * correlated with size instead of applying one gravity multiplier to
+       * the entire glitter cloud. */
+      settleScale: 0.78 + Math.pow(Math.min(1, r / (12 * unit)), 0.72) * 0.36 +
+                   Math.random() * 0.14,
       // Most commercial PET glitter sinks, a few pieces are near-neutral,
       // and a tiny fraction can be carried upward by the viscous flow.
       density: Math.random() < 0.88 ? 1 : (Math.random() < 0.75 ? 0.16 : -0.34),
@@ -1523,6 +1531,8 @@ function seed() {
       hueIdx: (Math.random() * FLAKE_COLOURS.length) | 0,
       phase: Math.random() * Math.PI * 2,
       terminal: (5 + Math.random() * 10) * unit,
+      // Dust-size flecks remain suspended behind the heavier cut foil.
+      settleScale: 0.52 + Math.random() * 0.30,
       density: Math.random() < 0.90 ? 1 : (Math.random() < 0.78 ? 0.10 : -0.26),
       z, zHome: z, zv: 0,
     };
@@ -2218,6 +2228,34 @@ let upExtent = 1;    // along `up`
 
 let basisAngle = 0, basisReady = false;
 
+/* The air pocket is the largest single mass cue in the scene. Its silhouette
+ * should not rotate in lock-step with the sensor while the heavier liquid and
+ * glitter are still catching up. This second basis follows the real gravity
+ * frame with a short viscous lag and is used only by the visible free surface;
+ * the fluid solver and particle gravity stay on the physical basis above. */
+let displayUp = { x: 0, y: -1 }, displayTan = { x: 1, y: 0 };
+let displaySpan = 1, displayUpExtent = 1;
+let displayAngle = 0, displayBasisReady = false;
+
+function updateDisplayBasis() {
+  if (!displayBasisReady) {
+    displayAngle = basisAngle;
+    displayBasisReady = true;
+  } else {
+    let d = basisAngle - displayAngle;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    // About 0.7 s of additional visual settling at 60 Hz.
+    displayAngle += d * 0.024;
+  }
+  displayUp.x = Math.cos(displayAngle);
+  displayUp.y = Math.sin(displayAngle);
+  displayTan.x = -displayUp.y;
+  displayTan.y = displayUp.x;
+  displaySpan = Math.abs(displayTan.x) * RX + Math.abs(displayTan.y) * RY;
+  displayUpExtent = Math.abs(displayUp.x) * RX + Math.abs(displayUp.y) * RY;
+}
+
 /* Turning the container tilts the water in it.
  *
  * The height field is a graph over `tan`, and `tan` is derived from gravity —
@@ -2347,15 +2385,17 @@ function flatLiquidPolygon(lift) {
   const pts = [];
   const steps = 64;
   for (let i = 0; i <= steps; i++) {
-    const s = -span + 2 * span * (i / steps);
+    const s = -displaySpan + 2 * displaySpan * (i / steps);
     pts.push({
-      x: CX + tan.x * s + up.x * lift,
-      y: CY + tan.y * s + up.y * lift,
+      x: CX + displayTan.x * s + displayUp.x * lift,
+      y: CY + displayTan.y * s + displayUp.y * lift,
     });
   }
-  const far = (span + upExtent) * 2;
-  pts.push({ x: CX + tan.x * span - up.x * far, y: CY + tan.y * span - up.y * far });
-  pts.push({ x: CX - tan.x * span - up.x * far, y: CY - tan.y * span - up.y * far });
+  const far = (displaySpan + displayUpExtent) * 2;
+  pts.push({ x: CX + displayTan.x * displaySpan - displayUp.x * far,
+             y: CY + displayTan.y * displaySpan - displayUp.y * far });
+  pts.push({ x: CX - displayTan.x * displaySpan - displayUp.x * far,
+             y: CY - displayTan.y * displaySpan - displayUp.y * far });
   return pts;
 }
 
@@ -2369,13 +2409,13 @@ function lensLiquidPolygon(lift) {
     b = i;
   }
   if (a < 0 || b - a < 3) return pts;
-  const run = (b - a) * (2 * span / steps);
-  const bow = Math.min(Math.min(RX, RY) * 0.042, run * 0.075);
+  const run = (b - a) * (2 * displaySpan / steps);
+  const bow = Math.min(Math.min(RX, RY) * 0.058, run * 0.105);
   for (let i = a; i <= b; i++) {
     const t = (i - a) / (b - a);
     const d = bow * Math.pow(Math.sin(Math.PI * t), 2);
-    pts[i].x -= up.x * d;
-    pts[i].y -= up.y * d;
+    pts[i].x -= displayUp.x * d;
+    pts[i].y -= displayUp.y * d;
   }
   return pts;
 }
@@ -2391,21 +2431,22 @@ let displaySolved = 0, displaySolveAngle = Infinity, displaySolveTick = 0;
  * drives the fluid and particles; it simply no longer dictates a glitchy
  * silhouette. */
 function displayLiquidPolygon() {
+  updateDisplayBasis();
   displaySolveTick++;
-  let d = Number.isFinite(displaySolveAngle) ? basisAngle - displaySolveAngle : Infinity;
+  let d = Number.isFinite(displaySolveAngle) ? displayAngle - displaySolveAngle : Infinity;
   if (Number.isFinite(d)) {
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
   }
   if (!displayLevelReady || ((displaySolveTick & 1) === 0 && Math.abs(d) > 0.0025)) {
-    let lo = -upExtent * 1.05, hi = upExtent * 1.05;
+    let lo = -displayUpExtent * 1.05, hi = displayUpExtent * 1.05;
     for (let solve = 0; solve < 9; solve++) {
       const mid = (lo + hi) * 0.5;
       const area = polygonArea(clipToContainer(lensLiquidPolygon(mid)));
       if (area < targetArea) lo = mid; else hi = mid;
     }
     displaySolved = (lo + hi) * 0.5;
-    displaySolveAngle = basisAngle;
+    displaySolveAngle = displayAngle;
   }
   if (!displayLevelReady) {
     displayLevel = displaySolved;
@@ -2468,7 +2509,7 @@ function meniscus(poly, steps) {
       if (d >= reach) continue;
       const t = 1 - d / reach;
       const lift = climb * t * t;
-      p.x += up.x * lift; p.y += up.y * lift;
+      p.x += displayUp.x * lift; p.y += displayUp.y * lift;
     }
     segs.push(pts);
   }
@@ -2489,16 +2530,16 @@ function appendSmooth(points, off, reverse, move, dx = 0, dy = 0) {
   const n = points.length;
   const at = (i) => points[reverse ? n - 1 - i : i];
   const first = at(0);
-  const fx = first.x + up.x * off + dx, fy = first.y + up.y * off + dy;
+  const fx = first.x + displayUp.x * off + dx, fy = first.y + displayUp.y * off + dy;
   if (move) ctx.moveTo(fx, fy); else ctx.lineTo(fx, fy);
   for (let i = 1; i < n - 1; i++) {
     const p = at(i), q = at(i + 1);
-    const px = p.x + up.x * off + dx, py = p.y + up.y * off + dy;
-    const qx = q.x + up.x * off + dx, qy = q.y + up.y * off + dy;
+    const px = p.x + displayUp.x * off + dx, py = p.y + displayUp.y * off + dy;
+    const qx = q.x + displayUp.x * off + dx, qy = q.y + displayUp.y * off + dy;
     ctx.quadraticCurveTo(px, py, (px + qx) * 0.5, (py + qy) * 0.5);
   }
   const last = at(n - 1);
-  ctx.lineTo(last.x + up.x * off + dx, last.y + up.y * off + dy);
+  ctx.lineTo(last.x + displayUp.x * off + dx, last.y + displayUp.y * off + dy);
 }
 
 /* A bubble is a deformable object, not a stamp.
@@ -2829,8 +2870,8 @@ function render(time) {
    * ~95% full, so painting the small headspace afterwards is far less
    * overdraw than covering the screen twice. */
   const grad = ctx.createLinearGradient(
-    CX + up.x * displayLevel, CY + up.y * displayLevel,
-    CX - up.x * upExtent, CY - up.y * upExtent);
+    CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel,
+    CX - displayUp.x * displayUpExtent, CY - displayUp.y * displayUpExtent);
   const ramp = CONFIG.ramp;
   for (let i = 0; i < ramp.length; i++) {
     grad.addColorStop(i / (ramp.length - 1), ramp[i]);
@@ -2847,17 +2888,17 @@ function render(time) {
    * sampling one end of the ramp, so it rendered as a flat grey slab that
    * read like a UI bar sitting on top of the wallpaper. */
   const air = ctx.createLinearGradient(
-    CX + up.x * upExtent, CY + up.y * upExtent,
-    CX + up.x * displayLevel, CY + up.y * displayLevel);
+    CX + displayUp.x * displayUpExtent, CY + displayUp.y * displayUpExtent,
+    CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel);
   air.addColorStop(0, "#c9dfec");    // inner top wall, slightly shadowed
   air.addColorStop(0.45, "#eaf5fb");
   air.addColorStop(1, "#a9d4e6");    // liquid showing through the meniscus
   ctx.fillStyle = air;
   ctx.beginPath();
-  const far = (span + upExtent) * 2;
-  ctx.moveTo(poly[0].x + up.x * far, poly[0].y + up.y * far);
+  const far = (displaySpan + displayUpExtent) * 2;
+  ctx.moveTo(poly[0].x + displayUp.x * far, poly[0].y + displayUp.y * far);
   for (let i = 0; i <= 64; i++) ctx.lineTo(poly[i].x, poly[i].y);
-  ctx.lineTo(poly[64].x + up.x * far, poly[64].y + up.y * far);
+  ctx.lineTo(poly[64].x + displayUp.x * far, poly[64].y + displayUp.y * far);
   ctx.closePath();
   ctx.fill();
 
@@ -2954,9 +2995,9 @@ function render(time) {
 
   // Light pooling just under the surface, the way it does in a real pouch.
   const under = ctx.createLinearGradient(
-    CX + up.x * displayLevel, CY + up.y * displayLevel,
-    CX + up.x * (displayLevel - upExtent * 0.55),
-    CY + up.y * (displayLevel - upExtent * 0.55));
+    CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel,
+    CX + displayUp.x * (displayLevel - displayUpExtent * 0.55),
+    CY + displayUp.y * (displayLevel - displayUpExtent * 0.55));
   under.addColorStop(0, "rgba(255,255,255,.30)");
   under.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = under;
@@ -3021,7 +3062,7 @@ function render(time) {
     ctx.closePath();
     const mid = seg[(seg.length / 2) | 0];
     const g = ctx.createLinearGradient(
-      mid.x, mid.y, mid.x - up.x * band, mid.y - up.y * band);
+      mid.x, mid.y, mid.x - displayUp.x * band, mid.y - displayUp.y * band);
     g.addColorStop(0, "rgba(255,255,255,.72)");
     g.addColorStop(0.45, "rgba(214,244,255,.34)");
     g.addColorStop(1, "rgba(255,255,255,0)");
@@ -3216,7 +3257,7 @@ function fixedStep(dt, time) {
     const own = Math.PI * p.r * p.r / (cell * cell);
     const hind = Math.pow(
       Math.max(0, 1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX), 4.65);
-    const drift = p.terminal * p.density * gMag * settleRate *
+    const drift = p.terminal * p.settleScale * p.density * gMag * settleRate *
                   (1.573 / (1 + 0.9 * broad)) * hind;
     /* Dispersion is a perturbation on the drift, not a transport in its own
      * right, and left unbounded it does not stay one. A stronger climb
@@ -3282,7 +3323,7 @@ function fixedStep(dt, time) {
     const mdt = dt * 2;
     for (const p of microGlitter) {
       sampleFlow(p.x, p.y, flow);
-      const drift = p.terminal * p.density * gMag * settleRate;
+      const drift = p.terminal * p.settleScale * p.density * gMag * settleRate;
       let tx = flow.x * particleFlow + gDir.x * drift;
       let ty = flow.y * particleFlow + gDir.y * drift;
       const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;

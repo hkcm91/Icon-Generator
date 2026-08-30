@@ -19,8 +19,8 @@ android {
         applicationId = "com.hkcm.liquidshaker"
         minSdk = 21
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 9
+        versionName = "1.8"
     }
 
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/wallpaperAssets"))
