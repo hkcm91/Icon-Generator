@@ -133,12 +133,22 @@ the frame to get the same edge would cost the entire render again.
 
 ## How it moves
 
-**Gravity is a standing deformation.** A soft body resting under its own weight
-is wider than it is tall, so gravity squashes it along its own axis and — since
-the squash is volume preserving — spreads it across. The strength follows the
-in-plane component of gravity rather than a normalised direction, which is what
-makes a phone lying flat show a round blob and a phone held upright a sagging
-one. Measured: `|wobble|` 0.160 upright, 0.000 flat on a table.
+**Gravity is a standing deformation**, and this body is hanging rather than
+resting on anything — so it is a pendant drop, drawn out along the gravity
+axis, not a sessile one squashed across it. Since the deformation is volume
+preserving it narrows by the same token.
+
+That is the formulation's doing rather than a choice: the deformation is
+carried as one vector whose length is the amount, and a length is never
+negative, so the axis can only ever be stretched. Expressing the other case
+would take a signed amount and a decision about how to combine a squash on one
+axis with a stretch on another, and there is nothing in the scene for the body
+to rest on to justify either.
+
+The strength follows the in-plane component of gravity rather than a normalised
+direction, which is what makes a phone lying flat show a round blob and a phone
+held upright a drawn-out one. Measured: `|wobble|` 0.160 upright, 0.000 flat on
+a table.
 
 **Shaking is a transient.** In the non-inertial frame of a body being carried
 about, its contents feel `-a`. Sign is the whole point: force it with `+a` and

@@ -62,9 +62,9 @@
  *     how much material is behind the pixel, so its thin edges are exactly as
  *     dense as its middle, and that reads as an opaque marble every time.
  *
- *   - THE PHONE. Gravity squashes the body along its own axis, the way a
- *     droplet resting on a table is wider than it is tall; shaking it drives
- *     six independent springs, one per metaball, so the blob lurches, lags and
+ *   - THE PHONE. Gravity draws the body out along its own axis, the way a drop
+ *     hanging from a tap is longer than it is wide; shaking it drives six
+ *     independent springs, one per metaball, so the blob lurches, lags and
  *     ripples internally instead of sliding about as a rigid lump.
  *
  * The simulation runs on a fixed timestep for the same reason the shaker does
@@ -768,13 +768,20 @@ function step(dt) {
   /* Squash and stretch.
    *
    * Two things drive it and they are different in kind. Gravity is a standing
-   * deformation: a soft body resting under its own weight is wider than it is
-   * tall, and the target is a squeeze along the gravity axis proportional to
-   * how much of gravity lies in the screen plane — so a phone lying flat has
-   * a round blob and a phone held upright has a sagging one, which is what
-   * makes the tilt readable at all. Shaking is a transient: the body is
-   * stretched along the direction it is being dragged, and the spring runs
-   * that out over about a second.
+   * deformation, and this body is hanging rather than resting on anything —
+   * so it is a pendant drop, drawn out along the gravity axis, not a sessile
+   * one squashed across it. That falls out of the shader's formulation rather
+   * than being chosen here: the deformation is carried as a single vector
+   * whose length is the amount, and a length is never negative, so the axis
+   * can only ever be stretched. Expressing the other case would take a signed
+   * amount, and there is nothing in the scene for the body to rest on.
+   *
+   * The amount follows how much of gravity lies in the screen plane, not a
+   * normalised direction — so a phone lying flat has a round blob and a phone
+   * held upright a drawn-out one, which is what makes the tilt readable.
+   *
+   * Shaking is a transient: the body is stretched along the direction it is
+   * being dragged, and the spring runs that out over about a second.
    */
   const sag = -0.16 * gMag;
   const tx = gDir.x * sag + accel.x * 0.16;
