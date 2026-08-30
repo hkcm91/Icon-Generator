@@ -87,7 +87,10 @@ PLATE_DEEP = (0.114, 0.478, 0.722)
 # The case. These toys were moulded in flat, saturated primaries — the coral
 # reads warmest against the aqua and is the one most people picture.
 CASE_COLOUR = (0.898, 0.286, 0.278)
-BUTTON_COLOUR = (0.988, 0.827, 0.298)
+# Deliberately a deep amber rather than the bright yellow it looks like
+# when pressed. The press is shown by the button lighting up, and a button
+# that already renders at the top of the range has nowhere to light up to.
+BUTTON_COLOUR = (0.847, 0.565, 0.086)
 
 # Ring plastic. Object Info → Random picks one per ring.
 RING_HUES = [
@@ -194,11 +197,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                            "a ring's hole. It is the thickest the peg gets, "
                            "so it is the one number that decides how heavy "
                            "the pegs look")
-    play.add_argument("--hook-point", type=float, default=0.07,
-                      help="peg tip radius as a fraction of its base. Small "
-                           "is the point — a peg that ends in a bulb reads "
-                           "as a post, one that ends in a point reads as "
-                           "something to hook a ring over")
+    play.add_argument("--hook-tip", type=float, default=0.74,
+                      help="peg radius at the rounded end, as a fraction of "
+                           "its base. Near 1 is a rod with a domed end; "
+                           "small turns it into a spike. The cap is a "
+                           "hemisphere of exactly this radius, so it never "
+                           "becomes a bulb sitting on the shaft")
     play.add_argument("--hook-seat", type=float, default=0.16,
                       help="where a hooked ring sits along the peg, 0 at the "
                            "base and 1 at the tip")
@@ -229,26 +233,40 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     motion = p.add_argument_group("motion")
     motion.add_argument("--presses", type=int, default=2,
-                        help="button presses inside one loop")
-    motion.add_argument("--buttons", type=int, default=1,
+                        help="button presses inside one loop. With two "
+                             "buttons they alternate, so this is one each")
+    motion.add_argument("--press-window", type=float, default=0.45,
+                        help="fraction of the loop the presses are spread "
+                             "over. The rest is settling time, and it has to "
+                             "be most of the loop: a ring carried to the "
+                             "surface takes several seconds to sink back, "
+                             "and if the next press comes first the rings "
+                             "never settle, never land on a peg, and never "
+                             "get near the pose the loop has to close on")
+    motion.add_argument("--buttons", type=int, default=2,
                         choices=[1, 2],
-                        help="1 is the classic single-jet toy; 2 gives the "
-                             "two-button variant, and presses alternate")
-    motion.add_argument("--jet", type=float, default=18.0,
+                        help="2 puts a button at each bottom corner, where "
+                             "your thumbs are, and presses alternate between "
+                             "them; 1 is the single-jet variant, centred")
+    motion.add_argument("--jet", type=float, default=130.0,
                         help="peak upward acceleration a ring feels on the "
                              "jet axis, in m/s^2. This is the water "
                              "pressure the button releases")
-    motion.add_argument("--jet-wind", type=float, default=45.0,
+    motion.add_argument("--jet-wind", type=float, default=70.0,
                         help="peak strength of the wind field the bubbles "
                              "ride. Same envelope as --jet, different units "
                              "— one is our solver, the other is Blender's "
                              "particle system")
-    motion.add_argument("--jet-frames", type=int, default=26,
-                        help="frames a single press keeps pushing")
+    motion.add_argument("--jet-frames", type=int, default=32,
+                        help="frames a single press keeps pushing. With the "
+                             "drag a ring feels, this is what decides how "
+                             "far up the chamber one press can carry it")
     motion.add_argument("--jet-reach", type=float, default=0.0,
                         help="how far up the chamber the jet reaches, in "
-                            "metres; 0 uses two thirds of the water column")
-    motion.add_argument("--jet-spread", type=float, default=5.0,
+                             "metres; 0 uses the whole water column, so a "
+                             "press can carry a ring to the surface rather "
+                             "than letting go of it halfway")
+    motion.add_argument("--jet-spread", type=float, default=9.0,
                         help="jet column radius at the nozzle, as a multiple "
                              "of the nozzle itself. The column widens with "
                              "height on top of this. Too narrow and a press "
@@ -259,7 +277,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="background turbulence. Without it the rings "
                             "never move in depth and so never line up with "
                             "a peg")
-    motion.add_argument("--ring-gravity", type=float, default=1.25,
+    motion.add_argument("--ring-gravity", type=float, default=2.6,
                         help="apparent downward acceleration on a ring, in "
                              "m/s^2. Buoyancy cancels most of g for a "
                              "plastic ring in water; this is what is left")
@@ -272,30 +290,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                              "to be caught, as a fraction of its hole. It is "
                              "measured on screen, because that is where a "
                              "ring either looks threaded or does not")
-    motion.add_argument("--catch-speed", type=float, default=0.45,
+    motion.add_argument("--catch-speed", type=float, default=0.62,
                         help="fastest a ring can be moving and still be "
                              "caught, in m/s. A ring flying past a peg does "
                              "not land on it")
-    motion.add_argument("--release", type=float, default=2.0,
+    motion.add_argument("--release", type=float, default=6.0,
                         help="jet acceleration that knocks a ring off a peg, "
                              "in m/s^2. Below it the press only rocks the "
                              "ring, which is what a weak press does")
-    motion.add_argument("--loop", type=int, default=240,
+    motion.add_argument("--loop", type=int, default=300,
                         help="frames in the finished loop")
     motion.add_argument("--preroll", type=int, default=90,
                         help="settle frames simulated before the loop "
                              "starts; never rendered")
-    motion.add_argument("--quiet", type=int, default=78,
+    motion.add_argument("--quiet", type=int, default=86,
                         help="frames at the tail of the loop with no jet, so "
                              "the last bubbles are gone before the seam")
-    motion.add_argument("--rewind", type=int, default=54,
+    motion.add_argument("--rewind", type=int, default=90,
                         help="frames over which the rings drift back to "
                              "their opening pose, which is what closes the "
                              "loop; 0 disables and the seam will jump")
     motion.add_argument("--fps", type=int, default=30)
 
     fizz = p.add_argument_group("bubbles")
-    fizz.add_argument("--bubbles", type=int, default=340,
+    fizz.add_argument("--bubbles", type=int, default=440,
                       help="bubbles released per press")
     fizz.add_argument("--bubble-size", type=float, default=0.022)
     fizz.add_argument("--bubble-life", type=int, default=44,
@@ -469,54 +487,53 @@ def ring_mesh(name: str, radius: float, tube: float,
 # module constant because two places need to agree on it: the peg that is
 # built with it, and the seat a ring is placed at, which has to start clear
 # of it.
-# The peg's profile: a shaft that narrows gently to a waist, then a spike
-# from there to the point. A single cone from base to point does not work —
-# only the fat end is thick enough to see through the water, so the peg
-# reads as a squat blob with a needle above it that nobody can make out.
-# Keeping most of the length near-parallel is what makes the whole peg
-# visible, and confining the taper to the last third is what makes it read
-# as pointed.
-HOOK_WAIST = 0.66
-HOOK_WAIST_R = 0.5
+def hook_profile(args, inner: Vector, t: float) -> float:
+    """Peg radius at `t` along its length, as a fraction of its base.
 
-
-def hook_profile(args, t: float) -> float:
-    """Peg radius at `t` along its length, as a fraction of its base."""
+    A gently tapering shaft that stops in a rounded cap, rather than
+    narrowing to a point. The cap is a hemisphere of the shaft's own radius,
+    so it rounds the end off without becoming a bulb sitting on top of it —
+    which is the difference between a peg that reads as finished and one
+    that reads as anatomy.
+    """
     t = min(1.0, max(0.0, t))
-    if t <= HOOK_WAIST:
-        return 1.0 + (HOOK_WAIST_R - 1.0) * (t / HOOK_WAIST)
-    reach = (t - HOOK_WAIST) / (1.0 - HOOK_WAIST)
-    return max(args.hook_point, HOOK_WAIST_R * (1.0 - reach))
+    tip = args.hook_tip
+    length = hook_length(args, inner)
+    shoulder = max(0.0, 1.0 - (hook_base(args) * tip) / max(1e-6, length))
+    if t <= shoulder:
+        return 1.0 + (tip - 1.0) * (t / max(1e-6, shoulder))
+    # Over the cap, the radius follows the sphere rather than a straight
+    # line, so the silhouette actually curves over instead of mitring.
+    u = min(1.0, (t - shoulder) / max(1e-6, 1.0 - shoulder))
+    return tip * math.sqrt(max(0.0, 1.0 - u * u))
 
 
 def hook_post(name: str, args, base_r: float,
               length: float) -> bpy.types.Object:
-    """A peg: a slim shaft coming to a point, running along -Y.
+    """A peg: a slim shaft with a rounded end, running along -Y.
 
     Along -Y — toward the viewer — because that is the axis a ring floating
     in the screen plane can be threaded along.
 
-    A point rather than a knob, and the taper does the knob's job better. A
-    ring dropped over the tip slides down until the shaft is as wide as its
-    hole, so the peg holds a ring without a bulb on the end, and it is far
-    easier to land on: the target grows as the ring descends instead of
-    having to be cleared in one go.
+    The taper is what holds a ring: one dropped over the end slides down
+    until the shaft is as wide as its hole and stops there. That is easier
+    to land on than a knob — the target grows as the ring descends instead
+    of having to be cleared in one go — and it means the end can simply be
+    rounded off rather than carrying a bulb to stop the ring escaping.
     """
-    waist_r = base_r * HOOK_WAIST_R
-    shaft_len = length * HOOK_WAIST
-    spike_len = length - shaft_len
+    tip_r = base_r * args.hook_tip
+    shaft_len = max(length * 0.2, length - tip_r)
     parts = []
 
     bpy.ops.mesh.primitive_cone_add(
-        radius1=base_r, radius2=waist_r, depth=shaft_len, vertices=24,
+        radius1=base_r, radius2=tip_r, depth=shaft_len, vertices=28,
         location=(0.0, -shaft_len * 0.5, 0.0),
         rotation=(math.radians(90.0), 0.0, 0.0))
     parts.append(bpy.context.active_object)
 
-    bpy.ops.mesh.primitive_cone_add(
-        radius1=waist_r, radius2=base_r * args.hook_point, depth=spike_len,
-        vertices=24, location=(0.0, -shaft_len - spike_len * 0.5, 0.0),
-        rotation=(math.radians(90.0), 0.0, 0.0))
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        radius=tip_r, segments=28, ring_count=14,
+        location=(0.0, -shaft_len, 0.0))
     parts.append(bpy.context.active_object)
 
     obj = join(parts, name)
@@ -753,6 +770,31 @@ def sweep_material(colour: tuple[float, float, float],
     return mat
 
 
+def button_material(name: str):
+    """The press button, and the shader node the press animates.
+
+    A dead-on orthographic camera cannot see the button move: the travel is
+    along the view axis, so the one thing that actually happens is the one
+    thing invisible from here. So the press is carried by two things that do
+    survive the projection — the button lights up, and it bulges — and the
+    node is handed back so the light can be keyframed.
+    """
+    mat, tree = new_material(name)
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (300, 0)
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    put(bsdf, ("Base Color",), rgba(lin(BUTTON_COLOUR)))
+    put(bsdf, ("Roughness",), 0.28)
+    put(bsdf, ("Coat Weight", "Clearcoat"), 0.6)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.08)
+    socket = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
+    if socket is not None:
+        socket.default_value = rgba(lin(BUTTON_COLOUR))
+    put(bsdf, ("Emission Strength",), 0.0)
+    tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat, bsdf
+
+
 def simple_material(name: str, colour: tuple[float, float, float],
                     roughness: float = 0.3,
                     emission: float = 0.0) -> bpy.types.Material:
@@ -924,7 +966,7 @@ def hook_base(args) -> float:
 def hook_radius_at(args, inner: Vector, along: float) -> float:
     """Peg radius a distance `along` from the base."""
     return hook_base(args) * hook_profile(
-        args, along / max(1e-6, hook_length(args, inner)))
+        args, inner, along / max(1e-6, hook_length(args, inner)))
 
 
 def hook_mount(args, inner: Vector) -> float:
@@ -967,7 +1009,7 @@ def hook_length(args, inner: Vector) -> float:
     # The tip is a point, so it costs almost nothing here — which is most of
     # why a spike can be longer than a post with a bulb on it.
     room = (base + inner.y * 0.5
-            - hole * args.hook_base * args.hook_point
+            - hole * args.hook_base * args.hook_tip
             - args.ring_tube * 3.0)
     return min(wanted, max(inner.y * 0.2, room / lean))
 
@@ -1093,12 +1135,15 @@ def build_jets(args, built: dict, fill_z: float) -> list[dict]:
     inner = built["interior"]
     size = built["size"]
     reach = args.jet_reach if args.jet_reach > 0 else \
-        (fill_z + inner.z * 0.5) * 0.66
+        (fill_z + inner.z * 0.5)
     nozzle_r = inner.x * 0.045
     floor = -inner.z * 0.5 + nozzle_r * 0.6
 
+    # One at each bottom corner rather than two near the middle: they are
+    # thumb buttons, and two jets that far apart stir the whole floor of the
+    # chamber instead of the same column twice.
     offsets = [0.0] if args.buttons == 1 else \
-        [-size.x * 0.20, size.x * 0.20]
+        [-size.x * 0.33, size.x * 0.33]
     if args.shell:
         # Sized off the chin rather than off the case, so widening the bezel
         # widens the button with it and the two never disagree.
@@ -1111,7 +1156,8 @@ def build_jets(args, built: dict, fill_z: float) -> list[dict]:
         # because there is nothing else to size it off.
         button_r = size.x * 0.075
         button_z = -size.z * 0.5 + size.x * 0.14
-    button_mat = simple_material("ringtoy_button", BUTTON_COLOUR, 0.28)
+    # One material per button. Shared, both would light up whenever either
+    # was pressed, which is worse than not lighting up at all.
 
     jets = []
     for i, x in enumerate(offsets):
@@ -1138,11 +1184,13 @@ def build_jets(args, built: dict, fill_z: float) -> list[dict]:
         button = button_body(f"Ringtoy_Button_{i}", button_r,
                              size.y * 0.55)
         button.location = (x, -size.y * 0.5 - size.y * 0.12, button_z)
-        button.data.materials.append(button_mat)
+        material, shader = button_material(f"ringtoy_button_{i}")
+        button.data.materials.append(material)
 
         jets.append({"field": field, "nozzle": nozzle, "button": button,
-                     "rest_y": button.location.y, "reach": reach,
-                     "spread": nozzle_r * args.jet_spread, "floor": floor})
+                     "shader": shader, "rest_y": button.location.y,
+                     "reach": reach, "spread": nozzle_r * args.jet_spread,
+                     "floor": floor})
     return jets
 
 
@@ -1345,7 +1393,11 @@ def press_schedule(args) -> list[tuple[int, int]]:
     than across the loop, and the last one lands well inside it.
     """
     first = args.preroll + 1
-    span = max(1, args.loop - args.quiet)
+    # Presses live in the front of the loop, not spread across it. What
+    # follows them is not dead time — it is the rings sinking back down and
+    # landing on pegs, which is the half of the toy a press cannot show.
+    span = max(1, min(int(args.loop * args.press_window),
+                      args.loop - args.quiet))
     presses = max(0, args.presses)
     schedule = []
     for k in range(presses):
@@ -1367,6 +1419,11 @@ def animate_jets(args, jets: list[dict],
         jet["field"].field.strength = 0.0
         jet["field"].field.keyframe_insert(data_path="strength", frame=1)
         jet["button"].keyframe_insert(data_path="location", index=1, frame=1)
+        jet["button"].keyframe_insert(data_path="scale", frame=1)
+        glow = jet["shader"].inputs.get("Emission Strength")
+        if glow is not None:
+            glow.default_value = 0.0
+            glow.keyframe_insert(data_path="default_value", frame=1)
 
     decay = max(4, args.jet_frames)
     for frame, which in schedule:
@@ -1379,13 +1436,25 @@ def animate_jets(args, jets: list[dict],
 
         button = jet["button"]
         rest = jet["rest_y"]
-        for at, value in ((frame - 3, rest),
-                          (frame, rest + travel),
-                          (frame + 4, rest + travel),
-                          (frame + 14, rest)):
+        glow = jet["shader"].inputs.get("Emission Strength")
+        for at, value, bulge, lit in ((frame - 3, rest, 1.0, 0.0),
+                                      (frame, rest + travel, 1.12, 7.0),
+                                      (frame + 4, rest + travel, 1.10, 5.4),
+                                      (frame + 14, rest, 1.0, 0.0)):
             button.location.y = value
             button.keyframe_insert(data_path="location", index=1, frame=at)
+            # The bulge is across the face, not through it: a rubber button
+            # squashes wider as it goes in, and width is the part of that a
+            # camera looking straight down the travel can see.
+            button.scale = (bulge, 1.0, bulge)
+            button.keyframe_insert(data_path="scale", frame=at)
+            if glow is not None:
+                glow.default_value = lit
+                glow.keyframe_insert(data_path="default_value", frame=at)
         button.location.y = rest
+        button.scale = (1.0, 1.0, 1.0)
+        if glow is not None:
+            glow.default_value = 0.0
 
     for jet in jets:
         jet["field"].field.strength = 0.0
@@ -1516,8 +1585,12 @@ def jet_push(args, jets: list[dict], levels: list[float],
         distance = radial.length
         if distance > spread:
             continue
-        across = (1.0 - distance / spread) ** 1.5
-        up = (1.0 - height / jet["reach"]) ** 0.7
+        # Both falloffs are deliberately flat. Steep ones make a jet that
+        # only does anything to a ring sitting exactly over the nozzle, and
+        # that lets go of it a third of the way up — so a press reads as a
+        # twitch rather than as something that lifts a ring to the surface.
+        across = (1.0 - distance / spread) ** 1.0
+        up = (1.0 - height / jet["reach"]) ** 0.45
         strength = args.jet * level * across * up
         total.z += strength
         if distance > 1e-4:

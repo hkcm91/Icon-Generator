@@ -2,8 +2,8 @@
 
 The handheld water game from the nineties, built as a seamless phone-portrait
 loop for a live wallpaper: a sealed water chamber, little plastic rings, pegs
-to land them on, and a button that fires a jet of water and bubbles up through
-the chamber and throws the rings around.
+to land them on, and a button at each bottom corner that fires a jet of water
+and bubbles up through the chamber, carrying the rings to the surface.
 
 It is glass edge to edge by default — no moulded frame, because a bezel on a
 phone screen is a picture of a bezel, and the chamber would rather have the
@@ -14,10 +14,12 @@ materials, the ring motion, the button presses, the jet, the bubbles, the
 lighting and the camera — from CLI flags, so a change is a flag rather than a
 trip through the UI.
 
-![A frame from the loop, thirteen frames after a press](../docs/screenshots/water-ring-toy.png)
+![A frame from the loop, ten frames after a press](../docs/screenshots/water-ring-toy.png)
 
-Above: thirteen frames into a press. Bubbles are still coming off the nozzle
-over the button, and three of the five pegs are holding a ring.
+Above: ten frames into a press of the left button. The rings are streaming up
+the chamber and the first two have reached the surface; the pegs they came off
+are empty, and they will land back on them as they sink over the rest of the
+loop.
 
 It is built on [`liquid_shaker.py`](./liquid_shaker.py) and imports its plan
 curve, pillow loft, fill-line boolean and render plumbing directly rather than
@@ -54,20 +56,46 @@ seconds.
 | Goal | Flags |
 | --- | --- |
 | Look-dev still | `--static --loop 1 --preroll 0 --percent 25 --samples 64` |
-| Motion preview | `--loop 130 --preroll 30 --presses 1 --percent 30 --samples 32` |
-| Final loop | `--loop 240 --preroll 90 --samples 256 --encode --device GPU` |
+| Motion preview | `--loop 150 --preroll 30 --presses 1 --percent 30 --samples 32` |
+| Final loop | `--loop 300 --preroll 90 --samples 256 --encode --device GPU` |
 
 The motion itself costs almost nothing — the rings are integrated in Python in
 well under a second. Everything you wait for is Cycles.
 
 ## How it moves
 
-**One button, one jet.** A press pushes the button into the glass, opens a wind
-field in a column above the nozzle, releases a burst of bubbles into it, and
-raises a swell on the surface a few frames later. All four read the same
-envelope, `jet_level()`, so the bubbles are *in* the push rather than
-decoration on top of it. `--buttons 2` gives the two-button variant of the toy
-and presses alternate between the nozzles.
+**Two buttons, one at each bottom corner, and a jet over each.** A press
+pushes the button into the glass, opens a wind field in a column above its
+nozzle, releases a burst of bubbles into it, and raises a swell on the surface
+a few frames later. All four read the same envelope, `jet_level()`, so the
+bubbles are *in* the push rather than decoration on top of it. Presses
+alternate between the buttons; `--buttons 1` gives the single-jet variant,
+centred.
+
+**A press has to be visible to a camera that cannot see it.** The button
+travels along the view axis, and the camera is orthographic and dead-on, so
+the one thing that physically happens is the one thing this projection cannot
+show. The travel stays, because it is what is really going on, but the press
+is carried by the two things that do survive: the button lights up, and it
+bulges. The bulge is across the face rather than through it — a rubber button
+squashes wider as it goes in, and width is the part of that the camera can
+see. The rest colour is a deep amber rather than the bright yellow it looks
+like when lit, because a button already rendering at the top of the range has
+nowhere to light up to.
+
+**A press carries rings to the surface.** That is what the jet is for, and
+getting there took more force than it looks: with the drag a ring feels, a
+press that only lifts one a third of the way up reads as a twitch. The
+falloffs across the column and up it are both deliberately flat, the column
+reaches the whole water depth rather than two thirds of it, and `--jet` is
+large. Measured at the defaults, eight of the nine rings reach at least 92% of
+the water column during the loop.
+
+**Presses live in the front of the loop.** `--press-window` puts them in the
+first 45%, and what follows is not dead time: it is the rings sinking back
+down and landing on pegs, which is the half of the toy a press cannot show. It
+is also what lets the loop close — a ring still near the ceiling when the loop
+ends is a ring the rewind has to drag several metres.
 
 **The rings are integrated here, not by Bullet.** This is the one real
 departure from the shaker, and it is worth being plain about why. A ring is a
@@ -125,25 +153,25 @@ face-on to a leaning peg starts the sim intersecting it — and nothing needs it
 now. On a peg leaning 62° a square ring is seen almost edge-on, and gravity
 would hang it much closer to flat anyway.
 
-**A peg is a slim shaft that comes to a point**, not a post with a knob on
-the end, and the taper does the knob's job better: a ring dropped over the tip
-slides down until the shaft is as wide as its hole and stops there. It is far
-easier to land on than a bulb, because the target grows as the ring descends
-instead of having to be cleared in one go, and the board is visibly livelier
-for it.
+**A peg is a slim, gently tapering shaft with a rounded end.** The taper is
+what holds a ring: one dropped over the end slides down until the shaft is as
+wide as its hole and stops there. That is easier to land on than a knob — the
+target grows as the ring descends instead of having to be cleared in one go —
+and it means the end can simply be rounded off rather than carrying a bulb to
+stop the ring escaping.
 
-The profile matters as much as the proportions. A single cone from base to
-point does not work: only the fat end is thick enough to see through the
-water, so the peg reads as a squat blob with a needle above it that nobody can
-make out. So the shaft stays near-parallel for its first two thirds — that is
-what makes the whole length visible — and the taper is confined to the last
-third, which is what makes it read as pointed.
+The cap is a hemisphere of exactly the shaft's radius at that point, so it
+rounds the end without becoming a bulb sitting on top of it, and
+`hook_profile()` follows the sphere rather than a straight line so the
+silhouette curves over instead of mitring.
 
 `--hook-base` is the radius where it is mounted, as a fraction of the ring's
 hole, and it is the one number that decides how heavy the pegs look;
-`--hook-point` is the tip; `--hook-seat` is where along the peg a hooked ring
-comes to rest. Every one of them is expressed against the ring, because every
-one of them is really a statement about the ring.
+`--hook-tip` is the radius at the rounded end, as a fraction of the base —
+near 1 is a rod with a domed end, small turns it back into a spike;
+`--hook-seat` is where along the peg a hooked ring comes to rest. All three
+are expressed against the ring, because all three are really statements about
+the ring.
 
 ## How the loop closes
 
