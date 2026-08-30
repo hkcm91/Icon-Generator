@@ -119,6 +119,9 @@ function parseHex(s) {
   return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
 }
 const DENSE = parseHex(CONFIG.dense);
+// Peak alpha of the dense-phase blit, thinned along with the fluid it is
+// suspended in. 172 is the opaque-vessel value and stands at clear=0.
+const DYE_ALPHA = 172 * (1 - CONFIG.clear * 0.78);
 
 /* Holographic foil comes in pairs, not flat colours. Each flake shifts from
  * the pale end to the saturated end across its own width, which is what
@@ -2619,7 +2622,10 @@ function render(time) {
     let v = dye[i];
     if (v < 0) v = 0; else if (v > 1) v = 1;
     dd[i * 4] = DENSE.r; dd[i * 4 + 1] = DENSE.g; dd[i * 4 + 2] = DENSE.b;
-    dd[i * 4 + 3] = (v * 172) | 0;
+    // Thinned with the rest of the fluid. Left at full strength this is the
+    // densest layer in a clear vessel by some margin, and it alone holds the
+    // tile at about half opacity however far the dial is turned.
+    dd[i * 4 + 3] = (v * DYE_ALPHA) | 0;
   }
   dyeCtx.putImageData(dyeImage, 0, 0);
   ctx.drawImage(dyeCanvas, 0, 0, W, H);
