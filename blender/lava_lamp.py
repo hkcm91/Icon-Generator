@@ -39,14 +39,18 @@ from mathutils import Vector
 # palette
 # --------------------------------------------------------------------------
 
-# Wax against liquid is the whole colour story, and the two want to be
-# complements or the blobs vanish into the medium. Each entry is
-# (wax, liquid, metal); the metal carries the base and the cap.
+# Wax against liquid is the whole colour story, and the medium is the harder
+# half of it. Its colour is what it *transmits*, so a medium chosen as the
+# wax's exact complement removes precisely the wavelengths the wax is made of,
+# and the blobs come back grey. The teal first written for `lagoon` passed a
+# red of 0.02 — pink wax through it rendered mauve. Every medium here now
+# passes enough of its wax's dominant channel for the wax to survive the
+# crossing. Each entry is (wax, liquid, metal); the metal carries base and cap.
 PALETTES = {
     # The 1963 original: molten orange in deep blue-violet, brass fittings.
     "classic": ((0.98, 0.29, 0.05), (0.045, 0.075, 0.34), (0.79, 0.60, 0.26)),
-    # Softer, warmer room: coral wax in a green-teal medium.
-    "lagoon": ((0.99, 0.36, 0.52), (0.02, 0.30, 0.31), (0.86, 0.84, 0.80)),
+    # Softer, warmer room: coral wax in a sea-green medium.
+    "lagoon": ((0.99, 0.31, 0.49), (0.17, 0.32, 0.28), (0.86, 0.84, 0.80)),
     # High-contrast novelty: acid green wax in a near-black bottle.
     "toxic": ((0.63, 0.98, 0.13), (0.05, 0.14, 0.06), (0.72, 0.74, 0.76)),
     # Cool room, hot lamp: magenta wax in indigo.
