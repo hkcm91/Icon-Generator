@@ -123,6 +123,22 @@ two or three hero fish once the wallpaper sells, not before. **Get an
 assignment of copyright in writing**, not a licence — otherwise Tier 3 quietly
 becomes Tier 2.
 
+### The fish turned out to be generable after all
+
+[`aquarium/prototype.html`](../aquarium/prototype.html) generates them: a fish
+as a few dozen points sampled from a parametric side profile, bent by a
+travelling wave and drawn as additive sprites. No mesh, no rig, no download —
+which takes the fish out of the licence question entirely rather than solving
+it. See [`aquarium/README.md`](../aquarium/README.md) for what it costs per
+frame and what it took to make eighty points read as an animal.
+
+It is not a free win. Additive glow needs a dark scene, so this commits the
+whole product to deep-sea or bioluminescent art direction rather than the
+sunlit reef the top-grossing aquarium wallpapers sell. That is a positioning
+decision as much as a rendering one — thinner niche, far less competition, and
+much cheaper to build. Tier 1 fish stay the fallback if a realistic reef turns
+out to be the product.
+
 ## Recommendation
 
 Ship v1 as CC0 plus procedural, and keep the paid route open behind the
@@ -130,7 +146,7 @@ packing step:
 
 | Slot | Take it from |
 | --- | --- |
-| Fish (6–10 species, rigged, animated) | Quaternius Animated Fish + Cute Fish, CC0 |
+| Fish (6–10 species, rigged, animated) | Generated — `aquarium/prototype.html`, owned. Quaternius Animated Fish + Cute Fish (CC0) is the fallback if the look needs to be realistic |
 | Coral, rockwork | Smithsonian scans, decimated — or procedural, CC0 |
 | Plants | Blender geometry nodes, owned |
 | Substrate, glass, algae materials | ambientCG, CC0 |
@@ -157,7 +173,11 @@ The tooling below will tell you when you have crossed that line.
   manifest against that policy, refuses licences that cannot survive our
   delivery format, locks acquired files by SHA-256, and generates the
   attribution file. `node scripts/aquarium-assets.mjs check`.
-- [`aquarium/README.md`](../aquarium/README.md) — the acquisition workflow.
+- [`aquarium/prototype.html`](../aquarium/prototype.html) — the particle-fish
+  prototype: self-contained, no assets, `npm run aquarium:shot` to re-render
+  the screenshots in this repo.
+- [`aquarium/README.md`](../aquarium/README.md) — the prototype's findings and
+  the acquisition workflow.
 
 The check is the part worth keeping. Licence compliance decays the moment
 someone drops a promising `.glb` into the assets folder at midnight; a script

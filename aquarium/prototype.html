@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Aquarium — particle fish prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #01060d; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #hud {
+    position: fixed; left: 10px; top: 10px; white-space: pre; pointer-events: none;
+    font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: #7fe3ff; opacity: .7;
+  }
+  #hint {
+    position: fixed; left: 0; right: 0; bottom: 26px; text-align: center; pointer-events: none;
+    font: 12px/1.5 system-ui, -apple-system, sans-serif; color: #9fdcff; opacity: .5;
+    transition: opacity 1.2s ease;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="hint">tap to scatter a fish · <span class="k">s</span> species · <span class="k">h</span> hud</div>
+<script>
+/*
+ * Particle fish, generated rather than sourced.
+ *
+ * The licence research in docs/AQUARIUM-ASSETS.md ended at an awkward place:
+ * every marketplace forbids shipping a mesh a user can retrieve alone, and an
+ * APK is a zip. This sidesteps that entirely. There is no mesh here and no
+ * rig — a fish is a few dozen points sampled from a parametric side profile,
+ * bent by a travelling wave and drawn as additive sprites. Nothing is
+ * downloaded, so nothing is licensed.
+ *
+ * It reuses the shaker's proven shape (wallpaper/index.html): canvas 2D,
+ * pre-baked sprite canvases, z-sorting and parallax, particles carried by a
+ * flow field. The one new mechanism is `globalCompositeOperation = 'lighter'`,
+ * which is what turns overlapping points into a glow without a blur pass.
+ *
+ * Query flags, in the style of the rest of this repo:
+ *   ?fish=12&points=80&motes=240&hud=1&seed=7&speed=1
+ */
+const params = new URLSearchParams(location.search);
+const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
+
+const CONFIG = {
+  fish:   num('fish', 12),      // 12 x 80 points is the frame budget, see the HUD
+  points: num('points', 80),
+  motes:  num('motes', 240),
+  seed:   num('seed', 7),
+  speed:  num('speed', 1),
+  hud:    num('hud', 0),
+  // Look-dev: hold the fish still in a column so proportion and fin shape can
+  // be judged without waiting for one to swim past. `--static` in
+  // blender/liquid_shaker.py exists for the same reason.
+  pose:   num('pose', 0),
+};
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+const hudEl = document.getElementById('hud');
+
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = Math.round(window.innerWidth * DPR);
+  H = Math.round(window.innerHeight * DPR);
+  canvas.width = W; canvas.height = H;
+  buildBackdrop();
+}
+window.addEventListener('resize', resize);
+
+/* Deterministic everywhere. A fish that re-rolls its own body on each reload
+ * cannot be art-directed, and the shaker made the same choice for its flakes. */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* ── Palette ──────────────────────────────────────────────────────────────
+ * Additive blending sums toward white, so these are chosen bright and
+ * unsaturated-on-arrival: a point at full alpha over its neighbour reads as
+ * the core of the glow, not as a colour clash. */
+const PALETTE = [
+  [188, 100, 64],  // 0  cyan
+  [206, 100, 68],  // 1  sky
+  [274,  92, 72],  // 2  violet
+  [322,  95, 70],  // 3  magenta
+  [ 44, 100, 66],  // 4  amber
+  [160,  95, 62],  // 5  sea green
+  [ 14, 100, 68],  // 6  coral
+  [  0,   0, 100], // 7  white — eyes and highlights
+];
+
+/* One sprite per palette entry, baked once. Canvas 2D cannot tint a drawImage
+ * cheaply, so the colour has to live in the sprite; the shaker bakes its flake
+ * sprites the same way. */
+const SPRITE_PX = 48;
+const sprites = PALETTE.map(([h, s, l]) => {
+  const c = document.createElement('canvas');
+  c.width = c.height = SPRITE_PX;
+  const g = c.getContext('2d');
+  const r = SPRITE_PX / 2;
+  const grad = g.createRadialGradient(r, r, 0, r, r, r);
+  // A hard core with a long tail is what reads as bioluminescence. A plain
+  // linear falloff reads as fog.
+  grad.addColorStop(0.00, `hsla(${h},${s}%,${Math.min(100, l + 28)}%,1)`);
+  grad.addColorStop(0.18, `hsla(${h},${s}%,${l}%,0.85)`);
+  grad.addColorStop(0.45, `hsla(${h},${s}%,${l}%,0.28)`);
+  grad.addColorStop(1.00, `hsla(${h},${s}%,${l}%,0)`);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, SPRITE_PX, SPRITE_PX);
+  return c;
+});
+
+/* A shaft of light: soft on both sides, fading out with depth. Baked once,
+ * then transformed per frame, which is why the edges cost nothing. */
+const shaftSprite = (() => {
+  const w = 128, h = 512;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  const across = g.createLinearGradient(0, 0, w, 0);
+  across.addColorStop(0.00, 'rgba(132,214,255,0)');
+  across.addColorStop(0.42, 'rgba(150,222,255,0.55)');
+  across.addColorStop(0.52, 'rgba(180,235,255,0.85)');
+  across.addColorStop(0.62, 'rgba(150,222,255,0.5)');
+  across.addColorStop(1.00, 'rgba(132,214,255,0)');
+  g.fillStyle = across;
+  g.fillRect(0, 0, w, h);
+  const down = g.createLinearGradient(0, 0, 0, h);
+  down.addColorStop(0.00, 'rgba(0,0,0,1)');
+  down.addColorStop(0.45, 'rgba(0,0,0,0.5)');
+  down.addColorStop(1.00, 'rgba(0,0,0,0)');
+  g.globalCompositeOperation = 'destination-in';
+  g.fillStyle = down;
+  g.fillRect(0, 0, w, h);
+  return c;
+})();
+
+/* ── Species ──────────────────────────────────────────────────────────────
+ * Everything a bought model would decide — proportion, fin size, colour — is
+ * a number here, which is the whole argument for generating them. */
+const SPECIES = [
+  {
+    name: 'lantern',                       // deep body, big fan tail
+    nose: 0.80, fullness: 0.70, height: 0.30, belly: 1.20,
+    tailLen: 0.36, tailH: 0.34, fork: 0.34,
+    dorsal: 0.15, anal: 0.10, pectoral: 0.09,
+    stripes: 3, colours: [0, 1, 2], accent: 4,
+    len: [112, 168], speed: [22, 38], beat: [1.5, 2.1], amp: 0.075,
+  },
+  {
+    name: 'ribbon',                        // eel-like, long dorsal, small tail
+    nose: 0.95, fullness: 1.15, height: 0.15, belly: 1.05,
+    tailLen: 0.26, tailH: 0.15, fork: 0.10,
+    dorsal: 0.13, anal: 0.09, pectoral: 0.05,
+    stripes: 6, colours: [5, 0, 1], accent: 7,
+    len: [155, 225], speed: [16, 28], beat: [0.9, 1.4], amp: 0.150,
+  },
+  {
+    /* Tamed from its first draft. A tall body plus tall fins made an almost
+     * circular outline, and an outline sampled at 80 points is a ring of dots
+     * — the render read as a jellyfish. The body is shallower now and the tail
+     * longer, so the silhouette has a definite long axis. */
+    name: 'angel',                         // tall body, trailing fins
+    nose: 0.72, fullness: 0.60, height: 0.33, belly: 1.16,
+    tailLen: 0.38, tailH: 0.28, fork: 0.40,
+    dorsal: 0.25, anal: 0.19, pectoral: 0.10,
+    stripes: 4, colours: [2, 3, 1], accent: 7,
+    len: [104, 150], speed: [15, 26], beat: [1.1, 1.6], amp: 0.065,
+  },
+  {
+    name: 'darter',                        // small, quick, shoals
+    nose: 0.85, fullness: 0.80, height: 0.22, belly: 1.10,
+    tailLen: 0.32, tailH: 0.26, fork: 0.38,
+    dorsal: 0.10, anal: 0.07, pectoral: 0.07,
+    stripes: 2, colours: [4, 6, 3], accent: 7,
+    len: [62, 96], speed: [40, 64], beat: [2.4, 3.4], amp: 0.085,
+  },
+];
+
+/* Side profile. The camera looks at the flank, so the silhouette in (x, y) is
+ * the whole of the read — depth only earns a little shading. x runs 0 at the
+ * nose to 1 at the tail root; the caudal fin lives beyond 1. */
+function bodyHeight(sp, s) {
+  const t = Math.pow(Math.max(0, Math.min(1, s)), sp.nose);
+  const base = Math.pow(Math.sin(Math.PI * t), sp.fullness);
+  // The trailing factor narrows the body toward the tail; the constant keeps
+  // the peduncle from pinching to nothing, which is what makes it read as a
+  // fish rather than as a leaf.
+  return sp.height * (base * (1 - 0.5 * s) + 0.045);
+}
+
+/* Sample a fish into points. Weighted to the silhouette edge: the outline is
+ * what the eye reads at 80 points, and an evenly filled body is just a blob.
+ * Interior points are larger and dimmer — they are the body glow, not detail. */
+function buildFish(sp, rng, n) {
+  const pts = [];
+  const push = (x, y, z, r, c, a) => pts.push({ x, y, z, r, c, a, tw: rng() * 6.283 });
+
+  const budget = {
+    body:     Math.round(n * 0.42),
+    spine:    Math.max(5, Math.round(n * 0.11)),
+    tail:     Math.round(n * 0.18),
+    dorsal:   Math.round(n * 0.10),
+    anal:     Math.round(n * 0.06),
+    pectoral: Math.round(n * 0.05),
+  };
+
+  const colourAt = (s) => sp.colours[Math.min(sp.colours.length - 1, (s * sp.colours.length) | 0)];
+  // Bands read as markings at this density; a smooth gradient reads as haze.
+  const band = (s) => 0.72 + 0.28 * Math.abs(Math.sin(s * sp.stripes * Math.PI));
+
+  /* The lateral line. Sampling only the outline leaves a hollow loop, which at
+   * this density reads as a ring rather than as an animal — this is the fix
+   * for that, and it costs a tenth of the budget. A bright axis tapering from
+   * head to tail states which end is the front before the eye is even legible. */
+  for (let i = 0; i < budget.spine; i++) {
+    const s = i / (budget.spine - 1);
+    const h = bodyHeight(sp, s);
+    push(s, h * 0.06, 0, 0.034 - 0.012 * s, colourAt(s), 0.80 - 0.42 * s);
+  }
+
+  for (let i = 0; i < budget.body; i++) {
+    const s = Math.pow(rng(), 0.65);            // denser toward the head
+    const h = bodyHeight(sp, s);
+    const onEdge = rng() < 0.62;
+    const z = (rng() * 2 - 1) * h * 0.35;
+    if (onEdge) {
+      const top = rng() < 0.5;
+      const y = top ? h * (0.94 + rng() * 0.10) : -h * sp.belly * (0.94 + rng() * 0.10);
+      push(s, y, z, 0.030 + rng() * 0.014, colourAt(s), band(s) * (0.85 + rng() * 0.15));
+    } else {
+      // Interior points are the body's fill glow. Kept small and dim: at hero
+      // size the first draft's radii summed into a cluster of orbs that lost
+      // the silhouette entirely.
+      const y = (rng() * 2 - 1) * h * (rng() < 0.5 ? 0.55 : 0.9);
+      push(s, y, z, 0.038 + rng() * 0.020, colourAt(s), 0.20 + rng() * 0.12);
+    }
+  }
+
+  // Caudal fin: a fan from the peduncle, with a V bitten out of the trailing
+  // edge. `fork` is how deep the bite goes, which is most of what separates a
+  // tuna silhouette from a goldfish one.
+  const pedH = bodyHeight(sp, 1);
+  for (let i = 0; i < budget.tail; i++) {
+    let t, v, guard = 0;
+    do {
+      t = rng(); v = rng() * 2 - 1; guard++;
+    } while (t > 1 - sp.fork * (1 - Math.abs(v)) && guard < 8);
+    const h = pedH + (sp.tailH - pedH) * Math.pow(t, 0.7);
+    const edge = Math.abs(v) > 0.7 || t > 0.75;
+    push(1 + t * sp.tailLen, v * h, (rng() * 2 - 1) * 0.02,
+         edge ? 0.030 : 0.042, colourAt(0.9), edge ? 0.64 : 0.20);
+  }
+
+  const fin = (count, from, to, height, sign) => {
+    for (let i = 0; i < count; i++) {
+      const s = from + rng() * (to - from);
+      const u = rng();
+      const spanAt = Math.sin(Math.PI * ((s - from) / (to - from))) ** 0.6;
+      const base = bodyHeight(sp, s) * sign * (sign > 0 ? 1 : sp.belly);
+      const y = base + sign * u * height * spanAt;
+      push(s, y, (rng() * 2 - 1) * 0.02, u > 0.7 ? 0.028 : 0.038,
+           colourAt(s), u > 0.7 ? 0.52 : 0.17);
+    }
+  };
+  fin(budget.dorsal, 0.34, 0.80, sp.dorsal, +1);
+  fin(budget.anal,   0.58, 0.90, sp.anal,   -1);
+
+  // Pectorals sit off the flank, so they get the widest z and pick up the most
+  // depth shading — the cheapest cue that this is a solid, not a decal.
+  for (let i = 0; i < budget.pectoral; i++) {
+    const u = rng();
+    push(0.30 + u * 0.16, -bodyHeight(sp, 0.32) * 0.35 - u * sp.pectoral,
+         (rng() < 0.5 ? -1 : 1) * (0.05 + rng() * 0.05),
+         0.030 + rng() * 0.016, sp.accent, 0.32 + rng() * 0.2);
+  }
+
+  // The eye. One bright point is worth twenty body points for recognition —
+  // it is the single strongest "this is an animal" cue in the whole cloud.
+  const eyeH = bodyHeight(sp, 0.15);
+  push(0.15, eyeH * 0.32, 0.06, 0.058, 7, 1.0);
+  push(0.15, eyeH * 0.32, 0.06, 0.030, sp.accent, 0.9);
+  push(0.15, eyeH * 0.32, -0.06, 0.040, 7, 0.55);
+  // Nose spark, so the leading edge has a definite tip.
+  push(0.015, 0, 0, 0.030, sp.accent, 0.85);
+
+  // Scatter directions are baked, not rolled per burst, so a fish explodes the
+  // same way twice and reassembles into the body it left.
+  for (const p of pts) {
+    const a = rng() * 6.283;
+    p.bx = Math.cos(a) * (0.5 + rng());
+    p.by = Math.sin(a) * (0.5 + rng());
+  }
+  return pts;
+}
+
+/* ── Flow ─────────────────────────────────────────────────────────────────
+ * A cheap smooth field standing in for the shaker's stable-fluids solver. The
+ * point of a shared field is that fish, motes and shed trails are all carried
+ * by the same water. */
+function flowX(x, y, t) {
+  return Math.sin(y * 0.0042 + t * 0.13) * 9 + Math.sin(y * 0.0091 - t * 0.08) * 4;
+}
+function flowY(x, y, t) {
+  return Math.cos(x * 0.0055 + t * 0.11) * 5 - 3;
+}
+
+const rngTop = mulberry32(CONFIG.seed * 2654435761 >>> 0);
+let speciesFilter = -1;                    // -1 = mixed; 0..3 pins one species
+const fish = [];
+const motes = [];
+
+function spawnFish() {
+  fish.length = 0;
+  // Sized against the short edge: a wallpaper is judged in portrait, and a
+  // fish scaled to the diagonal comes out too small to be the subject.
+  const scale = Math.min(W, H) / 560;
+  for (let i = 0; i < CONFIG.fish; i++) {
+    const sp = SPECIES[speciesFilter >= 0 ? speciesFilter : (rngTop() * SPECIES.length) | 0];
+    const rng = mulberry32((CONFIG.seed * 7919 + i * 104729) >>> 0);
+    const len = (sp.len[0] + rng() * (sp.len[1] - sp.len[0])) * scale * DPR;
+    /* Constant density, not a constant count. `points` is the budget for a
+     * fish of reference length; a hero-sized one gets proportionally more.
+     * With a flat 80 the big fish spread their points until the body read as
+     * a scatter of orbs rather than as one animal. */
+    const n = Math.max(24, Math.min(220, Math.round(CONFIG.points * (len / (112 * scale * DPR)))));
+    fish.push({
+      sp, pts: buildFish(sp, rng, n), n,
+      x: CONFIG.pose ? W * 0.5 - (sp.len[1] * 0.55) * scale * DPR : rngTop() * W,
+      y: CONFIG.pose ? H * (i + 0.5) / CONFIG.fish : H * (0.12 + rngTop() * 0.72),
+      z: CONFIG.pose ? 0 : rngTop() * 2 - 1,
+      dir: CONFIG.pose ? 1 : (rngTop() < 0.5 ? -1 : 1),
+      head: 0, wander: rngTop() * 6.283,
+      len,
+      speed: CONFIG.pose ? 0 : (sp.speed[0] + rng() * (sp.speed[1] - sp.speed[0])) * scale * DPR * CONFIG.speed,
+      beat: sp.beat[0] + rng() * (sp.beat[1] - sp.beat[0]),
+      phase: rngTop() * 6.283,
+      pulse: rngTop() * 6.283,
+      burst: 0,
+      shed: 0,
+    });
+  }
+  fish.sort((a, b) => a.z - b.z);
+}
+
+function spawnMotes() {
+  motes.length = 0;
+  for (let i = 0; i < CONFIG.motes; i++) {
+    motes.push({
+      x: rngTop() * W, y: rngTop() * H, z: rngTop() * 2 - 1,
+      r: (0.7 + rngTop() * 1.9) * DPR,
+      c: rngTop() < 0.82 ? 0 : 1,
+      a: 0.10 + rngTop() * 0.28,
+      tw: rngTop() * 6.283, life: -1,
+    });
+  }
+}
+
+/* Shed points leave the fish and are carried off by the flow. This is the part
+ * a bought mesh cannot do, and it costs one array push. */
+function shed(f, x, y, colour) {
+  const m = motes.find((m) => m.life === 0) ?? motes[(Math.random() * motes.length) | 0];
+  m.x = x; m.y = y; m.z = f.z; m.r = (0.9 + Math.random() * 1.6) * DPR;
+  m.c = colour; m.a = 0.55; m.life = 1; m.tw = Math.random() * 6.283;
+}
+
+/* ── Backdrop ─────────────────────────────────────────────────────────────
+ * Baked once per resize: the water column, the light shafts' base and the
+ * floor silhouette. Redrawing a gradient every frame is the classic way to
+ * lose a wallpaper's frame budget to something that never changes. */
+let backdrop = null;
+function buildBackdrop() {
+  backdrop = document.createElement('canvas');
+  backdrop.width = W; backdrop.height = H;
+  const g = backdrop.getContext('2d');
+
+  const water = g.createLinearGradient(0, 0, 0, H);
+  water.addColorStop(0.00, '#04263c');
+  water.addColorStop(0.35, '#031a2c');
+  water.addColorStop(0.72, '#020d18');
+  water.addColorStop(1.00, '#01060d');
+  g.fillStyle = water;
+  g.fillRect(0, 0, W, H);
+
+  // Floor: a dark ridge with a dim rim, so glowing fish have something to pass
+  // in front of.
+  const floorY = H * 0.88;
+  g.beginPath();
+  g.moveTo(0, H);
+  g.lineTo(0, floorY + Math.sin(0.7) * H * 0.02);
+  for (let x = 0; x <= W; x += 12 * DPR) {
+    const y = floorY + Math.sin(x * 0.004 + 0.7) * H * 0.018 + Math.sin(x * 0.011) * H * 0.008;
+    g.lineTo(x, y);
+  }
+  g.lineTo(W, H);
+  g.closePath();
+  g.fillStyle = '#01040a';
+  g.fill();
+  g.strokeStyle = 'rgba(90,190,235,0.16)';
+  g.lineWidth = 1.2 * DPR;
+  g.stroke();
+}
+
+/* ── Frame ────────────────────────────────────────────────────────────────*/
+let last = performance.now(), t = 0, fps = 60, draws = 0;
+
+function drawPoint(sprite, x, y, r, alpha) {
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(sprite, x - r, y - r, r * 2, r * 2);
+  draws++;
+}
+
+function frame(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;                 // a backgrounded tab must not teleport the scene
+  t += dt;
+  fps += ((1 / Math.max(dt, 1e-4)) - fps) * 0.08;
+  draws = 0;
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.drawImage(backdrop, 0, 0);
+
+  // Everything from here up is light, so it adds rather than covers.
+  ctx.globalCompositeOperation = 'lighter';
+
+  // Light shafts. Drawn from a soft-edged sprite rather than as filled
+  // polygons: a polygon's straight edge stays visible however low the alpha
+  // goes, and the first draft read as hard stripes across the water.
+  for (let i = 0; i < 3; i++) {
+    const x = W * (0.24 + 0.28 * i) + Math.sin(t * 0.07 + i * 1.7) * W * 0.05;
+    const w = W * (0.26 + 0.07 * Math.sin(t * 0.11 + i * 2));
+    ctx.save();
+    ctx.translate(x, -H * 0.04);
+    ctx.rotate(0.14 + 0.03 * Math.sin(t * 0.09 + i));
+    ctx.globalAlpha = 0.16 + 0.05 * Math.sin(t * 0.23 + i * 2.1);
+    ctx.drawImage(shaftSprite, -w / 2, 0, w, H * 1.02);
+    ctx.restore();
+  }
+
+  // Motes: plankton and shed trail points, carried by the same water as the
+  // fish.
+  for (const m of motes) {
+    m.x += flowX(m.x, m.y, t) * dt * (0.6 + 0.5 * (m.z + 1));
+    m.y += flowY(m.x, m.y, t) * dt * 0.5;
+    if (m.x < -20) m.x = W + 20; else if (m.x > W + 20) m.x = -20;
+    if (m.y < -20) m.y = H + 20; else if (m.y > H + 20) m.y = -20;
+    if (m.life > 0) {
+      m.life -= dt * 0.55;
+      if (m.life <= 0) { m.life = 0; m.a = 0.10 + Math.random() * 0.2; m.c = 0; }
+    }
+    const twinkle = 0.65 + 0.35 * Math.sin(t * 1.7 + m.tw);
+    const a = (m.life > 0 ? m.a * m.life : m.a) * twinkle;
+    if (a > 0.012) drawPoint(sprites[m.c], m.x, m.y, m.r * 3.2, a);
+  }
+
+  for (const f of fish) {
+    const depth = 0.62 + 0.38 * (f.z + 1) * 0.5;
+
+    // Steering: wander, plus the flow, plus a soft push away from the edges.
+    // Pose mode holds position and heading so the body can be judged.
+    if (CONFIG.pose) {
+      f.head = 0;
+    } else {
+      f.wander += (Math.random() - 0.5) * dt * 2.2;
+      const margin = 0.12;
+      let turn = Math.sin(f.wander) * 0.5;
+      if (f.x < W * margin) turn += (f.dir < 0 ? 1 : -1) * 0.9;
+      if (f.x > W * (1 - margin)) turn += (f.dir > 0 ? 1 : -1) * 0.9;
+      f.head += turn * dt;
+      if (f.y < H * 0.10) f.head += 0.6 * dt * f.dir;
+      if (f.y > H * 0.84) f.head -= 0.6 * dt * f.dir;
+      f.head = Math.max(-0.55, Math.min(0.55, f.head));
+
+      const vx = (Math.cos(f.head) * f.speed * f.dir + flowX(f.x, f.y, t) * 0.35) * depth;
+      const vy = (Math.sin(f.head) * f.speed + flowY(f.x, f.y, t) * 0.35) * depth;
+      f.x += vx * dt; f.y += vy * dt;
+      if (f.x < -f.len * 2) { f.x = -f.len * 2; f.dir = 1; }
+      if (f.x > W + f.len * 2) { f.x = W + f.len * 2; f.dir = -1; }
+    }
+
+    f.burst *= Math.exp(-dt / 0.5);
+    if (f.burst < 0.004) f.burst = 0;
+
+    // Body wave. Amplitude grows toward the tail, which is the whole of what
+    // separates swimming from sliding.
+    const w = 2 * Math.PI * f.beat;
+    const kw = 4.2;
+    const sp = f.sp;
+    const size = f.len * depth;
+    const ang = f.head * f.dir + (f.dir < 0 ? Math.PI : 0);
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const px = f.x + f.z * 9 * DPR;                 // parallax, as the shaker does it
+    const py = f.y;
+    const glow = 0.78 + 0.22 * Math.sin(t * 0.8 + f.pulse);
+
+    for (const p of f.pts) {
+      const phase = w * t - p.x * kw + f.phase;
+      const amp = sp.amp * (0.06 + Math.pow(p.x, 1.7)) * (1 + f.burst * 0.6);
+      const d = amp * Math.sin(phase);
+      const slope = amp * kw * Math.cos(phase);
+      const th = Math.atan(slope);
+      const cs = Math.cos(th), sn = Math.sin(th);
+
+      // Point offset from the bent spine, so the tail fin tilts into the turn
+      // instead of sliding sideways.
+      let lx = p.x - p.y * sn;
+      let ly = d + p.y * cs;
+
+      if (f.burst > 0) {
+        lx += p.bx * f.burst * 1.5;
+        ly += p.by * f.burst * 1.5;
+      }
+
+      const sx = px + (lx * ca - ly * sa) * size;
+      const sy = py + (lx * sa + ly * ca) * size;
+      if (sx < -40 || sx > W + 40 || sy < -40 || sy > H + 40) continue;
+
+      // Depth shading across the flank, and a per-point shimmer so the cloud
+      // is alive when the fish is coasting.
+      const flank = 0.82 + 0.18 * p.z * 6;
+      const shimmer = 0.86 + 0.14 * Math.sin(t * 2.6 + p.tw);
+      const a = p.a * depth * glow * flank * shimmer * (1 - f.burst * 0.25);
+      if (a > 0.02) drawPoint(sprites[p.c], sx, sy, p.r * size * 2.05, Math.min(1, a));
+    }
+
+    // The fish is a light source: a wide dim halo is what makes the water
+    // around it brighten, and what will later drive the caustics on the floor.
+    drawPoint(sprites[sp.colours[0]], px, py, f.len * 0.72 * depth, 0.05 * glow);
+
+    // Shed a point from the tail now and then; the flow takes it from there.
+    f.shed += dt;
+    if (f.shed > 0.35 + Math.random() * 0.5) {
+      f.shed = 0;
+      const tailX = px + ((1.25 * ca) * size) * -0;
+      shed(f, px - ca * size * 1.1, py - sa * size * 1.1, sp.colours[2] ?? sp.colours[0]);
+    }
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+
+  if (CONFIG.hud) {
+    hudEl.textContent =
+      `${fps.toFixed(0)} fps\n` +
+      `${fish.length} fish, ${fish.reduce((a, f) => a + f.n, 0)} pts\n` +
+      `${draws} sprite draws/frame\n` +
+      `species: ${speciesFilter < 0 ? 'mixed' : SPECIES[speciesFilter].name}`;
+  } else {
+    hudEl.textContent = '';
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ── Input ────────────────────────────────────────────────────────────────*/
+function burstAt(cx, cy) {
+  let best = null, bestD = Infinity;
+  for (const f of fish) {
+    const d = (f.x - cx) ** 2 + (f.y - cy) ** 2;
+    if (d < bestD) { bestD = d; best = f; }
+  }
+  if (best && bestD < (Math.max(W, H) * 0.5) ** 2) best.burst = 1;
+}
+canvas.addEventListener('pointerdown', (e) => {
+  burstAt(e.clientX * DPR, e.clientY * DPR);
+  const hint = document.getElementById('hint');
+  if (hint) hint.style.opacity = '0';
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'h') CONFIG.hud = CONFIG.hud ? 0 : 1;
+  if (e.key === 's') { speciesFilter = speciesFilter + 1 >= SPECIES.length ? -1 : speciesFilter + 1; spawnFish(); }
+  if (e.key === 'b') for (const f of fish) f.burst = 1;
+});
+
+resize();
+spawnMotes();
+spawnFish();
+setTimeout(() => { const h = document.getElementById('hint'); if (h) h.style.opacity = '0'; }, 6000);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
