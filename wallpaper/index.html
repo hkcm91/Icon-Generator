@@ -2592,14 +2592,15 @@ const GLYPHS = {
     p.closePath();
   },
   music(p, s) {
-    const r = s * 0.5;
-    p.ellipse(-r * 0.42, r * 0.60, r * 0.38, r * 0.30, -0.36, 0, Math.PI * 2);
+    const r = s * 0.5, w = r * 0.17;   // the stem needs width; a line fills nothing
+    p.ellipse(-r * 0.40, r * 0.62, r * 0.36, r * 0.28, -0.34, 0, Math.PI * 2);
     p.closePath();
     p.moveTo(-r * 0.06, r * 0.62);
     p.lineTo(-r * 0.06, -r * 0.78);
-    p.lineTo(r * 0.74, -r * 0.98);
-    p.lineTo(r * 0.74, -r * 0.52);
-    p.lineTo(-r * 0.06, -r * 0.32);
+    p.lineTo(r * 0.72, -r * 0.98);
+    p.lineTo(r * 0.72, -r * 0.54);
+    p.lineTo(-r * 0.06 + w, -r * 0.34);
+    p.lineTo(-r * 0.06 + w, r * 0.62);
     p.closePath();
   },
   camera(p, s) {
@@ -2619,16 +2620,21 @@ const GLYPHS = {
     p.arc(0, r * 0.08, r * 0.40, 0, Math.PI * 2);
   },
   gear(p, s) {
-    const r = s * 0.5, teeth = 8;
-    for (let i = 0; i < teeth * 2; i++) {
-      const a = (i / (teeth * 2)) * Math.PI * 2;
-      const rad = i % 2 ? r * 0.68 : r;
+    /* Teeth need to be deep to read as teeth. At a shallow inner radius the
+     * silhouette rounds off into a sun or a flower, which is what the first
+     * pass produced. Four samples per tooth keep the flanks square rather
+     * than triangular, which is the other half of reading as a gear. */
+    const r = s * 0.5, teeth = 8, inner = r * 0.60;
+    for (let i = 0; i < teeth * 4; i++) {
+      const a = (i / (teeth * 4)) * Math.PI * 2 + Math.PI / (teeth * 4);
+      const q = i % 4;
+      const rad = q === 0 || q === 3 ? r : inner;
       const x = Math.cos(a) * rad, y = Math.sin(a) * rad;
       if (i === 0) p.moveTo(x, y); else p.lineTo(x, y);
     }
     p.closePath();
-    p.moveTo(r * 0.34, 0);
-    p.arc(0, 0, r * 0.34, 0, Math.PI * 2);
+    p.moveTo(r * 0.30, 0);
+    p.arc(0, 0, r * 0.30, 0, Math.PI * 2);
   },
 };
 
@@ -2640,7 +2646,7 @@ function drawGlyph(name, cx, cy, size) {
 
   // Toward the light, and the direction thickness therefore runs.
   const lx = SHADOW_X, ly = SHADOW_Y;
-  const depth = size * 0.14;
+  const depth = size * 0.11;
   const steps = 14;
 
   ctx.save();
@@ -2656,14 +2662,18 @@ function drawGlyph(name, cx, cy, size) {
   ctx.fill(p, "evenodd");
   ctx.restore();
 
-  // Side wall, back to front, darkest at the far end.
+  /* Side wall, back to front. Kept in the mid tones: a wall that runs down
+   * to near-black stops reading as the thickness of an object and starts
+   * reading as a hard drop shadow stuck to one side of a flat sticker. Real
+   * thickness on a pale object is a darker version of the object, not an
+   * absence of light. */
   for (let i = steps; i >= 1; i--) {
     const t = i / steps;
-    const v = 0.30 + 0.34 * (1 - t);
+    const v = 0.62 + 0.30 * (1 - t);
     ctx.save();
     ctx.translate(-lx * depth * t, -ly * depth * t);
-    ctx.fillStyle = "rgba(" + ((110 * v) | 0) + "," + ((140 * v) | 0) + "," +
-                    ((168 * v) | 0) + ",1)";
+    ctx.fillStyle = "rgba(" + ((150 * v) | 0) + "," + ((175 * v) | 0) + "," +
+                    ((200 * v) | 0) + ",1)";
     ctx.fill(p, "evenodd");
     ctx.restore();
   }
