@@ -326,17 +326,32 @@ function flowY(x, y, t) {
   return Math.cos(x * 0.0055 + t * 0.11) * 5 - 3;
 }
 
+/* The water is wider than the window. Goals are drawn from beyond both edges,
+ * so fish swim out of frame and back in and the tank stops feeling like a box
+ * exactly the size of the screen. Roughly a quarter of goals sit off-screen. */
+const ROAM = { x0: -0.20, x1: 1.20, y0: 0.06, y1: 0.80 };
+
 function retarget(f) {
-  /* Somewhere else in the tank. Rejecting goals close to the fish's own x is
-   * what makes it cross the frame instead of fidgeting in one corner — the
-   * first model only drifted sideways until it hit an edge. */
-  const mx = W * 0.09, my = H * 0.08;
+  /* Somewhere else. Rejecting goals close to the fish's own x is what makes it
+   * cross the frame instead of fidgeting in one corner. */
+  /* Vertically a fish keeps to its own layer. Real fish occupy strata, and it
+   * is also what stops the school converging: a fish can cross the frame
+   * horizontally in a few seconds but climbs far more slowly, so drawing y
+   * goals uniformly made every fish a low-pass filter of the same uniform
+   * signal, and the whole school drifted to the middle. Measured as vertical
+   * spread collapsing from 259px to about 110. Layers drift, slowly. */
+  if (rnd() < 0.12) f.band = ROAM.y0 + rnd() * (ROAM.y1 - ROAM.y0);
   for (let i = 0; i < 6; i++) {
-    const gx = mx + rnd() * (W - 2 * mx);
-    const gy = my + rnd() * (H * 0.82 - 2 * my);
+    const gx = W * (ROAM.x0 + rnd() * (ROAM.x1 - ROAM.x0));
+    const gy = H * Math.max(ROAM.y0, Math.min(ROAM.y1, f.band + (rnd() - 0.5) * 0.26));
     if (i === 5 || Math.abs(gx - f.x) > W * 0.3) { f.goalX = gx; f.goalY = gy; break; }
   }
-  f.goalT = 4 + rnd() * 6;
+  f.goalT = 5 + rnd() * 7;
+  /* A fish must commit. Without this cooldown one pressed against an edge
+   * re-rolled its goal on every single frame — measured at 134 a minute against
+   * an intended 6 to 12 — so it never travelled anywhere and the whole school
+   * random-walked into a clump in the middle. */
+  f.reTimer = 1.5;
 }
 
 /* One fish, one step. It heads for a point, arrives, and picks another; it
@@ -349,7 +364,7 @@ function swim(f, dt, depth) {
 
   // Pitch toward the goal — eased, and nowhere near vertical. A fish climbs;
   // it does not point itself at the surface like a rocket.
-  const want = Math.max(-0.40, Math.min(0.40, Math.atan2(dy, Math.abs(dx) + 1)));
+  const want = Math.max(-0.62, Math.min(0.62, Math.atan2(dy, Math.abs(dx) + 1)));
   f.head += (want - f.head) * Math.min(1, dt * 1.8);
 
   // Which way to face. The deadband keeps a fish whose goal is directly above
@@ -370,7 +385,7 @@ function swim(f, dt, depth) {
    * the same pixels, and overlapping bodies read as one confused blob rather
    * than as a school. Sixty-odd pairs a frame costs nothing at this count. */
   let px = 0, py = 0;
-  const crowd = 0.35;                        // ceiling, as a fraction of cruise
+  const crowd = 0.50;                        // ceiling, as a fraction of cruise
   for (const o of fish) {
     if (o === f) continue;
     const ox = f.x - o.x, oy = f.y - o.y;
@@ -394,17 +409,17 @@ function swim(f, dt, depth) {
    * neighbours got identical pushes. Fish swim; they are not plankton. */
   f.x += (Math.cos(f.head) * f.speed * f.facing + flowX(f.x, f.y, t) * 0.16
           + px * f.cruise * crowd) * depth * dt;
-  f.y += (Math.sin(f.head) * f.speed * (0.5 + 0.5 * Math.abs(f.facing))
+  f.y += (Math.sin(f.head) * f.speed * (0.65 + 0.35 * Math.abs(f.facing))
           + flowY(f.x, f.y, t) * 0.16 + py * f.cruise * crowd) * depth * dt;
 
-  // The tank has walls. A fish that runs out of room takes a new goal behind
-  // it and turns, which looks like a decision; bouncing looks like a bug.
-  const wall = f.len * 0.45;
-  if (f.x < wall || f.x > W - wall || f.y < H * 0.05 || f.y > H * 0.86) {
-    f.x = Math.max(wall, Math.min(W - wall, f.x));
-    f.y = Math.max(H * 0.05, Math.min(H * 0.86, f.y));
-    retarget(f);
-  }
+  /* No clamp. A fish that has strayed well past the roaming area is simply
+   * given a goal back inside it and turns of its own accord, which reads as a
+   * decision; clamping read as a fish stuck against invisible glass, and
+   * re-fired every frame it stayed there. */
+  f.reTimer -= dt;
+  const out = f.x < W * (ROAM.x0 - 0.25) || f.x > W * (ROAM.x1 + 0.25)
+           || f.y < H * 0.02 || f.y > H * 0.85;
+  if (out && f.reTimer <= 0) retarget(f);
 
   // Depth drifts, so fish trade places front to back instead of holding lanes.
   f.z += (Math.sin(t * 0.13 + f.pulse) * 0.9 - f.z) * dt * 0.3;
@@ -452,7 +467,8 @@ function spawnFish() {
       bl,
       cruise: CONFIG.pose ? 0 : bl * len * CONFIG.speed,
       speed: 0,
-      goalX: 0, goalY: 0, goalT: 0,
+      goalX: 0, goalY: 0, goalT: 0, reTimer: 0,
+      band: 0.08 + 0.68 * ((i + 0.5) / CONFIG.fish),   // spread the layers at spawn
       dash: 0, dashIn: 1 + rngTop() * 6,
       beat: bl / sp.stride,
       phase: rngTop() * 6.283,
@@ -629,7 +645,11 @@ function frame() {
 
       // Point offset from the bent spine, so the tail fin tilts into the turn
       // instead of sliding sideways.
-      let lx = (p.x - p.y * sn) * f.facing;
+      /* Negated, because the body is built nose at x = 0 running back to the
+       * tail at x > 1, and travel is toward +x. Without the flip the tail led
+       * and every fish swam backwards — true since the first version, and
+       * invisible until they moved far enough for anyone to tell. */
+      let lx = -(p.x - p.y * sn) * f.facing;
       let ly = d + p.y * cs;
 
       if (f.burst > 0) {
@@ -658,7 +678,7 @@ function frame() {
     if (f.shed > 0.35 + rnd() * 0.5) {
       f.shed = 0;
       const tailX = px + ((1.25 * ca) * size) * -0;
-      shed(f, px - ca * size * 1.1 * f.facing, py - sa * size * 1.1 * f.facing,
+      shed(f, px + ca * size * 1.15 * f.facing, py + sa * size * 1.15 * f.facing,
            sp.colours[2] ?? sp.colours[0]);
     }
   }

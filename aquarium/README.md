@@ -33,10 +33,27 @@ without waiting for a fish to swim past — the same reason `--static` exists in
 Each fish picks a point in the tank, swims to it, and picks another. Three
 things turn that from sliding into swimming:
 
+- **The nose leads.** The body is built nose at `x = 0` running back to the
+  tail beyond `x = 1`, and travel is toward +x, so the rendered offset has to
+  be negated or the tail leads and the fish swims backwards. It did, from the
+  first version — invisible until they moved far enough for anyone to tell.
 - **Yaw is a signed scale, not a rotation.** A fish turning around rotates
   through edge-on, so `facing` animates between -1 and 1 and the body
   foreshortens on the way through. The first version rotated by 180 instead,
   which swam every leftward fish upside down — dorsal fin underneath.
+- **The water is wider than the window, and there are no walls.** Goals are
+  drawn from beyond both edges, so fish leave frame and come back — about six
+  crossings a minute. Clamping them inside the viewport instead put a fish
+  against invisible glass, and because the clamp re-fired every frame it stayed
+  there, it re-rolled its destination **134 times a minute** against an
+  intended 6 to 12. That is what circling in one spot was: a fish that never
+  committed to anywhere to go.
+- **Each fish keeps to a depth layer.** A fish crosses the frame horizontally
+  in a few seconds but climbs far more slowly, so drawing y goals uniformly
+  made every fish a low-pass filter of the same uniform signal and the school
+  drifted into one clump — vertical spread collapsing from 259px to about 110.
+  Goals now sit near the fish's own band, which drifts slowly; spread holds
+  around 210–230 and the mean gap between fish went from ~200px to ~340.
 - **Speed is in body lengths per second, not pixels.** `swim: [0.85, 1.20]`
   and `stride` (body lengths per tail beat, which sets the beat rate) are the
   units the animal is described in, so resizing a fish rescales its swimming
