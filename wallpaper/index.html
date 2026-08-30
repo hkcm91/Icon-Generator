@@ -92,7 +92,22 @@ const CONFIG = {
    * an edit — the icon renderer sweeps this to produce a set. Any number of
    * stops works; they are spread evenly along the gravity axis. */
   ramp: (params.get("ramp") || "#0a5fd4,#1a86f0,#2aa8ee,#3ec4e9").split(","),
+  /* The denser second liquid, which settles out and marbles through the body.
+   * Deliberately not a stop on `ramp` — the whole point of the pairing is
+   * that it is a different fluid rather than a darker version of the first.
+   *
+   * It has to move with the colourway even so. A teal that reads as a second
+   * phase suspended in blue reads as sludge at the bottom of pink. */
+  dense: params.get("dense") || "#4aecc6",
 };
+
+/** #rgb or #rrggbb to channel bytes. */
+function parseHex(s) {
+  const h = s.trim().replace("#", "");
+  const v = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16);
+  return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+}
+const DENSE = parseHex(CONFIG.dense);
 
 /* Holographic foil comes in pairs, not flat colours. Each flake shifts from
  * the pale end to the saturated end across its own width, which is what
@@ -2578,7 +2593,7 @@ function render(time) {
   for (let i = 0, n = GW * GH; i < n; i++) {
     let v = dye[i];
     if (v < 0) v = 0; else if (v > 1) v = 1;
-    dd[i * 4] = 74; dd[i * 4 + 1] = 236; dd[i * 4 + 2] = 198;
+    dd[i * 4] = DENSE.r; dd[i * 4 + 1] = DENSE.g; dd[i * 4 + 2] = DENSE.b;
     dd[i * 4 + 3] = (v * 172) | 0;
   }
   dyeCtx.putImageData(dyeImage, 0, 0);

@@ -79,13 +79,17 @@ const SUSPENSION = {
   fill: '0.86',
 };
 
+/* `dense` is the second liquid, not a fifth stop on the ramp. Each is chosen
+ * lighter than its ramp rather than darker: the phase settles low in the
+ * vessel under a layer of alpha, so a dark one silts up the bottom of the
+ * tile and a light one reads as marbling. */
 const COLOURWAYS = [
-  { name: 'blue',    ramp: ['#0a5fd4', '#1a86f0', '#2aa8ee', '#3ec4e9'] },
-  { name: 'candy',   ramp: ['#c2186b', '#ea4b96', '#f77fb8', '#ffb3d4'] },
-  { name: 'violet',  ramp: ['#4c1d95', '#6d34c8', '#8f5cf0', '#b18cf7'] },
-  { name: 'mint',    ramp: ['#046b52', '#0f9e74', '#2fc79a', '#6fe0bd'] },
-  { name: 'amber',   ramp: ['#b4530a', '#e2851c', '#f5ad3f', '#ffd070'] },
-  { name: 'graphite', ramp: ['#1c2230', '#333c4f', '#4e5a72', '#6f7d96'] },
+  { name: 'blue',     dense: '#4aecc6', ramp: ['#0a5fd4', '#1a86f0', '#2aa8ee', '#3ec4e9'] },
+  { name: 'candy',    dense: '#ffc2e9', ramp: ['#c2186b', '#ea4b96', '#f77fb8', '#ffb3d4'] },
+  { name: 'violet',   dense: '#8ee0ff', ramp: ['#4c1d95', '#6d34c8', '#8f5cf0', '#b18cf7'] },
+  { name: 'mint',     dense: '#c8ff9e', ramp: ['#046b52', '#0f9e74', '#2fc79a', '#6fe0bd'] },
+  { name: 'amber',    dense: '#ffe2a0', ramp: ['#b4530a', '#e2851c', '#f5ad3f', '#ffd070'] },
+  { name: 'graphite', dense: '#a8c6e4', ramp: ['#1c2230', '#333c4f', '#4e5a72', '#6f7d96'] },
 ];
 
 mkdirSync(OUT, { recursive: true });
@@ -150,6 +154,7 @@ for (const [i, way] of COLOURWAYS.entries()) {
     mode: 'full',
     corner: String(CORNER),
     ramp: way.ramp.join(','),
+    dense: way.dense,
     /* Fizz is seeded by vorticity, so the shake does raise some — but it is
      * the fastest thing in the vessel and has cleared by the time the shot is
      * taken. Simulating it would only cost frames. */
