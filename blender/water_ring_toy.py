@@ -130,7 +130,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     case.add_argument("--height", type=float, default=0.0,
                       help="case height in metres (Z); 0 derives it from the "
                            "render aspect so the case fills the frame")
-    case.add_argument("--thickness", type=float, default=0.80,
+    case.add_argument("--thickness", type=float, default=0.62,
                       help="case depth in metres (Y). It is what limits how "
                            "long the pegs can be, so a shallow toy has short "
                            "pegs whatever else you set")
@@ -189,19 +189,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                       help="ring stock radius in metres")
     play.add_argument("--hooks", type=int, default=5,
                       help="pegs to land rings on")
-    play.add_argument("--hook-fit", type=float, default=0.72,
-                      help="peg shaft radius as a fraction of a ring's hole. "
-                           "This is the slop in the joint, and it is what "
-                           "decides whether a seated ring stays seated: a "
-                           "thin peg in a wide hole lets the ring swing "
-                           "until its plane lines up with the shaft, and "
-                           "then it simply falls off")
-    play.add_argument("--hook-grip", type=float, default=0.86,
-                      help="knob radius as a fraction of a ring's hole. "
-                           "Under 1 a ring can be threaded on and worked "
-                           "back off; the closer to 1, the more a landing "
-                           "sticks and the less the board ever changes")
-    play.add_argument("--hook-length", type=float, default=1.90,
+    play.add_argument("--hook-base", type=float, default=0.58,
+                      help="peg radius where it is mounted, as a fraction of "
+                           "a ring's hole. It is the thickest the peg gets, "
+                           "so it is the one number that decides how heavy "
+                           "the pegs look")
+    play.add_argument("--hook-point", type=float, default=0.07,
+                      help="peg tip radius as a fraction of its base. Small "
+                           "is the point — a peg that ends in a bulb reads "
+                           "as a post, one that ends in a point reads as "
+                           "something to hook a ring over")
+    play.add_argument("--hook-seat", type=float, default=0.16,
+                      help="where a hooked ring sits along the peg, 0 at the "
+                           "base and 1 at the tip")
+    play.add_argument("--hook-length", type=float, default=1.05,
                       help="peg length as a fraction of the chamber depth. "
                            "Over 1 is fine and usually right: the peg leans "
                            "up, so most of its length is height rather than "
@@ -468,44 +469,63 @@ def ring_mesh(name: str, radius: float, tube: float,
 # module constant because two places need to agree on it: the peg that is
 # built with it, and the seat a ring is placed at, which has to start clear
 # of it.
-COLLAR_DEPTH = 0.9
+# The peg's profile: a shaft that narrows gently to a waist, then a spike
+# from there to the point. A single cone from base to point does not work —
+# only the fat end is thick enough to see through the water, so the peg
+# reads as a squat blob with a needle above it that nobody can make out.
+# Keeping most of the length near-parallel is what makes the whole peg
+# visible, and confining the taper to the last third is what makes it read
+# as pointed.
+HOOK_WAIST = 0.66
+HOOK_WAIST_R = 0.5
 
 
-def hook_post(name: str, shaft_r: float, length: float, knob_r: float,
-              collar_r: float) -> bpy.types.Object:
-    """A peg: collar at the back wall, shaft toward the camera, knob on top.
+def hook_profile(args, t: float) -> float:
+    """Peg radius at `t` along its length, as a fraction of its base."""
+    t = min(1.0, max(0.0, t))
+    if t <= HOOK_WAIST:
+        return 1.0 + (HOOK_WAIST_R - 1.0) * (t / HOOK_WAIST)
+    reach = (t - HOOK_WAIST) / (1.0 - HOOK_WAIST)
+    return max(args.hook_point, HOOK_WAIST_R * (1.0 - reach))
 
-    Origin sits at the collar, and the post runs along -Y — toward the
-    viewer — because that is the axis a ring floating in the screen plane
-    can actually be threaded along.
+
+def hook_post(name: str, args, base_r: float,
+              length: float) -> bpy.types.Object:
+    """A peg: a slim shaft coming to a point, running along -Y.
+
+    Along -Y — toward the viewer — because that is the axis a ring floating
+    in the screen plane can be threaded along.
+
+    A point rather than a knob, and the taper does the knob's job better. A
+    ring dropped over the tip slides down until the shaft is as wide as its
+    hole, so the peg holds a ring without a bulb on the end, and it is far
+    easier to land on: the target grows as the ring descends instead of
+    having to be cleared in one go.
     """
+    waist_r = base_r * HOOK_WAIST_R
+    shaft_len = length * HOOK_WAIST
+    spike_len = length - shaft_len
     parts = []
 
-    bpy.ops.mesh.primitive_cylinder_add(
-        radius=collar_r, depth=shaft_r * COLLAR_DEPTH, vertices=28,
-        location=(0.0, -shaft_r * COLLAR_DEPTH * 0.5, 0.0),
+    bpy.ops.mesh.primitive_cone_add(
+        radius1=base_r, radius2=waist_r, depth=shaft_len, vertices=24,
+        location=(0.0, -shaft_len * 0.5, 0.0),
         rotation=(math.radians(90.0), 0.0, 0.0))
     parts.append(bpy.context.active_object)
 
-    bpy.ops.mesh.primitive_cylinder_add(
-        radius=shaft_r, depth=length, vertices=24,
-        location=(0.0, -length * 0.5, 0.0),
+    bpy.ops.mesh.primitive_cone_add(
+        radius1=waist_r, radius2=base_r * args.hook_point, depth=spike_len,
+        vertices=24, location=(0.0, -shaft_len - spike_len * 0.5, 0.0),
         rotation=(math.radians(90.0), 0.0, 0.0))
-    parts.append(bpy.context.active_object)
-
-    bpy.ops.mesh.primitive_uv_sphere_add(
-        radius=knob_r, segments=20, ring_count=12,
-        location=(0.0, -length, 0.0))
     parts.append(bpy.context.active_object)
 
     obj = join(parts, name)
     activate(obj)
-    # Join keeps the *first* part's object rotation, and the first part was
-    # built with one. Left there it is the next thing overwritten when the
-    # peg is given its lean, and the post ends up pointing somewhere it was
-    # never meant to — which from a dead-on camera reads as a peg that is
-    # simply short. Baking it into the mesh leaves the object at identity,
-    # so the lean is the only rotation it has.
+    # Join keeps the first part's object rotation, and the first part was
+    # built with one. Baked into the mesh here so the object sits at
+    # identity and the lean is the only rotation it carries — left on the
+    # object, the lean overwrites it and the peg points somewhere it was
+    # never meant to.
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
     bpy.ops.object.shade_smooth()
     return obj
@@ -896,14 +916,15 @@ def ring_hole(args) -> float:
     return args.ring_radius - args.ring_tube * 2.0
 
 
-def hook_collar(args) -> float:
-    """Radius of the disc at the base of a peg.
+def hook_base(args) -> float:
+    """Peg radius where it is mounted — the thick end of the shaft."""
+    return ring_hole(args) * args.hook_base
 
-    Wider than the ring's hole by construction: it is what stops a ring
-    walking off the back of the peg, and a collar narrower than the hole is
-    not a stop, it is a ramp.
-    """
-    return ring_hole(args) * 1.16
+
+def hook_radius_at(args, inner: Vector, along: float) -> float:
+    """Peg radius a distance `along` from the base."""
+    return hook_base(args) * hook_profile(
+        args, along / max(1e-6, hook_length(args, inner)))
 
 
 def hook_mount(args, inner: Vector) -> float:
@@ -916,7 +937,7 @@ def hook_mount(args, inner: Vector) -> float:
     described as floating on would do.
     """
     lean_up = math.sin(math.radians(args.hook_tilt))
-    return inner.y * 0.5 - hook_collar(args) * lean_up - inner.y * 0.02
+    return inner.y * 0.5 - hook_base(args) * lean_up - inner.y * 0.02
 
 
 def hook_length(args, inner: Vector) -> float:
@@ -940,10 +961,13 @@ def hook_length(args, inner: Vector) -> float:
     # knob poking out through the front glass, which the render will happily
     # show you.
     base = hook_mount(args, inner)
-    # A ring's full thickness of clear water ahead of the knob, plus half
+    # A ring's full thickness of clear water ahead of the tip, plus half
     # again: a ring has to fit *entirely* in front of a peg to drift across
     # it, and a clamp that only leaves its centre room lets it pass through.
-    room = (base + inner.y * 0.5 - hole * args.hook_grip
+    # The tip is a point, so it costs almost nothing here — which is most of
+    # why a spike can be longer than a post with a bulb on it.
+    room = (base + inner.y * 0.5
+            - hole * args.hook_base * args.hook_point
             - args.ring_tube * 3.0)
     return min(wanted, max(inner.y * 0.2, room / lean))
 
@@ -982,15 +1006,10 @@ def build_hooks(args, built: dict, fill_z: float) -> list[bpy.types.Object]:
     """
     inner = built["interior"]
     length = hook_length(args, inner)
-    hole = ring_hole(args)
-    # Every diameter here comes off the ring's hole, because every one of
-    # them is really a statement about the ring. The knob is what a ring has
-    # to climb over to leave by the front; the collar is what stops it
-    # walking off the back — and a collar narrower than the hole is not a
-    # stop at all, it is a ramp.
-    shaft = hole * args.hook_fit
-    knob = hole * args.hook_grip
-    collar = hook_collar(args)
+    # Both radii come off the ring's hole, because both are really
+    # statements about the ring: the base is what a ring sliding down the
+    # taper jams against, and the point is what it drops over on the way on.
+    base_r = hook_base(args)
     # The pegs sit against the back wall, which is the deepest water in
     # the chamber; a plain white plastic reads as charcoal from there.
     material = simple_material("ringtoy_hook", HOOK_COLOUR, 0.22, 0.35)
@@ -1002,7 +1021,7 @@ def build_hooks(args, built: dict, fill_z: float) -> list[bpy.types.Object]:
 
     hooks = []
     for i, (x, z) in enumerate(hook_layout(args, inner, fill_z)):
-        post = hook_post(f"Ringtoy_Hook_{i}", shaft, length, knob, collar)
+        post = hook_post(f"Ringtoy_Hook_{i}", args, base_r, length)
         post.location = (x, back, z)
         post.rotation_euler = (tilt, 0.0, 0.0)
         post.data.materials.append(material)
@@ -1048,7 +1067,7 @@ def build_rings(args, built: dict, fill_z: float,
                                                  args.hook_hang),
                                    rng.uniform(-0.10, 0.10),
                                    rng.uniform(-0.06, 0.06))
-            ring.location = hang_point(args, hook)
+            ring.location = hang_point(args, hook, inner)
         else:
             ring.location = (
                 rng.uniform(-1.0, 1.0) * inner.x * 0.32,
@@ -1525,22 +1544,25 @@ def drift_field(args, p: Vector, phase: float) -> Vector:
     ))
 
 
-def hang_point(args, hook: bpy.types.Object,
+def hang_point(args, hook: bpy.types.Object, inner: Vector,
                offset: Vector | None = None) -> Vector:
     """Where a ring sits once it is on a peg.
 
-    Down the shaft until the collar stops it, and hanging by the inside of
-    its hole — which is what a ring on a peg does, and is a good deal lower
-    than centred on the peg.
+    Some way down the taper — `--hook-seat` — and hanging by the inside of
+    its hole against the cone, which is what a ring on a peg does and is a
+    good deal lower than centred on it. The hang is whatever slack is left
+    between the hole and the cone at that height, so a ring seated low on a
+    fat part of the taper barely hangs at all and one seated high swings.
     """
     axis = hook.matrix_world.to_3x3() @ Vector((0.0, -1.0, 0.0))
     hole = ring_hole(args)
-    shaft = hole * args.hook_fit
+    along = hook_length(args, inner) * args.hook_seat
     base = Vector(hook.location) + (offset or Vector((0.0, 0.0, 0.0)))
-    seat = base + axis * (shaft * COLLAR_DEPTH + args.ring_tube * 1.7)
+    seat = base + axis * along
     down = Vector((0.0, 0.0, -1.0))
     down = (down - axis * down.dot(axis)).normalized()
-    return seat + down * (hole - shaft) * 0.8
+    slack = max(0.0, hole - hook_radius_at(args, inner, along))
+    return seat + down * slack * 0.8
 
 
 def simulate_rings(args, built: dict) -> None:
@@ -1584,7 +1606,6 @@ def simulate_rings(args, built: dict) -> None:
     dt = 1.0 / max(1, args.fps)
     radius, tube = args.ring_radius, args.ring_tube
     hole = ring_hole(args)
-    shaft = hole * args.hook_fit
     peg_length = hook_length(args, inner)
     floor = -inner.z * 0.5
 
@@ -1614,7 +1635,7 @@ def simulate_rings(args, built: dict) -> None:
     # a peg it has never been told about.
     for entry in state:
         for index, hook in enumerate(hooks):
-            if (entry["p"] - hang_point(args, hook)).length < tube:
+            if (entry["p"] - hang_point(args, hook, inner)).length < tube:
                 entry["hook"] = index
                 break
 
@@ -1637,7 +1658,8 @@ def simulate_rings(args, built: dict) -> None:
 
             if entry["hook"] is not None:
                 hook = hooks[entry["hook"]]
-                target = hang_point(args, hook, offsets[entry["hook"]])
+                target = hang_point(args, hook, inner,
+                                    offsets[entry["hook"]])
                 # A press strong enough to lift the ring off the peg is a
                 # press strong enough to take it off; anything less only
                 # rocks it, which is what the toy does too.
@@ -1700,10 +1722,11 @@ def simulate_rings(args, built: dict) -> None:
                     continue
                 flat = Vector((p.x - near.x, 0.0, p.z - near.z))
                 gap = flat.length
-                if gap <= hole or gap >= radius + shaft:
+                thick = hook_radius_at(args, inner, along)
+                if gap <= hole or gap >= radius + thick:
                     continue
                 entry["v"] += flat * (
-                    (radius + shaft - gap) / gap * 3.0) * dt
+                    (radius + thick - gap) / gap * 3.0) * dt
 
         for index, entry in enumerate(state):
             entry["p"] = entry["p"] + entry["v"] * dt
@@ -1728,7 +1751,8 @@ def simulate_rings(args, built: dict) -> None:
                     for hook_i, hook in enumerate(hooks):
                         if any(other["hook"] == hook_i for other in state):
                             continue
-                        target = hang_point(args, hook, offsets[hook_i])
+                        target = hang_point(args, hook, inner,
+                                            offsets[hook_i])
                         # Caught on what the camera sees: the peg has to be
                         # inside the ring's hole on screen, and the ring has
                         # to be near enough in depth to be threaded on it.

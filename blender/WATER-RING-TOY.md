@@ -17,8 +17,7 @@ trip through the UI.
 ![A frame from the loop, thirteen frames after a press](../docs/screenshots/water-ring-toy.png)
 
 Above: thirteen frames into a press. Bubbles are still coming off the nozzle
-over the button, rings hang on two of the five pegs, and the pink ring is the
-one this press has just taken off its peg.
+over the button, and three of the five pegs are holding a ring.
 
 It is built on [`liquid_shaker.py`](./liquid_shaker.py) and imports its plan
 curve, pillow loft, fill-line boolean and render plumbing directly rather than
@@ -106,15 +105,15 @@ in the one dimension that is scarce — which is why `--hook-length` can exceed
 1.0 and the default leans as far as 62°.
 
 What limits them is the chamber, not the flag. `hook_length()` clamps to what
-fits: measured from where the peg is actually mounted, counting the knob on
-the end, and leaving a full ring's thickness of clear water ahead of the tip
-so a ring can still float past in front of one — which is how a ring lines up
-with a peg in the first place. Past that the pegs stop being pegs and become a
-wall. If you want taller pegs than you are getting, the flag to reach for is
-`--thickness`: depth is the budget the length is drawn from.
+fits: measured from where the peg is actually mounted, counting the tip, and
+leaving a full ring's thickness of clear water ahead of it so a ring can still
+float past in front of one — which is how a ring lines up with a peg in the
+first place. Past that the pegs stop being pegs and become a wall. If you want
+taller pegs than you are getting, the flag to reach for is `--thickness`:
+depth is the budget the length is drawn from.
 
 The pegs are mounted forward of the back wall rather than on it, because the
-collar is perpendicular to the peg and swings back through the wall once the
+base cap is perpendicular to the peg and swings back through the wall once the
 peg leans. They also drift — `--hook-bob` — because a wallpaper is looked at
 for a long time and a board that is perfectly rigid behind moving water reads
 as a painted backdrop. The float is computed by one shared function so the
@@ -126,11 +125,25 @@ face-on to a leaning peg starts the sim intersecting it — and nothing needs it
 now. On a peg leaning 62° a square ring is seen almost edge-on, and gravity
 would hang it much closer to flat anyway.
 
-**Peg proportions come off the ring, not off the peg.** `--hook-fit` is the
-shaft as a fraction of the ring's hole and is the slop in the joint;
-`--hook-grip` is the knob, which is what a ring has to climb over to leave by
-the front. The collar that stops it leaving by the back is wider than the hole
-by construction — a collar narrower than the hole is not a stop, it is a ramp.
+**A peg is a slim shaft that comes to a point**, not a post with a knob on
+the end, and the taper does the knob's job better: a ring dropped over the tip
+slides down until the shaft is as wide as its hole and stops there. It is far
+easier to land on than a bulb, because the target grows as the ring descends
+instead of having to be cleared in one go, and the board is visibly livelier
+for it.
+
+The profile matters as much as the proportions. A single cone from base to
+point does not work: only the fat end is thick enough to see through the
+water, so the peg reads as a squat blob with a needle above it that nobody can
+make out. So the shaft stays near-parallel for its first two thirds — that is
+what makes the whole length visible — and the taper is confined to the last
+third, which is what makes it read as pointed.
+
+`--hook-base` is the radius where it is mounted, as a fraction of the ring's
+hole, and it is the one number that decides how heavy the pegs look;
+`--hook-point` is the tip; `--hook-seat` is where along the peg a hooked ring
+comes to rest. Every one of them is expressed against the ring, because every
+one of them is really a statement about the ring.
 
 ## How the loop closes
 
