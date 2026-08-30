@@ -37,7 +37,7 @@ const SIZES = [1024, 512, 192];
 /* The container is square here, not phone-shaped, so the corner radius has to
  * be given explicitly: the page's default is a fraction of the short edge of
  * a screen, which on a square reads far too square for a tile. */
-const CORNER = Math.round(MASTER * 0.22);
+const CORNER = Math.round(MASTER * 0.30);
 
 /* The icon is captured mid-swirl, not at rest.
  *
@@ -77,31 +77,79 @@ const SUSPENSION = {
   stars: '130',
   bubbles: '26',
   fill: '0.86',
+  // Icons are small objects seen whole, so the front face is a surface
+  // that curves. A wallpaper has no edge to curve over and leaves this off.
+  dome: '1',
 };
 
-/* `dense` is the second liquid, not a fifth stop on the ramp. Each is chosen
- * lighter than its ramp rather than darker: the phase settles low in the
- * vessel under a layer of alpha, so a dark one silts up the bottom of the
- * tile and a light one reads as marbling. */
-const COLOURWAYS = [
-  { name: 'blue', glyph: 'chat',     dense: '#4aecc6', ramp: ['#0a5fd4', '#1a86f0', '#2aa8ee', '#3ec4e9'] },
-  { name: 'candy', glyph: 'heart',    dense: '#ffc2e9', ramp: ['#c2186b', '#ea4b96', '#f77fb8', '#ffb3d4'] },
-  { name: 'violet', glyph: 'music',   dense: '#8ee0ff', ramp: ['#4c1d95', '#6d34c8', '#8f5cf0', '#b18cf7'] },
-  { name: 'mint', glyph: 'gear',     dense: '#c8ff9e', ramp: ['#046b52', '#0f9e74', '#2fc79a', '#6fe0bd'] },
-  { name: 'amber', glyph: 'bolt',    dense: '#ffe2a0', ramp: ['#b4530a', '#e2851c', '#f5ad3f', '#ffd070'] },
-  { name: 'graphite', glyph: 'camera', dense: '#a8c6e4', ramp: ['#1c2230', '#333c4f', '#4e5a72', '#6f7d96'] },
-  /* Colourless liquid, which is what most real shakers actually hold: the
-   * glitter is the whole show and the fluid is only there to carry it.
-   *
-   * Not white. The ramp keeps a cool cast that deepens downward, because the
-   * headspace above the waterline is painted pale blue — take the tint out
-   * of the liquid entirely and the two match, the surface disappears, and
-   * the tile stops reading as a vessel with something in it. */
-  { name: 'clear', glyph: 'heart', dense: '#dff6ff', ramp: ['#a8cfe0', '#c8e4f0', '#dff1f9', '#f2fbfe'] },
+/* Every colourway is generated from a single hue.
+ *
+ * Hand-picked hex is how the first set was built and it is why the tiles did
+ * not read as a family: each ramp spanned its own lightness range at its own
+ * saturation, so side by side they looked like seven separate experiments
+ * rather than one product in seven finishes. Cohesion is not something to
+ * eyeball across eight swatches — it is a property of sharing a formula.
+ *
+ * So a colourway is a hue plus two modifiers, and the structure below is
+ * identical for all of them:
+ *
+ *   ramp   deepest at the top of the pour, lifting and drifting toward the
+ *          cool side as it lightens, because a real body of liquid loses
+ *          both saturation and warmth with depth of view,
+ *   dense  the second phase, rotated off the hue and lifted well above it,
+ *          so it marbles rather than silts,
+ *   air    the headspace, the same hue drained of nearly all its chroma —
+ *          tinted air, but air in *this* vessel.
+ *
+ * `sat` and `lift` are the only per-colourway freedom: they make graphite and
+ * clear members of the family rather than outliers, by pulling chroma out and
+ * lightness up while every other relationship holds.
+ */
+const hsl = (h, s, l) => {
+  h = ((h % 360) + 360) % 360;
+  s = Math.max(0, Math.min(100, s)) / 100;
+  l = Math.max(0, Math.min(100, l)) / 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const v = l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+    return Math.round(v * 255).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+};
 
-  /* Glass: the liquid thins to a tint and the PNG keeps its alpha, so a
-   * launcher composites the container over the wallpaper behind it. */
-  { name: 'glass', glyph: 'bolt', glass: '1', dense: '#bfe9ff', ramp: ['#8fd4f5', '#a9e2f8', '#c2ecfb', '#d8f4fd'] },
+function colourway({ name, hue, glyph, sat = 1, lift = 0, glass }) {
+  const ramp = [0, 1, 2, 3].map((i) => {
+    const t = i / 3;
+    return hsl(hue - 23 * t, (90 - 12 * t) * sat, 44 + 16 * t + lift);
+  });
+  return {
+    name, glyph, glass,
+    ramp,
+    dense: hsl(hue - 55, 78 * sat, 66 + lift * 0.4),
+    air: [
+      hsl(hue - 10, 40 * sat, 86 + lift * 0.25),
+      hsl(hue - 10, 55 * sat, 95),
+      hsl(hue - 10, 44 * sat, 79 + lift * 0.25),
+    ].join(','),
+  };
+}
+
+const COLOURWAYS = [
+  colourway({ name: 'blue',     hue: 216, glyph: 'chat' }),
+  colourway({ name: 'candy',    hue: 335, glyph: 'heart' }),
+  colourway({ name: 'violet',   hue: 272, glyph: 'music' }),
+  colourway({ name: 'mint',     hue: 158, glyph: 'gear' }),
+  colourway({ name: 'amber',    hue: 32,  glyph: 'bolt' }),
+  // The neutral of the family: same construction, chroma pulled almost out.
+  colourway({ name: 'graphite', hue: 215, glyph: 'camera', sat: 0.14 }),
+  // Colourless liquid, which is what most real shakers hold. Still not white:
+  // drain the tint entirely and it matches the headspace, the waterline
+  // disappears, and the tile stops reading as a vessel with something in it.
+  colourway({ name: 'clear',    hue: 200, glyph: 'heart', sat: 0.30, lift: 26 }),
+  // Glass: the fluid thins to a tint and the PNG keeps its alpha, so a
+  // launcher composites the container over the wallpaper behind it.
+  colourway({ name: 'glass',    hue: 200, glyph: 'bolt', sat: 0.55, lift: 18, glass: '1' }),
 ].filter((w) => !process.env.ICON_ONLY || w.name === process.env.ICON_ONLY);
 
 mkdirSync(OUT, { recursive: true });
@@ -167,6 +215,7 @@ for (const [i, way] of COLOURWAYS.entries()) {
     corner: String(CORNER),
     ramp: way.ramp.join(','),
     dense: way.dense,
+    air: way.air,
     glass: way.glass ?? '0',
     // ICON_GLYPH overrides the set; ICON_GLYPH= renders the vessels empty.
     glyph: process.env.ICON_GLYPH ?? way.glyph ?? '',

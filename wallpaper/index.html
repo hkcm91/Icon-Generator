@@ -99,6 +99,14 @@ const CONFIG = {
    * It has to move with the colourway even so. A teal that reads as a second
    * phase suspended in blue reads as sludge at the bottom of pink. */
   dense: params.get("dense") || "#4aecc6",
+  /* The headspace above the waterline: inner top wall, mid air, and the
+   * liquid showing through the meniscus.
+   *
+   * Was three fixed pale blues. That is right for a blue shaker and wrong
+   * for every other one — tinted air is still air *in this vessel*, and a
+   * cool blue headspace sitting above a hot pink liquid is the single
+   * loudest thing keeping a set of colourways from reading as a family. */
+  air: (params.get("air") || "#c9dfec,#eaf5fb,#a9d4e6").split(","),
   /* Glass rather than paint.
    *
    * At 0 the liquid is opaque and the vessel is its own background, which is
@@ -114,6 +122,10 @@ const CONFIG = {
    * Empty leaves the vessel holding only glitter, which is the wallpaper. */
   glyph: params.get("glyph") || "",
   glyphScale: num("glyphScale", 0.62),
+  /* How strongly the front face bulges. 0 is a flat pane, which is what a
+   * wallpaper is — it fills the screen and has no edge to curve over. An
+   * icon is a small object you can see all of, so it wants a surface. */
+  dome: Math.max(0, num("dome", 0)),
 };
 
 /** #rgb or #rrggbb to channel bytes. */
@@ -2709,6 +2721,68 @@ function drawGlyph(name, cx, cy, size) {
   ctx.restore();
 }
 
+/* -------------------------------------------------------------------- dome
+ *
+ * A flat pane and a domed one differ in three places, and every one of them
+ * is about where the surface normal points rather than about the liquid:
+ *
+ *  - the centre of a bulge faces you and transmits, while the rim turns away
+ *    and reflects the room instead, so a dome darkens toward its edge,
+ *  - the reflection of the light source sits high on the curve and is
+ *    foreshortened across it, rather than lying flat and centred,
+ *  - light entering near the far rim leaves brightened, so the edge opposite
+ *    the light carries a thin crescent.
+ *
+ * Drawn before the glass layer so its corner knockout still trims this, and
+ * scaled by `strength` so the whole effect is one dial.
+ */
+function drawDome(k) {
+  const rx = RX, ry = RY, far = Math.max(rx, ry), near = Math.min(rx, ry);
+
+  // The rim turning away from you.
+  const vig = ctx.createRadialGradient(CX, CY, near * 0.30, CX, CY, far * 1.02);
+  vig.addColorStop(0, "rgba(6,20,38,0)");
+  vig.addColorStop(0.70, "rgba(6,20,38," + (0.13 * k).toFixed(3) + ")");
+  vig.addColorStop(1, "rgba(4,14,30," + (0.42 * k).toFixed(3) + ")");
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, W, H);
+
+  /* The light's own reflection. Squashed across the axis it lies on, because
+   * a reflection on a curved surface is compressed in the direction the
+   * surface is bending — a round highlight is what makes a dome read as a
+   * flat disc with a blob painted on it. */
+  ctx.save();
+  ctx.translate(CX + SHADOW_X * rx * 0.40, CY + SHADOW_Y * ry * 0.40);
+  ctx.rotate(LIGHT_ANGLE);
+  ctx.scale(1, 0.5);
+  const R = far * 0.80;
+  const sheen = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+  sheen.addColorStop(0, "rgba(255,255,255," + (0.26 * k).toFixed(3) + ")");
+  sheen.addColorStop(0.5, "rgba(255,255,255," + (0.06 * k).toFixed(3) + ")");
+  sheen.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = sheen;
+  ctx.beginPath();
+  ctx.arc(0, 0, R, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Light leaving the far rim.
+  ctx.save();
+  ctx.beginPath();
+  traceOutline(ctx);
+  const cres = ctx.createLinearGradient(
+    CX + SHADOW_X * rx, CY + SHADOW_Y * ry,
+    CX - SHADOW_X * rx, CY - SHADOW_Y * ry);
+  cres.addColorStop(0, "rgba(255,255,255,0)");
+  cres.addColorStop(0.55, "rgba(255,255,255,0)");
+  cres.addColorStop(1, "rgba(255,255,255," + (0.55 * k).toFixed(3) + ")");
+  ctx.strokeStyle = cres;
+  ctx.lineWidth = near * 0.038;
+  ctx.filter = "blur(" + (near * 0.014).toFixed(2) + "px)";
+  ctx.stroke();
+  ctx.restore();
+}
+
 /* The render loop deliberately uses no clip() at all.
  *
  * Canvas rasterises a clip against a 100-plus-point path on every use, and
@@ -2755,9 +2829,9 @@ function render(time) {
   const air = ctx.createLinearGradient(
     CX + up.x * upExtent, CY + up.y * upExtent,
     CX + up.x * level, CY + up.y * level);
-  air.addColorStop(0, "#c9dfec");    // inner top wall, slightly shadowed
-  air.addColorStop(0.45, "#eaf5fb");
-  air.addColorStop(1, "#a9d4e6");    // liquid showing through the meniscus
+  air.addColorStop(0, CONFIG.air[0]);            // inner top wall, shadowed
+  air.addColorStop(0.45, CONFIG.air[1] || CONFIG.air[0]);
+  air.addColorStop(1, CONFIG.air[2] || CONFIG.air[0]);  // liquid through the meniscus
   ctx.fillStyle = air;
   ctx.beginPath();
   const far = (span + upExtent) * 2;
@@ -2951,6 +3025,7 @@ function render(time) {
 
   // Glass shell, casing edge and corner knockout, all baked at resize.
   drawBezel();
+  if (CONFIG.dome) drawDome(CONFIG.dome);
   ctx.drawImage(glassLayer, 0, 0, W, H);
 }
 
