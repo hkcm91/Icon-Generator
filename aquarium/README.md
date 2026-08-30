@@ -77,6 +77,22 @@ things turn that from sliding into swimming:
   enlarging the fish left the speeds behind: the big species ended up at
   0.1–0.2 BL/s, beating hard and going nowhere — swimming in place. A cruising
   fish does roughly 0.5–2.
+- **The spine is integrated, so the body cannot stretch.** Displacing each
+  point sideways at its own unchanged `x` does not bend a body, it warps one:
+  the arc length grows with the bend, so the fish lengthened and shortened as
+  it swam. The wave now sets the *tangent angle* and the spine is integrated
+  along it, making the body inextensible by construction — measured arc-length
+  variation **0%**, against a nose-to-tail span that still varies 4.6% because
+  a bent body genuinely is shorter end to end. Sampling the spine coarsely and
+  interpolating is also cheaper than the `atan`/`cos`/`sin` per point it
+  replaced.
+- **A fish is not a rope.** `stiff` sets where bending begins and the amplitude
+  grows toward the tail from there — near the nose for the eel, a third of the
+  way back for everything else, with `waves` giving each species its own number
+  of wavelengths along the body. Bending the whole length evenly is most of
+  what read as waving rather than swimming.
+- **Pectorals scull.** They row at their own faster rate, hardest when the fish
+  is barely moving — which is when a real one uses them instead of its tail.
 - **The tail wave is integrated, not evaluated.** `phase = w * t` recomputes
   `w` from a continuously varying effort and multiplies it by a growing `t`, so
   every change in `w` shifts the phase by `t · Δw` — measured at **1.57 radians
