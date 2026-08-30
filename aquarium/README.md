@@ -28,6 +28,27 @@ without waiting for a fish to swim past — the same reason `--static` exists in
 
 ![Each species held still for look-dev](../docs/screenshots/aquarium-fish-detail.png)
 
+### How they swim
+
+Each fish picks a point in the tank, swims to it, and picks another. Three
+things turn that from sliding into swimming:
+
+- **Yaw is a signed scale, not a rotation.** A fish turning around rotates
+  through edge-on, so `facing` animates between -1 and 1 and the body
+  foreshortens on the way through. The first version rotated by 180 instead,
+  which swam every leftward fish upside down — dorsal fin underneath.
+- **Burst and coast.** Fish flick their tails and glide rather than travelling
+  at a constant rate, and the tail beat follows effort, so a coasting fish
+  beats slowly and a dashing one beats hard. A constant beat is most of what
+  read as sliding.
+- **Personal space.** A light shove between neighbours; overlapping bodies read
+  as one confused blob rather than as a school. The flow field's pull on fish
+  was also cut by half, because `flowX` depends only on depth and was sliding
+  the whole school the same way at once.
+
+The simulation draws on a seeded generator rather than `Math.random`, so with
+the clock hook driving a fixed timestep a recording reproduces frame for frame.
+
 ### What it settled
 
 - **Point count has to follow fish size, not be a constant.** A flat 80 points
