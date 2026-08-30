@@ -52,7 +52,7 @@ const CORNER = Math.round(MASTER * 0.22);
  * longer drifts back towards the empty settled state. */
 const HOLD_S = 2;
 const SHAKE_S = 1.2;
-const RELAX_S = 2.2;
+const RELAX_S = 0.45;
 const DT_MS = 1000 / 60;
 
 /* Held at a tilt rather than upright. A level waterline cuts the tile in half
@@ -73,7 +73,7 @@ const TILT_DEG = 18;
  * and reads as a stray highlight; lower, it is unmistakably a surface, and
  * the headspace above it is what says "vessel" at a glance. */
 const SUSPENSION = {
-  zoom: '3.2',
+  zoom: '2.6',
   stars: '130',
   bubbles: '26',
   fill: '0.86',
