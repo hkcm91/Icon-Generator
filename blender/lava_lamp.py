@@ -1,0 +1,1435 @@
+"""Lava lamp motion wallpaper — procedural Blender scene builder.
+
+Builds and renders a phone-portrait loop of a lava lamp: a tapered glass
+vessel of tinted liquid, a pool of wax on the heated floor, and blobs that
+neck away from that pool, climb, flatten under the cool top and sink back.
+Every parameter is a CLI flag; nothing is hand-placed in the .blend.
+
+Run headless:
+
+    blender -b -P blender/lava_lamp.py -- --out renders/lava
+
+Or against the `bpy` pip module:
+
+    python blender/lava_lamp.py --out renders/lava
+
+Built from `liquid_shaker.py` — same skeleton, same conventions, same flag
+vocabulary. The one structural difference is the motion. The shaker sloshes,
+which means a fluid sim, which means a bake, a cache and a crossfade over the
+seam where the sim fails to return to where it started. Wax in a lava lamp
+does not slosh: it creeps, on a cycle slow enough to write down. So the blobs
+here are a keyframed metaball family, every term an integer harmonic of the
+loop. There is no bake, no cache, no pre-roll and no seam — frame `loop + 1`
+*is* frame 1, exactly, and the render starts the moment the scene is built.
+
+See blender/LAVA_LAMP.md for the flag reference and quality presets.
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import os
+import sys
+
+import bpy
+from mathutils import Vector
+
+# --------------------------------------------------------------------------
+# palette
+# --------------------------------------------------------------------------
+
+# Wax against liquid is the whole colour story, and the two want to be
+# complements or the blobs vanish into the medium. Each entry is
+# (wax, liquid, metal); the metal carries the base and the cap.
+PALETTES = {
+    # The 1963 original: molten orange in deep blue-violet, brass fittings.
+    "classic": ((0.98, 0.29, 0.05), (0.045, 0.075, 0.34), (0.79, 0.60, 0.26)),
+    # Softer, warmer room: coral wax in a green-teal medium.
+    "lagoon": ((0.99, 0.36, 0.52), (0.02, 0.30, 0.31), (0.86, 0.84, 0.80)),
+    # High-contrast novelty: acid green wax in a near-black bottle.
+    "toxic": ((0.63, 0.98, 0.13), (0.05, 0.14, 0.06), (0.72, 0.74, 0.76)),
+    # Cool room, hot lamp: magenta wax in indigo.
+    "midnight": ((0.92, 0.16, 0.72), (0.05, 0.04, 0.26), (0.55, 0.57, 0.66)),
+}
+
+
+# --------------------------------------------------------------------------
+# small helpers
+# --------------------------------------------------------------------------
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse our flags whether we are run through Blender or through `bpy`.
+
+    `blender -b -P script.py -- --out x` puts our flags after a `--`; running
+    the same file with a Python that has the `bpy` module installed puts them
+    straight on argv. Anything before a `--` belongs to Blender, not us.
+    """
+    if argv is None:
+        if "--" in sys.argv:
+            argv = sys.argv[sys.argv.index("--") + 1:]
+        elif os.path.basename(sys.argv[0]).startswith("blender"):
+            argv = []  # launched by Blender with no flags of our own
+        else:
+            argv = sys.argv[1:]
+
+    p = argparse.ArgumentParser(prog="lava_lamp", description=__doc__)
+
+    shape = p.add_argument_group("vessel")
+    shape.add_argument("--shape", choices=["fullbleed", "lamp"],
+                       default="fullbleed",
+                       help="fullbleed: the glass column oversizes the frame "
+                            "so its walls fall outside it and the render is a "
+                            "wallpaper of the lava itself. lamp: the whole "
+                            "object — base, bottle, cap — framed with "
+                            "headroom, the product shot")
+    shape.add_argument("--width", type=float, default=2.0,
+                       help="fullbleed: frame width in metres. lamp: the "
+                            "bottle's widest outer diameter")
+    shape.add_argument("--height", type=float, default=0.0,
+                       help="glass height in metres; 0 derives it from the "
+                            "render aspect (fullbleed) or from --width (lamp)")
+    shape.add_argument("--neck", type=float, default=0.60,
+                       help="lamp only: top radius as a fraction of the "
+                            "widest radius")
+    shape.add_argument("--taper", type=float, default=1.25,
+                       help="lamp only: taper exponent up the bottle. 1 is a "
+                            "straight cone, higher keeps the belly full and "
+                            "pinches late, 0 is a plain cylinder")
+    shape.add_argument("--segments", type=int, default=128,
+                       help="mesh resolution around the vessel")
+    shape.add_argument("--rings", type=int, default=96,
+                       help="mesh resolution up the vessel's profile")
+    shape.add_argument("--wall", type=float, default=0.035,
+                       help="glass wall thickness in metres")
+    shape.add_argument("--fill", type=float, default=0.0,
+                       help="liquid level as a fraction of interior height. "
+                            "0 picks a default for --shape: 0.94 for lamp, so "
+                            "there is an air gap under the cap, and 1.0 for "
+                            "fullbleed, where the meniscus would otherwise "
+                            "cut a hard line across the top of the wallpaper")
+    shape.add_argument("--density", type=float, default=2.2,
+                       help="how deeply the medium tints what you see through "
+                            "it, as optical depth across the full width of "
+                            "the vessel. Normalising it that way is what "
+                            "keeps --shape fullbleed — a much wider column — "
+                            "from swallowing the wax in fog at the same "
+                            "number")
+    shape.add_argument("--haze", type=float, default=0.5,
+                       help="scattering in the medium, in the same optical "
+                            "depth units as --density. This is what makes the "
+                            "bulb visible as light *in* the liquid rather "
+                            "than only on what the liquid contains, and it is "
+                            "most of what separates a lava lamp from a jar of "
+                            "wax. It is also the expensive part of the render")
+    shape.add_argument("--base", type=float, default=0.34,
+                       help="lamp only: metal base height as a fraction of "
+                            "the glass height")
+    shape.add_argument("--cap", type=float, default=0.16,
+                       help="lamp only: metal cap height, same units")
+
+    wax = p.add_argument_group("wax")
+    wax.add_argument("--blobs", type=int, default=12,
+                     help="climbing blobs")
+    wax.add_argument("--blob-size", type=float, default=0.28,
+                     help="blob influence radius as a fraction of the "
+                          "interior radius; the rendered blob is a little "
+                          "under 60%% of the influence sphere")
+    wax.add_argument("--droplets", type=int, default=7,
+                     help="small fast beads that run the full column")
+    wax.add_argument("--pool", type=float, default=0.10,
+                     help="depth of the wax pool on the floor as a fraction "
+                          "of interior height")
+    wax.add_argument("--threshold", type=float, default=0.6,
+                     help="metaball field threshold; lower fattens every blob "
+                          "and makes them reach for each other sooner")
+    wax.add_argument("--mesh-res", type=float, default=0.022,
+                     help="metaball polygonisation size in metres at render "
+                          "time. Smaller is rounder and much slower")
+    wax.add_argument("--palette", choices=sorted(PALETTES), default="classic")
+    wax.add_argument("--wax-colour", default="",
+                     help="override the palette's wax as r,g,b in 0-1")
+    wax.add_argument("--liquid-colour", default="",
+                     help="override the palette's medium as r,g,b in 0-1")
+    wax.add_argument("--metal-colour", default="",
+                     help="override the palette's metal as r,g,b in 0-1")
+
+    motion = p.add_argument_group("motion")
+    motion.add_argument("--loop", type=int, default=240,
+                        help="frames in the finished loop")
+    motion.add_argument("--fps", type=int, default=30)
+    motion.add_argument("--rise", type=int, default=1,
+                        help="round trips per loop for the slowest blobs. An "
+                             "integer because the loop closes on integer "
+                             "harmonics and nothing else")
+    motion.add_argument("--dwell", type=float, default=0.7,
+                        help="how long a blob loiters at the top and bottom "
+                             "of its climb. Below 1 it hangs at the ends and "
+                             "crosses the middle quickly; 1 is a plain sine")
+    motion.add_argument("--wander", type=float, default=0.55,
+                        help="lateral drift as a fraction of the room a blob "
+                             "has before it touches the glass")
+    motion.add_argument("--depth", type=float, default=0.0,
+                        help="how much of the vessel's depth the wax uses. 1 "
+                             "is the whole bottle; lower crowds it toward the "
+                             "camera, where there is less medium in front of "
+                             "it to absorb the colour. 0 picks a default for "
+                             "--shape: 1.0 for lamp, 0.55 for the much deeper "
+                             "fullbleed column")
+    motion.add_argument("--stretch", type=float, default=0.45,
+                        help="how much a blob elongates at full climbing "
+                             "speed. Volume is held roughly constant")
+
+    out = p.add_argument_group("output")
+    out.add_argument("--out", default="//renders/lava",
+                     help="output directory for the frame sequence")
+    out.add_argument("--res-x", type=int, default=1080)
+    out.add_argument("--res-y", type=int, default=2400)
+    out.add_argument("--samples", type=int, default=160)
+    out.add_argument("--percent", type=int, default=100,
+                     help="resolution percentage; 25 for fast look-dev")
+    out.add_argument("--margin", type=float, default=0.0,
+                     help="framing headroom; 1.0 touches the frame edges. 0 "
+                          "picks a default for --shape")
+    out.add_argument("--transparent", action="store_true",
+                     help="render with a transparent film instead of the "
+                          "backdrop")
+    out.add_argument("--backdrop", default="0.020,0.022,0.030",
+                     help="backdrop colour as r,g,b in 0-1")
+    out.add_argument("--env", type=float, default=0.30,
+                     help="world lighting strength. A lava lamp is a light "
+                            "source in a dim room, so this stays low; raise "
+                            "it and the glass stops reading as lit from "
+                            "within")
+    out.add_argument("--bulb", type=float, default=140.0,
+                     help="wattage of the bulb under the wax")
+    out.add_argument("--glow", type=float, default=1.3,
+                     help="how hot the wax self-illuminates where it sits "
+                          "over the bulb; 0 leaves it lit only by the bulb")
+    out.add_argument("--heat", type=float, default=0.6,
+                     help="how far up the vessel that glow survives, as a "
+                          "fraction of its height. Short and the lamp has a "
+                          "hot floor and a cold column; long and every blob "
+                          "glows equally and the bulb stops being the reason "
+                          "for any of it")
+    out.add_argument("--blend-frames", type=int, default=0,
+                     help="frames crossfaded across the loop seam. Unlike the "
+                          "shaker's sim this loop closes exactly, so the "
+                          "default is off")
+    out.add_argument("--encode", action="store_true",
+                     help="encode an mp4 next to the frame sequence")
+    out.add_argument("--no-render", action="store_true",
+                     help="build the scene but do not render")
+    out.add_argument("--check-loop", action="store_true",
+                     help="build the scene, prove the loop closes and exit "
+                          "without rendering. The whole design rests on that "
+                          "claim, so it is cheap to make it checkable")
+    out.add_argument("--save-blend", default="",
+                     help="write the built scene to this .blend path")
+    out.add_argument("--device", choices=["CPU", "GPU"], default="CPU")
+    out.add_argument("--view-transform", default="Khronos PBR Neutral",
+                     choices=["Khronos PBR Neutral", "AgX", "Standard",
+                              "Filmic"])
+    out.add_argument("--exposure", type=float, default=0.0)
+
+    args = p.parse_args(argv)
+
+    wax_c, liquid_c, metal_c = PALETTES[args.palette]
+    args.wax_rgb = _colour(args.wax_colour, wax_c)
+    args.liquid_rgb = _colour(args.liquid_colour, liquid_c)
+    args.metal_rgb = _colour(args.metal_colour, metal_c)
+    args.rise = max(1, args.rise)
+    if args.fill <= 0.0:
+        args.fill = 0.94 if args.shape == "lamp" else 1.0
+    if args.depth <= 0.0:
+        args.depth = 1.0 if args.shape == "lamp" else 0.55
+    return args
+
+
+def _colour(text: str, fallback: tuple[float, float, float]):
+    if not text:
+        return fallback
+    parts = tuple(float(c) for c in text.split(","))
+    if len(parts) != 3:
+        raise ValueError(f"expected r,g,b — got {text!r}")
+    return parts
+
+
+def clear_scene() -> None:
+    """Empty the file so repeated runs in one session stay deterministic."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+
+def link(obj: bpy.types.Object) -> bpy.types.Object:
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+
+def activate(obj: bpy.types.Object) -> None:
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+
+
+def put(node: bpy.types.Node, names: tuple[str, ...], value) -> None:
+    """Set the first socket that exists, so the script survives the socket
+    renames between Blender 3.x and 4.x (Transmission → Transmission Weight)."""
+    for name in names:
+        found = node.inputs.get(name)
+        if found is not None:
+            found.default_value = value
+            return
+
+
+def socket(node: bpy.types.Node, names: tuple[str, ...]):
+    """The first socket that exists, for linking rather than setting."""
+    for name in names:
+        found = node.inputs.get(name)
+        if found is not None:
+            return found
+    return None
+
+
+def rgba(colour, alpha: float = 1.0):
+    return (colour[0], colour[1], colour[2], alpha)
+
+
+def scaled(colour, factor: float):
+    return tuple(min(1.0, c * factor) for c in colour)
+
+
+# A metaball element's `radius` is the radius of its *influence*, and the
+# surface lands well inside it: Blender's falloff is stiffness*(1-d²/r²)³, so
+# an isolated ball at the default stiffness 2 and threshold 0.6 renders at
+# sqrt(1 - (0.6/2)^(1/3)) = 0.575 of its radius. Everything that has to touch
+# a wall — the pool ring, a blob's clearance from the glass — measures with
+# this, not with the influence radius.
+SURFACE_FRACTION = 0.575
+
+
+def jitter(index: int, salt: int) -> float:
+    """A deterministic 0-1 value per blob.
+
+    Low-discrepancy rather than random: successive indices land far apart, so
+    a dozen blobs spread across their phases instead of clumping the way a
+    seeded RNG happily would. It also means `--blobs 12` always builds the
+    same twelve blobs, and blob 3 is blob 3 across every render.
+    """
+    golden = 0.6180339887498949
+    return ((index + 1) * (golden + salt * 0.2714069263277927)) % 1.0
+
+
+# --------------------------------------------------------------------------
+# geometry
+# --------------------------------------------------------------------------
+
+
+def bottle_profile(height: float, r_max: float, r_neck: float, taper: float,
+                   rings: int, fillet: float = 0.05) -> list[tuple[float, float]]:
+    """The vessel silhouette as (radius, z) samples, floor to rim.
+
+    The taper term is the bottle: radius falls from the belly to the neck as
+    `(1 - u) ** taper`, so `--taper 1` is a plain cone and higher values hold
+    the belly full and pinch late — which is the shape the wax needs, because
+    a blob only necks off the pool if the floor is wider than the column it
+    has to climb.
+
+    The fillets at either end are not decoration. A cylinder cut square at the
+    floor gives the glass a knife edge, and a knife edge in a transmissive
+    material total-internal-reflects into a black ring. Rolling both ends over
+    gives those rays something to find.
+    """
+    pts = []
+    for i in range(rings + 1):
+        u = i / rings
+        r = r_neck + (r_max - r_neck) * (1.0 - u) ** taper if taper > 0 \
+            else r_max
+        if fillet > 0.0:
+            if u < fillet:
+                r *= 0.82 + 0.18 * math.sin(u / fillet * math.pi / 2)
+            elif u > 1.0 - fillet:
+                r *= 0.82 + 0.18 * math.sin((1.0 - u) / fillet * math.pi / 2)
+        pts.append((r, u * height))
+    return pts
+
+
+def revolve(name: str, profile: list[tuple[float, float]],
+            segments: int) -> bpy.types.Object:
+    """Spin a (radius, z) profile around Z into a closed solid.
+
+    Both ends are capped to a pole vertex. That leaves a fan of thin triangles
+    which `remove_doubles` then collapses — the same trick `liquid_shaker`'s
+    pillow uses at its poles, and for the same reason: zero-area faces are
+    what put fireflies in a refractive render.
+    """
+    verts: list[Vector] = []
+    faces: list[tuple[int, ...]] = []
+    rings = len(profile)
+
+    for r, z in profile:
+        for i in range(segments):
+            a = 2 * math.pi * i / segments
+            verts.append(Vector((r * math.cos(a), r * math.sin(a), z)))
+
+    for j in range(rings - 1):
+        for i in range(segments):
+            a = j * segments + i
+            b = j * segments + (i + 1) % segments
+            c = (j + 1) * segments + (i + 1) % segments
+            d = (j + 1) * segments + i
+            faces.append((a, b, c, d))
+
+    floor = len(verts)
+    verts.append(Vector((0.0, 0.0, profile[0][1])))
+    for i in range(segments):
+        faces.append((floor, (i + 1) % segments, i))
+
+    ceiling = len(verts)
+    verts.append(Vector((0.0, 0.0, profile[-1][1])))
+    top = (rings - 1) * segments
+    for i in range(segments):
+        faces.append((ceiling, top + i, top + (i + 1) % segments))
+
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate(verbose=False)
+    obj = link(bpy.data.objects.new(name, mesh))
+    activate(obj)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.remove_doubles(threshold=1e-5)
+    bpy.ops.mesh.normals_make_consistent(inside=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    shade_auto_smooth(obj)
+    return obj
+
+
+def shade_auto_smooth(obj: bpy.types.Object, angle: float = 50.0) -> None:
+    """Smooth the curved walls, keep the cap seams sharp.
+
+    Not with `bpy.ops.object.shade_auto_smooth`. In 4.1 that operator became a
+    wrapper that appends a bundled "Smooth by Angle" node group from Blender's
+    essentials asset library — and the `bpy` wheel does not finish loading that
+    library, so the call returns `FINISHED` having done nothing at all. There
+    is no exception to catch. The mesh is simply left flat.
+
+    On a lathed vessel that is not a subtle difference. Flat shading a
+    refractor makes every facet bend light its own way, and the wax behind it
+    grows a comb of dark hairs along its silhouette, one tooth per facet
+    column — which looks like a fault in the metaballs and is nothing to do
+    with them. Both paths below are plain mesh operators with no asset
+    dependency, so what they do is what they say.
+    """
+    activate(obj)
+    bpy.ops.object.shade_smooth()
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.mesh.select_mode(type="EDGE")
+    bpy.ops.mesh.edges_select_sharp(sharpness=math.radians(angle))
+    bpy.ops.mesh.mark_sharp()
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    # 4.1 onward honours sharp edges natively; 3.x needs the mesh flag as well.
+    if hasattr(obj.data, "use_auto_smooth"):
+        obj.data.use_auto_smooth = True
+        obj.data.auto_smooth_angle = math.radians(angle)
+    assert any(p.use_smooth for p in obj.data.polygons), obj.name
+
+
+def cut_above(obj: bpy.types.Object, z: float, span: float) -> None:
+    """Boolean the object down to everything below `z`, keeping it closed."""
+    box = span * 3.0
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    cutter = bpy.context.active_object
+    cutter.name = f"{obj.name}_cutter"
+    cutter.scale = (box, box, box)
+    cutter.location = (0.0, 0.0, z - box * 0.5)
+
+    activate(obj)
+    mod = obj.modifiers.new("fill_level", "BOOLEAN")
+    mod.operation = "INTERSECT"
+    mod.object = cutter
+    mod.solver = "EXACT"
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+    bpy.data.objects.remove(cutter, do_unlink=True)
+
+
+def radius_sampler(profile: list[tuple[float, float]]):
+    """Interpolate the profile's radius at any height.
+
+    The blobs need this to stay inside the glass. A blob that clips the wall
+    does not look like wax touching glass, it looks like a modelling mistake,
+    and in a refractive render it reads as a hard bright scar.
+    """
+    def sample(z: float) -> float:
+        if z <= profile[0][1]:
+            return profile[0][0]
+        if z >= profile[-1][1]:
+            return profile[-1][0]
+        for (r0, z0), (r1, z1) in zip(profile, profile[1:]):
+            if z0 <= z <= z1:
+                k = 0.0 if z1 == z0 else (z - z0) / (z1 - z0)
+                return r0 + (r1 - r0) * k
+        return profile[-1][0]
+    return sample
+
+
+# --------------------------------------------------------------------------
+# materials
+# --------------------------------------------------------------------------
+
+
+def new_material(name: str) -> tuple[bpy.types.Material, bpy.types.NodeTree]:
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    tree = mat.node_tree
+    tree.nodes.clear()
+    return mat, tree
+
+
+def glass_material() -> bpy.types.Material:
+    """The bottle. Thick, clear, faintly green at the edges like real glass."""
+    mat, tree = new_material("lava_glass")
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (300, 0)
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+
+    put(bsdf, ("Base Color",), rgba((0.94, 0.99, 0.96)))
+    put(bsdf, ("Roughness",), 0.02)
+    put(bsdf, ("IOR",), 1.46)
+    put(bsdf, ("Transmission Weight", "Transmission"), 1.0)
+    put(bsdf, ("Coat Weight", "Clearcoat"), 0.6)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.03)
+    tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
+
+
+def liquid_material(reference: bpy.types.Object, height: float,
+                    colour, density: float, haze: float) -> bpy.types.Material:
+    """The medium the wax moves through: clear surface, tinted volume.
+
+    Absorption rather than a coloured surface, so the tint deepens with the
+    path length through the bottle. That is what puts a blob's silhouette
+    slightly out of focus when it is at the back of the vessel and sharp when
+    it is against the front wall, without any of it being drawn.
+
+    The density gradient is small and deliberate — the medium sits a little
+    heavier at the floor, where the bulb would otherwise blow it out.
+    """
+    mat, tree = new_material("lava_medium")
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (600, 0)
+
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (300, 200)
+    put(bsdf, ("Base Color",), rgba((1.0, 1.0, 1.0)))
+    put(bsdf, ("Roughness",), 0.02)
+    put(bsdf, ("IOR",), 1.36)
+    put(bsdf, ("Transmission Weight", "Transmission"), 1.0)
+    tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    coord = tree.nodes.new("ShaderNodeTexCoord")
+    coord.location = (-600, -200)
+    coord.object = reference
+
+    mapping = tree.nodes.new("ShaderNodeMapping")
+    mapping.location = (-400, -200)
+    mapping.inputs["Scale"].default_value = (1.0, 1.0, 1.0 / height)
+
+    sep = tree.nodes.new("ShaderNodeSeparateXYZ")
+    sep.location = (-200, -200)
+
+    ramp = tree.nodes.new("ShaderNodeValToRGB")
+    ramp.location = (0, -200)
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color = rgba(scaled(colour, 1.35))
+    ramp.color_ramp.elements[1].position = 1.0
+    ramp.color_ramp.elements[1].color = rgba(scaled(colour, 0.75))
+
+    absorb = tree.nodes.new("ShaderNodeVolumeAbsorption")
+    absorb.location = (300, -200)
+    absorb.inputs["Density"].default_value = density
+
+    tree.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
+    tree.links.new(mapping.outputs["Vector"], sep.inputs["Vector"])
+    tree.links.new(sep.outputs["Z"], ramp.inputs["Fac"])
+    tree.links.new(ramp.outputs["Color"], absorb.inputs["Color"])
+
+    if haze <= 0.0:
+        tree.links.new(absorb.outputs["Volume"], out.inputs["Volume"])
+        return mat
+
+    # Absorption alone tells you what is *behind* the liquid. Scattering is
+    # what tells you the liquid is lit: it carries the bulb up into the medium
+    # as a glow that falls off with height, which is the gradient every
+    # photograph of a lava lamp has and no amount of surface shading gives
+    # you. Forward-biased, because that is how a real turbid liquid throws a
+    # backlight toward the camera.
+    scatter = tree.nodes.new("ShaderNodeVolumeScatter")
+    scatter.location = (300, -480)
+    scatter.inputs["Density"].default_value = haze
+    scatter.inputs["Anisotropy"].default_value = 0.35
+    scatter.inputs["Color"].default_value = rgba(scaled(colour, 2.2))
+
+    add = tree.nodes.new("ShaderNodeAddShader")
+    add.location = (450, -300)
+    tree.links.new(absorb.outputs["Volume"], add.inputs[0])
+    tree.links.new(scatter.outputs["Volume"], add.inputs[1])
+    tree.links.new(add.outputs["Shader"], out.inputs["Volume"])
+    return mat
+
+
+def wax_material(reference: bpy.types.Object, height: float, colour,
+                 glow: float, heat: float, blob: float) -> bpy.types.Material:
+    """Translucent wax, hot at the floor and cooling as it climbs.
+
+    Two things make wax read as wax rather than as plastic. The first is
+    subsurface: light goes into a blob, bounces around and comes out
+    elsewhere, so a blob backlit by the bulb glows through instead of
+    silhouetting. The second is that the heat is *local* — the wax over the
+    bulb is near-incandescent and the wax at the top is nearly extinguished.
+
+    That gradient has to come off the vessel's coordinates, not the blobs'.
+    The wax is one metaball family, so every blob shares this material and
+    object coordinates taken from the wax itself would give each blob the same
+    gradient over its own body, however high it had climbed. Anchoring to the
+    bottle makes height mean height.
+    """
+    mat, tree = new_material("lava_wax")
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (600, 0)
+
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (300, 0)
+    put(bsdf, ("Base Color",), rgba(colour))
+    put(bsdf, ("Roughness",), 0.24)
+    put(bsdf, ("IOR",), 1.45)
+    put(bsdf, ("Subsurface Weight", "Subsurface"), 0.7)
+    # Scattering distance is measured against the blob, which is why it is
+    # passed in rather than guessed from the bottle. Set it to the blob radius
+    # and light walks clean through everything, every blob washes out to the
+    # same pale cream and the colour you see is the scatter's rather than the
+    # wax's. Set it to nothing and a blob is an opaque brown pebble with a
+    # bright bottom. At about a third of the radius the thin edges glow and
+    # the thick middle holds its hue, which is what wax over a bulb does.
+    put(bsdf, ("Subsurface Scale",), blob * 0.34)
+    put(bsdf, ("Subsurface Radius",), (1.0, 0.45, 0.22))
+    put(bsdf, ("Coat Weight", "Clearcoat"), 0.35)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.12)
+    try:
+        bsdf.subsurface_method = "RANDOM_WALK"
+    except TypeError:
+        pass
+    tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    if glow <= 0.0:
+        return mat
+
+    coord = tree.nodes.new("ShaderNodeTexCoord")
+    coord.location = (-800, -200)
+    coord.object = reference
+
+    mapping = tree.nodes.new("ShaderNodeMapping")
+    mapping.location = (-600, -200)
+    mapping.inputs["Scale"].default_value = (1.0, 1.0, 1.0 / height)
+
+    sep = tree.nodes.new("ShaderNodeSeparateXYZ")
+    sep.location = (-400, -200)
+
+    # Heat runs out well before the top: past `heat` the wax is lit by the
+    # bulb alone. Ramp it over the whole column instead and every blob glows
+    # equally, which reads as a stack of paper lanterns rather than as a lamp
+    # with a bulb in the bottom of it.
+    falloff = tree.nodes.new("ShaderNodeValToRGB")
+    falloff.location = (-200, -200)
+    falloff.color_ramp.elements[0].position = 0.0
+    falloff.color_ramp.elements[0].color = rgba((1.0, 1.0, 1.0))
+    falloff.color_ramp.elements[1].position = max(0.02, heat)
+    falloff.color_ramp.elements[1].color = rgba((0.0, 0.0, 0.0))
+
+    tint = tree.nodes.new("ShaderNodeValToRGB")
+    tint.location = (0, -420)
+    tint.color_ramp.elements[0].position = 0.0
+    tint.color_ramp.elements[0].color = rgba(colour)
+    tint.color_ramp.elements[1].position = 1.0
+    tint.color_ramp.elements[1].color = rgba(scaled(colour, 1.8))
+
+    strength = tree.nodes.new("ShaderNodeMath")
+    strength.location = (0, -200)
+    strength.operation = "MULTIPLY"
+    strength.inputs[1].default_value = glow
+
+    tree.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
+    tree.links.new(mapping.outputs["Vector"], sep.inputs["Vector"])
+    tree.links.new(sep.outputs["Z"], falloff.inputs["Fac"])
+    tree.links.new(falloff.outputs["Color"], strength.inputs[0])
+    tree.links.new(falloff.outputs["Color"], tint.inputs["Fac"])
+
+    emission = socket(bsdf, ("Emission Color", "Emission"))
+    if emission is not None:
+        tree.links.new(tint.outputs["Color"], emission)
+    power = socket(bsdf, ("Emission Strength",))
+    if power is not None:
+        tree.links.new(strength.outputs["Value"], power)
+    return mat
+
+
+def metal_material(colour) -> bpy.types.Material:
+    """Spun metal for the base and cap — brushed, not mirror."""
+    mat, tree = new_material("lava_metal")
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (300, 0)
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    put(bsdf, ("Base Color",), rgba(colour))
+    put(bsdf, ("Metallic",), 1.0)
+    put(bsdf, ("Roughness",), 0.26)
+    put(bsdf, ("Anisotropic",), 0.5)
+    tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
+
+
+def backdrop_material(colour, extent: float) -> bpy.types.Material:
+    """A dark room with a soft pool of light behind the lamp.
+
+    The shaker emits a white sweep because a product shot wants one. A lava
+    lamp is the opposite problem: it is a light source, and against an evenly
+    lit backdrop it stops looking like one. So this is near-black with a
+    radial lift behind the bottle, which gives the silhouette an edge to sit
+    against without lighting the room.
+    """
+    mat, tree = new_material("lava_backdrop")
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (400, 0)
+
+    coord = tree.nodes.new("ShaderNodeTexCoord")
+    coord.location = (-800, 0)
+
+    # The gradient's falloff is one unit of object space, and the panel is
+    # metres across — so without this it is a one-metre hotspot on a nine-metre
+    # wall. Behind a full-bleed column that hotspot is dead centre and refracts
+    # into a bright bar down the middle of the wallpaper, which took a while to
+    # recognise as the backdrop rather than as a light. Scaled to the framed
+    # area rather than to the panel: what is wanted is a vignette across the
+    # picture, and a falloff measured against a panel four times wider than the
+    # frame is a flat grey wall with the falloff all off-camera.
+    mapping = tree.nodes.new("ShaderNodeMapping")
+    mapping.location = (-600, 0)
+    mapping.inputs["Scale"].default_value = (1.0 / extent, 1.0 / extent, 1.0)
+
+    gradient = tree.nodes.new("ShaderNodeTexGradient")
+    gradient.location = (-400, 0)
+    gradient.gradient_type = "SPHERICAL"
+
+    ramp = tree.nodes.new("ShaderNodeValToRGB")
+    ramp.location = (-200, 0)
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color = rgba((0.0, 0.0, 0.0))
+    ramp.color_ramp.elements[1].position = 1.0
+    ramp.color_ramp.elements[1].color = rgba(scaled(colour, 3.0))
+
+    emit = tree.nodes.new("ShaderNodeEmission")
+    emit.location = (150, 0)
+    emit.inputs["Strength"].default_value = 1.0
+
+    tree.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
+    tree.links.new(mapping.outputs["Vector"], gradient.inputs["Vector"])
+    tree.links.new(gradient.outputs["Fac"], ramp.inputs["Fac"])
+    tree.links.new(ramp.outputs["Color"], emit.inputs["Color"])
+    tree.links.new(emit.outputs["Emission"], out.inputs["Surface"])
+    return mat
+
+
+# --------------------------------------------------------------------------
+# the wax
+# --------------------------------------------------------------------------
+
+
+def blob_specs(args, low: float, high: float, unit: float) -> list[dict]:
+    """One dict per blob: where it lives, how big, how it moves.
+
+    A lamp where every blob makes the same climb looks mechanical, so the
+    spread matters more than any single value. Roughly a third of the blobs
+    never reach the top — they lift off the pool, stall in the warm lower
+    third and drop back, which is most of what a real lamp does. The rest run
+    the column. Droplets are the small fast beads that peel off a rising blob
+    and outrun it.
+    """
+    specs = []
+    span = high - low
+
+    for i in range(args.blobs):
+        reach = 0.45 + 0.55 * jitter(i, 1) ** 0.6
+        # Two round trips for a few of the shorter climbs; a blob that only
+        # goes a third of the way up has time to do it twice, and a blob that
+        # runs the whole column does not.
+        cycles = args.rise * (2 if reach < 0.5 and jitter(i, 2) > 0.45 else 1)
+        specs.append({
+            "name": f"blob_{i}",
+            "low": low + span * 0.02 * jitter(i, 3),
+            "high": low + span * reach,
+            "radius": unit * args.blob_size * (0.66 + 0.62 * jitter(i, 4)),
+            "cycles": cycles,
+            "phase": jitter(i, 5),
+            "wander": (1 if jitter(i, 6) > 0.5 else 2, jitter(i, 7),
+                       1 if jitter(i, 8) > 0.5 else 2, jitter(i, 9)),
+            "wobble": 2 if jitter(i, 10) > 0.5 else 3,
+        })
+
+    for i in range(args.droplets):
+        j = i + args.blobs
+        specs.append({
+            "name": f"drop_{i}",
+            "low": low,
+            "high": high,
+            "radius": unit * args.blob_size * (0.16 + 0.14 * jitter(j, 1)),
+            "cycles": args.rise * (2 + int(jitter(j, 2) * 3.0)),
+            "phase": jitter(j, 3),
+            "wander": (2, jitter(j, 4), 3, jitter(j, 5)),
+            "wobble": 4,
+        })
+
+    return specs
+
+
+def blob_state(spec: dict, t: float, args, radius_at, low: float,
+               high: float) -> tuple[Vector, Vector]:
+    """Where a blob is and what shape it is, at loop position `t` in [0, 1).
+
+    Height is a sine put through a power that is less than one, which flattens
+    it near the extremes: the blob loiters at the floor and at the ceiling and
+    crosses the middle briskly. That asymmetry is the whole read of a lava
+    lamp — convection is slow to start, quick in transit, slow to turn over —
+    and a plain sine gives you a bobbing ball instead.
+
+    Every frequency here is an integer multiple of one cycle per loop, so
+    `blob_state(spec, 0)` and `blob_state(spec, 1)` are the same value to the
+    last bit. That is what removes the crossfade the shaker needs.
+    """
+    mid = (spec["low"] + spec["high"]) * 0.5
+    half = (spec["high"] - spec["low"]) * 0.5
+
+    def shaped(u: float) -> float:
+        s = math.sin(2 * math.pi * (spec["cycles"] * u + spec["phase"]))
+        return math.copysign(abs(s) ** args.dwell, s)
+
+    z = mid + half * shaped(t)
+
+    # Vertical speed, differenced over one frame rather than solved for. The
+    # shaping exponent has an infinite derivative at the midpoint, so the
+    # analytic velocity spikes exactly where the blob is most visible; the
+    # frame-rate difference is the speed the render actually shows.
+    dt = 1.0 / max(1, args.loop)
+    speed = abs(shaped(t + dt) - shaped(t - dt)) / (2 * dt)
+    speed = min(1.0, speed / (2.0 * math.pi * max(1, spec["cycles"])))
+
+    wx, px, wy, py = spec["wander"]
+    drift_x = math.sin(2 * math.pi * (wx * t + px))
+    drift_y = math.sin(2 * math.pi * (wy * t + py))
+
+    # A blob may only stray as far as the glass allows at the height it has
+    # reached, and the bottle narrows as it climbs — so the same drift term
+    # naturally funnels the column together toward the neck.
+    room = max(0.0, radius_at(z) - spec["radius"] * SURFACE_FRACTION * 1.3)
+    reach = room * args.wander
+    x = drift_x * reach
+    # Depth is pulled toward the camera rather than just narrowed: a blob
+    # centred in a wide column sits behind half a metre of absorbing medium,
+    # and the colour it loses there is the colour the wallpaper is made of.
+    y = drift_y * reach * 0.7 * args.depth - (1.0 - args.depth) * room * 0.42
+
+    # Stretch along the climb, flatten against the floor and the ceiling.
+    # Wax necking off the pool draws out into a stalk, and wax arriving at the
+    # cool top spreads against it; both are the shape telling you what the
+    # blob is doing.
+    stretch = 1.0 + args.stretch * speed
+    ends = max(0.0, 1.0 - abs(z - mid) / max(1e-6, half))
+    squash = 0.84 + 0.16 * ends if half > 1e-5 else 1.0
+    wobble = 1.0 + 0.06 * math.sin(2 * math.pi * (spec["wobble"] * t
+                                                  + spec["phase"]))
+    sz = stretch * squash * wobble
+    sxy = wobble / math.sqrt(max(1e-6, stretch * squash))
+
+    # Nothing may leave the liquid or sink through the floor.
+    z = min(max(z, low), high)
+    return Vector((x, y, z)), Vector((sxy, sxy, sz))
+
+
+def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
+              height: float) -> dict:
+    """The metaball family: a static pool plus one animated object per blob.
+
+    Blender polygonises every metaball object whose name shares a base — so
+    `Lava`, `Lava.001`, `Lava.002` are one surface, and a blob approaching the
+    pool necks into it the way wax does, for free. The alternative, keyframing
+    element positions inside a single metaball datablock, is the documented
+    trap: element properties animate unreliably and do not evaluate on render
+    in every version. Object transforms always do.
+
+    `Lava` itself is the family's basis. It supplies the resolution, the
+    threshold, the material and the space every other member is measured in,
+    so it stays at the origin with an identity transform and carries the one
+    part of the wax that never moves: the pool.
+    """
+    radius_at = radius_sampler(interior)
+    floor_z = interior[0][1]
+
+    pool_top = floor_z + (fill_z - floor_z) * args.pool
+    unit = radius_at(pool_top)
+
+    data = bpy.data.metaballs.new("Lava")
+    data.resolution = args.mesh_res * 2.5      # viewport
+    data.render_resolution = args.mesh_res
+    data.threshold = args.threshold
+    basis = link(bpy.data.objects.new("Lava", data))
+
+    # The pool, as a ring of overlapping balls rather than one flat ellipsoid.
+    # Blender's ellipsoid element is a rounded *box*, which through a round
+    # bottle reads as a square slab of wax; a ring merges into a disc with a
+    # slightly uneven top, which is what settled wax looks like.
+    #
+    # The ring has to be placed off the *rendered* radius, not the influence
+    # radius — see SURFACE_FRACTION. Place it off the influence radius and the
+    # outer lumps hang through the glass wall.
+    depth = max(1e-3, pool_top - floor_z)
+    influence = depth * 1.15
+    surface = influence * SURFACE_FRACTION
+    edge = max(surface, radius_at(pool_top) - surface * 1.25)
+
+    # Bigger and higher at the centre, smaller and lower at the wall, so the
+    # pool domes the way a heated pool of wax does rather than lying flat.
+    lumps = [(0.0, 0.0, 1.25, 0.55)]
+    for i in range(8):
+        a = 2 * math.pi * i / 8
+        lumps.append((math.cos(a) * edge * 0.55, math.sin(a) * edge * 0.55,
+                      0.95 + 0.12 * jitter(i, 11), 0.4))
+    for i in range(10):
+        a = 2 * math.pi * i / 10 + 0.31
+        lumps.append((math.cos(a) * edge, math.sin(a) * edge,
+                      0.7 + 0.16 * jitter(i, 12), 0.22))
+    for x, y, k, lift in lumps:
+        element = data.elements.new(type="BALL")
+        element.co = (x, y, floor_z + depth * lift)
+        element.radius = influence * k
+        element.stiffness = 2.0
+
+    # The blob a blob-scale value should describe is the typical one, not
+    # the largest: the spread runs 0.66 to 1.28 of --blob-size.
+    typical = unit * args.blob_size * 0.97 * SURFACE_FRACTION
+    wax = wax_material(basis, height, args.wax_rgb, args.glow, args.heat,
+                       typical)
+    # Only the basis's material is used for the whole family; assigning to the
+    # members as well would be dead data.
+    basis.data.materials.append(wax)
+
+    # Blobs travel from inside the pool — so they visibly neck out of it —
+    # to just under the meniscus. The top of the run is set by the largest
+    # blob the spread can produce, so no blob breaks the surface of the
+    # medium however the size flags are turned up.
+    biggest = unit * args.blob_size * 1.28 * SURFACE_FRACTION
+    low = floor_z + depth * 0.55
+    high = max(low + 1e-3, fill_z - biggest * 1.15)
+
+    members = []
+    for spec in blob_specs(args, low, high, unit):
+        ball = bpy.data.metaballs.new("Lava")
+        # Matched to the basis. Only the basis's copy of these is read, but a
+        # member that ever becomes the basis — someone deletes `Lava`, or
+        # renames it — should not change how the wax looks.
+        ball.resolution = data.resolution
+        ball.render_resolution = data.render_resolution
+        ball.threshold = args.threshold
+        element = ball.elements.new(type="BALL")
+        element.co = (0.0, 0.0, 0.0)
+        element.radius = spec["radius"]
+        element.stiffness = 2.0
+
+        obj = link(bpy.data.objects.new("Lava", ball))
+        # bpy.data.objects.new suffixes a clashing name, which is exactly the
+        # `.001` the family grouping keys off. Assert it rather than assume:
+        # a member that landed outside the family would silently render as a
+        # second, separate lump of wax.
+        assert obj.name.startswith("Lava."), obj.name
+        obj["blob"] = spec["name"]
+        members.append((obj, spec))
+
+    animate_wax(args, members, radius_at, low, high)
+    return {"basis": basis, "blobs": [o for o, _ in members], "wax": wax,
+            "low": low, "high": high, "pool_top": pool_top}
+
+
+def animate_wax(args, members, radius_at, low: float, high: float) -> None:
+    """Keyframe every blob across the loop, one key per frame.
+
+    A key on every frame with linear interpolation samples the motion at
+    exactly the rate the render consumes it, so each frame gets the true
+    analytic value and no interpolation error creeps in between keys. It is
+    also why there is no pre-roll: the state at frame 1 is computed, not
+    settled into.
+    """
+    for obj, spec in members:
+        for frame in range(1, args.loop + 2):
+            t = (frame - 1) / float(args.loop)
+            location, scale = blob_state(spec, t, args, radius_at, low, high)
+            obj.location = location
+            obj.scale = scale
+            obj.keyframe_insert(data_path="location", frame=frame)
+            obj.keyframe_insert(data_path="scale", frame=frame)
+
+        action = obj.animation_data.action
+        for fcurve in action.fcurves:
+            for kp in fcurve.keyframe_points:
+                kp.interpolation = "LINEAR"
+
+
+# --------------------------------------------------------------------------
+# scene
+# --------------------------------------------------------------------------
+
+
+def build_scene(args) -> dict:
+    clear_scene()
+    scene = bpy.context.scene
+    scene.render.fps = args.fps
+    scene.frame_start = 1
+    scene.frame_end = args.loop
+
+    aspect = args.res_y / max(1, args.res_x)
+    fullbleed = args.shape == "fullbleed"
+
+    if fullbleed:
+        # The wallpaper case. The bottle is not the subject — the wax is — so
+        # the column is made wider than the frame and taller than the frame,
+        # and both walls and both ends fall outside it. What is left on screen
+        # is liquid, wax and light, with no silhouette to date the image.
+        #
+        # Only just taller, though. Overshoot the height and the pool — the
+        # one thing in the frame that explains where the light comes from —
+        # ends up far below the bottom edge, and the wax climbs into a column
+        # the bulb cannot reach. At 1.12 the pool sits half in frame along the
+        # bottom edge and the heat gradient starts inside the picture.
+        frame_h = args.height if args.height > 0 else args.width * aspect
+        height = frame_h * 1.12
+        r_max = args.width * 0.5 * 1.35 + args.wall
+        profile = bottle_profile(height, r_max, r_max, 0.0, args.rings, 0.0)
+        margin = args.margin if args.margin > 0 else 1.0
+        ortho = max(frame_h * margin, args.width * margin * aspect)
+    else:
+        height = args.height if args.height > 0 else args.width * 2.5
+        r_max = args.width * 0.5
+        profile = bottle_profile(height, r_max, r_max * args.neck, args.taper,
+                                 args.rings)
+        margin = args.margin if args.margin > 0 else 1.18
+        total = height * (1.0 + args.base + args.cap)
+        ortho = max(total * margin, r_max * 2.6 * margin * aspect)
+
+    glass = revolve("Lava_Glass", profile, args.segments)
+    glass.data.materials.append(glass_material())
+    solid = glass.modifiers.new("wall", "SOLIDIFY")
+    solid.thickness = args.wall
+    solid.offset = -1.0          # grow inward, so the silhouette is the profile
+    solid.use_rim = True
+
+    # The medium is inset by a shade more than the wall so its surface never
+    # lands coplanar with the glass's inner face. Coplanar transmissive
+    # surfaces are where a path tracer produces those flickering black seams
+    # that look like a modelling error and are a numeric one.
+    inset = args.wall * 1.08
+    interior = [(max(1e-4, r - inset), z) for r, z in profile]
+    interior[0] = (interior[0][0], profile[0][1] + inset)
+    interior[-1] = (interior[-1][0], profile[-1][1] - inset)
+
+    medium = revolve("Lava_Medium", interior, max(48, args.segments // 2))
+    fill_z = interior[0][1] + (interior[-1][1] - interior[0][1]) * args.fill
+    if args.fill < 1.0:
+        cut_above(medium, fill_z, max(r_max * 2.0, height))
+    # --density is an optical depth across the vessel, so the absorption
+    # coefficient the shader wants is that depth divided by the path a ray
+    # takes through the widest part.
+    across = max(1e-6, 2.0 * max(r for r, _ in interior))
+    medium.data.materials.append(
+        liquid_material(glass, height, args.liquid_rgb,
+                        args.density / across, args.haze / across))
+
+    wax = build_wax(args, interior, fill_z, height)
+
+    metal = metal_material(args.metal_rgb)
+    fittings = [] if fullbleed else build_fittings(args, height, r_max,
+                                                   profile, metal)
+
+    centre = height * 0.5
+    if not fullbleed:
+        centre = (-height * args.base + height * (1.0 + args.cap)) * 0.5
+
+    build_camera(args, ortho, centre)
+    build_lighting(args, height, r_max, centre, ortho, fullbleed)
+
+    return {"scene": scene, "glass": glass, "medium": medium,
+            "fittings": fittings, "height": height, "r_max": r_max,
+            "fill_z": fill_z, "centre": centre, **wax}
+
+
+def build_fittings(args, height: float, r_max: float,
+                   profile: list[tuple[float, float]],
+                   metal: bpy.types.Material) -> list[bpy.types.Object]:
+    """The spun metal base the bulb lives in, and the cap on top."""
+    base_h = height * args.base
+    base = revolve("Lava_Base", [
+        (r_max * 1.14, -base_h),
+        (r_max * 1.18, -base_h * 0.92),
+        (r_max * 1.08, -base_h * 0.62),
+        (r_max * 0.95, -base_h * 0.24),
+        (r_max * 0.86, -base_h * 0.04),
+        (profile[0][0] * 1.02, 0.0),
+    ], args.segments)
+    base.data.materials.append(metal)
+
+    cap_h = height * args.cap
+    neck = profile[-1][0]
+    cap = revolve("Lava_Cap", [
+        (neck * 1.04, height),
+        (neck * 1.10, height + cap_h * 0.18),
+        (neck * 0.94, height + cap_h * 0.55),
+        (neck * 0.58, height + cap_h * 0.88),
+        (neck * 0.30, height + cap_h),
+    ], args.segments)
+    cap.data.materials.append(metal)
+    return [base, cap]
+
+
+def build_camera(args, ortho: float, centre: float) -> bpy.types.Object:
+    """Orthographic front-on view, portrait, lamp centred.
+
+    Orthographic for the same reason the shaker is: a perspective camera on a
+    tall vessel converges its sides, and a wallpaper with converging sides
+    reads as a photograph of a thing rather than as the thing.
+    """
+    cam_data = bpy.data.cameras.new("Lava_Cam")
+    cam_data.type = "ORTHO"
+    # ortho_scale maps to the longer edge of the render, which on a portrait
+    # frame is the height — so the caller solves for whichever axis is tighter
+    # and hands the answer in.
+    cam_data.ortho_scale = ortho
+    cam = link(bpy.data.objects.new("Lava_Cam", cam_data))
+    cam.location = (0.0, -12.0, centre)
+    cam.rotation_euler = (math.radians(90.0), 0.0, 0.0)
+    bpy.context.scene.camera = cam
+    return cam
+
+
+def build_lighting(args, height: float, r_max: float, centre: float,
+                   ortho: float, fullbleed: bool) -> None:
+    """A bulb under the wax, and just enough else to find the glass.
+
+    The lamp lights itself. Everything else in the rig exists to keep the
+    bottle from disappearing into a black frame: a low key to put a highlight
+    down one side of the glass, a rim behind to separate it from the backdrop,
+    and a world dim enough that neither reads as daylight.
+    """
+    scene = bpy.context.scene
+
+    world = bpy.data.worlds.new("Lava_World")
+    world.use_nodes = True
+    bg = world.node_tree.nodes["Background"]
+    bg.inputs["Color"].default_value = rgba((0.28, 0.33, 0.46))
+    bg.inputs["Strength"].default_value = args.env
+    scene.world = world
+
+    bulb_data = bpy.data.lights.new("Bulb", "POINT")
+    bulb_data.energy = args.bulb
+    bulb_data.color = (1.0, 0.63, 0.32)      # a warm incandescent, ~2400K
+    # A big soft source. A point-sized bulb under a pool of wax burns a
+    # white hole through the middle of it; widening the emitter spreads the
+    # same energy over the whole floor and the pool keeps its colour.
+    bulb_data.shadow_soft_size = r_max * 0.55
+    bulb = link(bpy.data.objects.new("Bulb", bulb_data))
+    # Just under the pool. Above it and the pool is backlit into a bright
+    # smear; far below it and the glass floor eats most of the throw.
+    bulb.location = (0.0, 0.0, height * 0.008)
+    hide_from_camera(bulb)
+
+    def area(name, location, rotation, size_m, energy, colour=(1.0, 1.0, 1.0)):
+        data = bpy.data.lights.new(name, "AREA")
+        data.shape = "RECTANGLE"
+        data.size = size_m
+        data.size_y = size_m * 2.2
+        data.energy = energy
+        data.color = colour
+        light = link(bpy.data.objects.new(name, data))
+        light.location = location
+        light.rotation_euler = rotation
+        hide_from_camera(light)
+        return light
+
+    reach = max(height, ortho)
+    if fullbleed:
+        # Two lights, and *nothing in front of the glass*. The camera looks
+        # through a metre-wide refracting cylinder here, and a source on the
+        # near side comes back through it: rays that enter the wall are bent
+        # back out toward the camera side, find the light again and paint it
+        # across the frame as a soft vertical bar. It survives switching the
+        # light out of camera and glossy rays, because the path that carries
+        # it is transmission. The fix is not a flag, it is not putting a light
+        # there.
+        #
+        # Crown: above the column, pointing down it. Area lights emit along
+        # their own -Z, so an unrotated one already faces the floor. This is
+        # what keeps the top of the frame from going black once the bulb's
+        # heat gradient has run out, and being directly overhead it lights the
+        # top of a blob the way daylight lights the top of a cloud.
+        crown = area("Crown", (0.0, 0.0, height * 1.06), (0.0, 0.0, 0.0),
+                     ortho * 0.5, args.bulb * 2.2, (0.86, 0.89, 1.0))
+        hide_from_glossy(crown)
+    else:
+        # Key: low and camera-left, cool against the bulb's warmth.
+        area("Key", (-reach * 0.55, -reach * 0.42, centre + height * 0.12),
+             (math.radians(78), 0.0, math.radians(-46)), height * 0.55,
+             args.bulb * 0.22, (0.62, 0.74, 1.0))
+        # Rim: behind and slightly above, so the glass edges pick up a line.
+        area("Rim", (reach * 0.35, reach * 0.6, centre + height * 0.3),
+             (math.radians(-104), 0.0, math.radians(28)), height * 0.7,
+             args.bulb * 0.4, (0.72, 0.82, 1.0))
+
+    if args.transparent:
+        scene.render.film_transparent = True
+        return
+
+    colour = tuple(float(c) for c in args.backdrop.split(","))
+    span = max(reach * 4.0, ortho * 2.4)
+    material = backdrop_material(colour, ortho * 0.85)
+    panels = [("Backdrop", (0.0, span * 0.32, centre),
+               (math.radians(90), 0, 0))]
+    if not fullbleed:
+        # The lamp stands on something. Full-bleed has no floor in frame and
+        # a floor plane there would only cut a hard line across the wallpaper.
+        panels.append(("Floor", (0.0, 0.0, -height * args.base),
+                       (0.0, 0.0, 0.0)))
+
+    for name, location, rotation in panels:
+        bpy.ops.mesh.primitive_plane_add(size=span, location=location,
+                                         rotation=rotation)
+        panel = bpy.context.active_object
+        panel.name = name
+        panel.data.materials.append(material)
+
+
+def hide_from_camera(obj: bpy.types.Object) -> None:
+    """Keep a light out of frame without taking its light out of the scene."""
+    try:
+        obj.visible_camera = False
+    except AttributeError:
+        if hasattr(obj, "cycles_visibility"):
+            obj.cycles_visibility.camera = False
+
+
+def hide_from_glossy(obj: bpy.types.Object) -> None:
+    """Let a light illuminate without appearing in reflections."""
+    try:
+        obj.visible_glossy = False
+    except AttributeError:
+        if hasattr(obj, "cycles_visibility"):
+            obj.cycles_visibility.glossy = False
+
+
+# --------------------------------------------------------------------------
+# render
+# --------------------------------------------------------------------------
+
+
+def configure_render(args, scene: bpy.types.Scene) -> None:
+    scene.render.engine = "CYCLES"
+    scene.cycles.samples = args.samples
+    scene.cycles.use_denoising = True
+    scene.cycles.max_bounces = 32
+    scene.cycles.transmission_bounces = 24
+    scene.cycles.transparent_max_bounces = 24
+    scene.cycles.volume_bounces = 6
+    scene.cycles.blur_glossy = 0.6
+    # The bulb is a small bright source seen through two refracting surfaces
+    # and a volume, which is the textbook recipe for fireflies. Clamping the
+    # indirect ray costs a little bloom and removes them.
+    scene.cycles.sample_clamp_indirect = 8.0
+    scene.cycles.device = args.device
+    scene.render.resolution_x = args.res_x
+    scene.render.resolution_y = args.res_y
+    scene.render.resolution_percentage = args.percent
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.image_settings.color_mode = "RGBA" if args.transparent \
+        else "RGB"
+    scene.render.filepath = os.path.join(args.out, "frame_")
+    # AgX by default here, where the shaker wants Khronos PBR Neutral. The
+    # shaker's problem is holding a white backdrop; this one's is a small
+    # incandescent source against black, and AgX is what keeps the bulb's core
+    # from clipping to a white disc with a hard edge.
+    try:
+        scene.view_settings.view_transform = args.view_transform
+    except TypeError:
+        scene.view_settings.view_transform = "Standard"
+    scene.view_settings.exposure = args.exposure
+
+    if args.device == "GPU":
+        prefs = bpy.context.preferences.addons.get("cycles")
+        if prefs is not None:
+            cprefs = prefs.preferences
+            for backend in ("OPTIX", "CUDA", "HIP", "METAL", "ONEAPI"):
+                try:
+                    cprefs.compute_device_type = backend
+                except TypeError:
+                    continue
+                cprefs.get_devices()
+                if any(d.type == backend for d in cprefs.devices):
+                    for device in cprefs.devices:
+                        device.use = device.type != "CPU"
+                    break
+
+
+def render_loop(args, scene: bpy.types.Scene) -> None:
+    scene.frame_start = 1
+    scene.frame_end = args.loop
+    bpy.ops.render.render(animation=True)
+
+
+def check_loop(args, scene: bpy.types.Scene) -> float:
+    """Compare the wax at frame 1 against frame `loop + 1`.
+
+    Frame `loop + 1` is the frame that would follow the last rendered one, so
+    if it holds every blob in exactly the position frame 1 does, the sequence
+    wraps with nothing to hide. Reported rather than asserted quietly: an
+    exact zero is the expected answer, and anything else is worth seeing.
+    """
+    worst = 0.0
+    for frame, store in ((1, {}), (args.loop + 1, {})):
+        scene.frame_set(frame)
+        for obj in bpy.data.objects:
+            if obj.name.startswith("Lava."):
+                store[obj.name] = tuple(obj.location) + tuple(obj.scale)
+        if frame == 1:
+            first = store
+        else:
+            for name, values in store.items():
+                worst = max(worst, max(abs(a - b)
+                                       for a, b in zip(first[name], values)))
+    print(f"[lava] {len(first)} blobs; largest frame 1 vs frame "
+          f"{args.loop + 1} difference: {worst:.3e}")
+    print("[lava] loop closes exactly" if worst == 0.0
+          else "[lava] loop does NOT close — check --rise is an integer")
+    return worst
+
+
+def frame_paths(args) -> list[str]:
+    directory = bpy.path.abspath(args.out)
+    if not os.path.isdir(directory):
+        return []
+    names = sorted(n for n in os.listdir(directory)
+                   if n.startswith("frame_") and n.endswith(".png"))
+    return [os.path.join(directory, n) for n in names]
+
+
+def blend_seam(args) -> None:
+    """Crossfade the loop seam.
+
+    Off by default and kept only as an escape hatch: this motion is periodic
+    by construction, so there is nothing at the seam to hide. It earns its
+    place if you drive the lamp with something that is not — a non-integer
+    `--rise`, or hand-edited curves in a saved .blend.
+    """
+    n = args.blend_frames
+    if n <= 0:
+        return
+    paths = frame_paths(args)
+    if len(paths) < n * 2 + 1:
+        print(f"[lava] too few frames ({len(paths)}) to blend {n}; skipping")
+        return
+
+    import numpy as np
+
+    head, tail = paths[:n], paths[-n:]
+    for i, (head_path, tail_path) in enumerate(zip(head, tail)):
+        alpha = (i + 1) / (n + 1)
+        a = bpy.data.images.load(head_path)
+        b = bpy.data.images.load(tail_path)
+        pa = np.empty(len(a.pixels), dtype=np.float32)
+        pb = np.empty(len(b.pixels), dtype=np.float32)
+        a.pixels.foreach_get(pa)
+        b.pixels.foreach_get(pb)
+        a.pixels.foreach_set(pa * alpha + pb * (1.0 - alpha))
+        a.filepath_raw = head_path
+        a.file_format = "PNG"
+        a.save()
+        bpy.data.images.remove(a)
+        bpy.data.images.remove(b)
+
+    for path in tail:
+        os.remove(path)
+    print(f"[lava] blended {n} seam frames; loop is {len(paths) - n} frames")
+
+
+def encode(args) -> str | None:
+    """Encode the sequence to mp4 through Blender's bundled FFmpeg."""
+    paths = frame_paths(args)
+    if not paths:
+        print("[lava] nothing to encode")
+        return None
+
+    scene = bpy.data.scenes.new("lava_encode")
+    scene.render.fps = args.fps
+    scene.frame_start = 1
+    scene.frame_end = len(paths)
+    scene.render.resolution_x = args.res_x
+    scene.render.resolution_y = args.res_y
+    scene.render.resolution_percentage = args.percent
+    scene.render.image_settings.file_format = "FFMPEG"
+    scene.render.ffmpeg.format = "MPEG4"
+    scene.render.ffmpeg.codec = "H264"
+    scene.render.ffmpeg.constant_rate_factor = "HIGH"
+    scene.render.ffmpeg.ffmpeg_preset = "GOOD"
+    scene.render.ffmpeg.gopsize = 12
+    out_path = os.path.join(bpy.path.abspath(args.out), "lava_loop.mp4")
+    scene.render.filepath = out_path
+
+    editor = scene.sequence_editor_create()
+    # 4.4 renamed `sequences` to `strips`; both spellings exist for a while.
+    strips = getattr(editor, "strips", None) or editor.sequences
+    directory = os.path.dirname(paths[0])
+    strip = strips.new_image(name="frames", filepath=paths[0], channel=1,
+                            frame_start=1)
+    for path in paths[1:]:
+        strip.elements.append(os.path.basename(path))
+    strip.directory = directory + os.sep
+
+    with bpy.context.temp_override(scene=scene):
+        bpy.ops.render.render(animation=True, scene=scene.name)
+
+    print(f"[lava] wrote {out_path}")
+    return out_path
+
+
+# --------------------------------------------------------------------------
+
+
+def main() -> None:
+    args = parse_args()
+    built = build_scene(args)
+    configure_render(args, built["scene"])
+    print(f"[lava] {args.blobs} blobs + {args.droplets} droplets, "
+          f"{args.loop} frames at {args.fps}fps, loop closes exactly")
+
+    if args.save_blend:
+        bpy.ops.wm.save_as_mainfile(filepath=bpy.path.abspath(args.save_blend))
+        print(f"[lava] saved {args.save_blend}")
+
+    if args.check_loop:
+        check_loop(args, built["scene"])
+        return
+
+    if args.no_render:
+        return
+
+    render_loop(args, built["scene"])
+    blend_seam(args)
+    if args.encode:
+        encode(args)
+
+
+if __name__ == "__main__":
+    main()
