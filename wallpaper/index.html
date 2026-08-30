@@ -938,7 +938,7 @@ const COUPLE = 0.16;
 const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
 /* Far larger than DYE_BUOY, and it should be: the dense phase is a few per
  * cent heavier than the liquid, a bubble is a hundred per cent lighter. */
-const GAS_LIFT = 900;       // px/s^2 per g at a cell entirely full of gas
+const GAS_LIFT = 380;       // px/s^2 per g at a cell entirely full of gas
 /* Down-gradient drift, cut from 1100. At that strength nothing could ever
  * settle: measured from a well-mixed start, the glitter's centre of mass sat
  * at 0.49 of the container and was still at 0.53 a hundred seconds later,
@@ -970,8 +970,10 @@ const DISPERSE = 660;
  * equilibrium the dispersion has to match the rise, and a cap in the same
  * units is a cap on the balance itself. */
 const DISPERSE_CAP = 180;
-const PHI_MAX = 1.0;         // solid fraction at which a bed stops settling
-const WAKE = 150;           // px/s^2 of wake attraction between near bubbles
+const PHI_MAX = 0.9;          // projected solid fraction where crowding is strong
+const CONC_DEPTH_SCALE = 0.06; // 2-D projection represents a deep 3-D chamber
+const HIND_FLOOR = 0.22;      // crowded glitter creeps; it never welds solid
+const WAKE = 18;              // short wake attraction between genuinely near bubbles
 
 /* Two-way coupling: a particle dragged by the liquid drags back.
  *
@@ -1129,7 +1131,26 @@ const disperse = { x: 0, y: 0 };
 function sampleConc(x, y) {
   const i = Math.max(1, Math.min(GW - 2, (x / cell) | 0));
   const j = Math.max(1, Math.min(GH - 2, (y / cell) | 0));
-  return conc[j * GW + i] / (cell * cell);
+  /* `conc` is a screen-space projection of every depth layer. Treating that
+   * projected area as a literal packing fraction made flakes at the front,
+   * middle and back hinder one another as though they occupied the same thin
+   * sheet. Account for the chamber depth before applying hindered settling. */
+  return conc[j * GW + i] / (cell * cell) * CONC_DEPTH_SCALE;
+}
+
+/* A flake cannot settle through the gas volume of a large bubble. Use the
+ * existing void field as a cheap, smooth exclusion field so glitter parts
+ * around a bubble instead of collecting on its upper rim. This is deliberately
+ * mild: different Z layers may pass visually, and the liquid flow still owns
+ * nearly all particle motion. */
+const gasAvoid = { x: 0, y: 0 };
+function sampleGasAvoid(x, y, out) {
+  const i = Math.max(1, Math.min(GW - 2, (x / cell) | 0));
+  const j = Math.max(1, Math.min(GH - 2, (y / cell) | 0));
+  const k = j * GW + i;
+  const scale = 0.35 + gas[k];
+  out.x = -(gas[k + 1] - gas[k - 1]) * 0.5 / scale;
+  out.y = -(gas[k + GW] - gas[k - GW]) * 0.5 / scale;
 }
 
 function sampleDisperse(x, y, out) {
@@ -1407,6 +1428,7 @@ function setBubbleSize(b, r) {
  */
 function respawnBubble(b) {
   b.vx = 0; b.vy = 0; b.squash = 0; b.pop = 1;
+  b.drain = 0.78 + Math.random() * 0.44;
   const agit = Math.min(1, Math.hypot(accel.x, accel.y, accel.z) * 1.4);
   if (Math.random() < 0.2 + 0.75 * agit) {
     const s = (Math.random() * 2 - 1) * span * 0.95;
@@ -1429,7 +1451,7 @@ function respawnBubble(b) {
       b.x -= up.x * drop; b.y -= up.y * drop;
     }
   }
-  clampInside(b, Math.min(RX, RY) * 0.03);
+  clampInside(b, Math.max(Math.min(RX, RY) * 0.03, b.r * 1.08));
   // A bubble that has just teleported has not "seen" the flow accelerate;
   // without this the difference against its old sample is a spurious kick.
   sampleFlow(b.x, b.y, flow);
@@ -1464,7 +1486,7 @@ function floatSpawn(out, pad, cluster) {
   const lift = level + surfaceAt(s) - deep;
   out.x = CX + tan.x * s + up.x * lift;
   out.y = CY + tan.y * s + up.y * lift;
-  clampInside(out, Math.min(RX, RY) * 0.03);
+  clampInside(out, Math.max(Math.min(RX, RY) * 0.03, pad * 1.08));
 }
 
 /* Glitter in a water/glycerol shaker is mostly denser than the carrier and
@@ -1617,6 +1639,7 @@ function seed() {
       alpha: Math.random(),
       fading: false,
       rest: 0,           // seconds spent sitting under the surface
+      drain: 0.78 + Math.random() * 0.44,
       pop: 1,            // burst expansion, 1 until the film lets go
       pfx: 0, pfy: 0,    // last flow sample, for the fluid's acceleration
       // Film thickness varies bubble to bubble, and with it how much of the
@@ -3528,9 +3551,14 @@ function fixedStep(dt, time) {
      * the slowest thing in the shaker, moving 0.518 to 0.460 over a minute
      * while the fine glitter that is supposed to trail them went 0.473 to
      * 0.336. Hindrance is what the *other* particles do to you. */
-    const own = Math.PI * p.r * p.r / (cell * cell);
-    const hind = Math.pow(
-      Math.max(0, 1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX), 4.5);
+    const own = Math.PI * p.r * p.r / (cell * cell) * CONC_DEPTH_SCALE;
+    const freeFraction = Math.max(0,
+      1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX);
+    /* Crowding slows sedimentation, but a loose glitter bed is not cement.
+     * The former zero let a transient projected overlap become permanent and
+     * then catch every later flake. Preserve hindered settling while retaining
+     * a slow squeeze-through velocity in the most crowded cells. */
+    const hind = HIND_FLOOR + (1 - HIND_FLOOR) * Math.pow(freeFraction, 2.4);
     const drift = p.terminal * p.settleScale * p.density * gMag * settleRate *
                   (1.573 / (1 + 0.9 * broad)) * hind;
     /* Dispersion is a perturbation on the drift, not a transport in its own
@@ -3545,6 +3573,10 @@ function fixedStep(dt, time) {
     if (dm > cap) { const q = cap / dm; dx *= q; dy *= q; }
     const disperseFlow = 0.05 + 0.95 * motionActivity;
     dx *= disperseFlow; dy *= disperseFlow;
+    sampleGasAvoid(p.x, p.y, gasAvoid);
+    const voidSlip = 10 + motionActivity * 24;
+    dx += gasAvoid.x * voidSlip;
+    dy += gasAvoid.y * voidSlip;
     let tx = carriedX * particleFlow + fallX * drift - fallY * flut + dx;
     let ty = carriedY * particleFlow + fallY * drift + fallX * flut + dy;
 
@@ -3616,6 +3648,10 @@ function fixedStep(dt, time) {
       const drift = p.terminal * p.settleScale * p.density * gMag * settleRate;
       let tx = carriedX * particleFlow + fallX * drift;
       let ty = carriedY * particleFlow + fallY * drift;
+      sampleGasAvoid(p.x, p.y, gasAvoid);
+      const voidSlip = 7 + motionActivity * 18;
+      tx += gasAvoid.x * voidSlip;
+      ty += gasAvoid.y * voidSlip;
       const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
       const sideStart = span * (0.92 - 0.37 * inversionGuard);
       const sideDepth = Math.max(0, Math.abs(along) - sideStart);
@@ -3673,12 +3709,44 @@ function fixedStep(dt, time) {
     const ax = (flow.x - b.pfx) * invDt, ay = (flow.y - b.pfy) * invDt;
     b.pfx = flow.x; b.pfy = flow.y;
     const lead = 2 * b.tau;               // 3x the fluid, less the 1x it rides
-    const lx = Math.max(-260, Math.min(260, ax * lead));
-    const ly = Math.max(-260, Math.min(260, ay * lead));
+    /* Added-mass lead matters during a turn, but feeding a bubble's own quiet
+     * airlift circulation back at full gain forms a self-sustaining wall jet.
+     * Close that loop as the shaker settles while preserving the fast lead
+     * during real handset motion. */
+    const leadGain = 0.12 + motionActivity * 0.88;
+    const lx = Math.max(-260, Math.min(260, ax * lead)) * leadGain;
+    const ly = Math.max(-260, Math.min(260, ay * lead)) * leadGain;
 
     const climb = b.rise * gMag;
-    const tx = flow.x - gDir.x * climb - gDir.y * wob + lx;
-    const ty = flow.y - gDir.y * climb + gDir.x * wob + ly;
+    const bubbleFlow = 0.12 + motionActivity * 0.88;
+    let tx = flow.x * bubbleFlow - gDir.x * climb - gDir.y * wob + lx;
+    let ty = flow.y * bubbleFlow - gDir.y * climb + gDir.x * wob + ly;
+
+    /* Capillary centring at the free surface. A large bubble pressed into the
+     * rounded shoulder has less room and a stronger pressure gradient on its
+     * wall side, so it migrates back toward the broad middle of the lens.
+     * Without this, tangential flow could park every large bubble at the two
+     * ends indefinitely. Smaller bubbles may still roam nearly the full span. */
+    const approach = depthOf(b.x, b.y);
+    const size = Math.min(1, b.r / Math.max(1, maxBubble));
+    const along = (b.x - CX) * tan.x + (b.y - CY) * tan.y;
+    const freeSpan = span * (0.82 - size * 0.22);
+    const shoulder = Math.max(0, Math.abs(along) - freeSpan);
+    if (shoulder > 0) {
+      /* Wall-induced lift acts during the whole ascent; pressure on the narrow
+       * wall-side gap pushes a rising bubble back into the body. It strengthens
+       * further when that bubble reaches the curved surface shoulder. */
+      const nearSurface = approach > -b.r * 3.2;
+      const returnGain = (0.55 + size * 1.20) * (nearSurface ? 1.65 : 1);
+      const returnSpeed = Math.sign(along) * shoulder * returnGain;
+      tx -= tan.x * returnSpeed;
+      ty -= tan.y * returnSpeed;
+    }
+    if (approach > -b.r * 3.2) {
+      const tangentSpeed = b.vx * tan.x + b.vy * tan.y;
+      tx -= tan.x * tangentSpeed * (0.05 + size * 0.12);
+      ty -= tan.y * tangentSpeed * (0.05 + size * 0.12);
+    }
     const k = 1 - Math.exp(-dt / b.tau);
     b.vx += (tx - b.vx) * k;
     b.vy += (ty - b.vy) * k;
@@ -3691,9 +3759,10 @@ function fixedStep(dt, time) {
       depositVoid(b.x, b.y, b.alpha * Math.PI * b.r * b.r / (cell * cell));
     }
 
-    const ox = b.x, oy = b.y;
     b.x += b.vx * dt; b.y += b.vy * dt;
-    if (clampInside(b, pad)) hitWall(b, ox, oy);
+    const attemptedX = b.x, attemptedY = b.y;
+    const bubblePad = Math.max(pad, b.r * 1.08);
+    if (clampInside(b, bubblePad)) hitWall(b, attemptedX, attemptedY);
 
     // Oblate when climbing: a rising bubble is flattened perpendicular to
     // its motion, and the faster it goes the more so.
@@ -3714,28 +3783,25 @@ function fixedStep(dt, time) {
     const d = depthOf(b.x, b.y);
     const perch = b.r * 0.36;
     if (d > -b.r * 0.9) {
+      /* Once the film touches the free surface, buoyancy no longer keeps
+       * accelerating the bubble through it. Cancel that normal component at
+       * contact, not only after the centre has already overshot the line. */
+      const vn = b.vx * up.x + b.vy * up.y;
+      if (vn > 0) { b.vx -= up.x * vn; b.vy -= up.y * vn; }
       if (d > perch) {
         const over = d - perch;
         b.x -= up.x * over; b.y -= up.y * over;
-        const vn = b.vx * up.x + b.vy * up.y;
-        if (vn > 0) { b.vx -= up.x * vn; b.vy -= up.y * vn; }
       }
+      clampInside(b, bubblePad);
       if (!b.fading) {
         b.rest += dt;
-        /* Film drainage, and it has to be slow.
-         *
-         * A big bubble's film holds more liquid and takes proportionally
-         * longer to thin to the point where it goes — and in a gel this
-         * viscous, laden with whatever keeps the glitter in suspension, that
-         * is tens of seconds rather than one or two. Which matters for more
-         * than the bubble it applies to: bubbles at the surface are packed
-         * against each other, so it is where coalescence actually happens,
-         * and a foam coarsens by exactly that. Bursting them after a second
-         * and a half meant nothing ever got the chance to grow — measured
-         * across a hundred seconds, every bubble above 12px died and none
-         * replaced it, with the largest in the vessel collapsing from 31px
-         * to 7. The bubbles the reference shows are made here. */
-        if (b.rest > 10 + b.r * 1.4) { b.fading = true; burstRipple(b); }
+        /* Surface-film drainage. Larger bubbles remain longer, but a varied
+         * 5–10 second window lets them join the headspace before a flip can
+         * accumulate a stationary foam bank. Variation prevents a row of
+         * bubbles from popping in synchrony. */
+        if (b.rest > (3 + b.r * 0.28) * b.drain) {
+          b.fading = true; burstRipple(b);
+        }
       }
     } else if (!b.fading) {
       b.rest = 0;
@@ -3800,6 +3866,28 @@ function fixedStep(dt, time) {
  */
 let mergeCount = 0;
 let coalesceTick = false;
+
+function separateBubblePair(a, b, dx, dy, dz, d, planarD, touch, dt, zScale) {
+  const overlap = touch - d;
+  if (planarD > 1e-3) {
+    const nx = dx / planarD, ny = dy / planarD;
+    const move = overlap * 0.52 * planarD / d;
+    a.x -= nx * move; a.y -= ny * move;
+    b.x += nx * move; b.y += ny * move;
+    const separateSpeed = Math.min(70, overlap * 3.5) * dt;
+    a.vx -= nx * separateSpeed; a.vy -= ny * separateSpeed;
+    b.vx += nx * separateSpeed; b.vy += ny * separateSpeed;
+  }
+  if (Math.abs(dz) > 1e-3) {
+    const moveZ = overlap * 0.52 * Math.abs(dz) / d / zScale;
+    const signZ = Math.sign(b.z - a.z);
+    a.z = Math.max(-1, Math.min(1, a.z - signZ * moveZ));
+    b.z = Math.max(-1, Math.min(1, b.z + signZ * moveZ));
+  }
+  clampInside(a, Math.max(Math.min(RX, RY) * 0.03, a.r * 1.08));
+  clampInside(b, Math.max(Math.min(RX, RY) * 0.03, b.r * 1.08));
+}
+
 function coalesce(dt) {
   for (let i = 0; i < bubbles.length; i++) {
     const a = bubbles[i];
@@ -3807,15 +3895,39 @@ function coalesce(dt) {
     for (let j = i + 1; j < bubbles.length; j++) {
       const b = bubbles[j];
       if (b.fading || b.alpha < 0.9) continue;
-      /* Only bubbles at a similar depth can touch — but the window was
-       * tight enough that wake attraction pulled bubbles into a cluster it
-       * then forbade them to merge out of, and they sat there overlapping
-       * as a tangle of rings. A bubble is a sphere: if their centres are
-       * within a radius in the plane, they are close enough in depth too. */
-      if (Math.abs(a.z - b.z) > 0.85) continue;
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const d2 = dx * dx + dy * dy;
-      const touch = (a.r + b.r) * 0.9;
+      /* Bubble contact is three-dimensional. Collapsing all depth layers onto
+       * the screen made unrelated front/back bubbles attract and pack into one
+       * apparent raft. Convert the normalised Z separation to chamber pixels
+       * before testing wakes or contact. */
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let planarD = Math.hypot(dx, dy);
+      /* Even bubbles separated through the pouch depth should not repeatedly
+       * draw as one stack of large rings. Give large silhouettes a soft 2-D
+       * exclusion before the true 3-D collision test. Smaller bubbles may
+       * still occlude naturally. */
+      const visualTouch = (a.r + b.r) * 0.98;
+      if ((a.r > 8 * bubbleUnit || b.r > 8 * bubbleUnit) &&
+          planarD < visualTouch) {
+        let nx, ny;
+        if (planarD > 1e-3) {
+          nx = dx / planarD; ny = dy / planarD;
+        } else {
+          const angle = (i * 2.39996 + j * 0.75488) % (Math.PI * 2);
+          nx = Math.cos(angle); ny = Math.sin(angle); planarD = 0;
+        }
+        const move = (visualTouch - planarD) * 0.42;
+        a.x -= nx * move; a.y -= ny * move;
+        b.x += nx * move; b.y += ny * move;
+        clampInside(a, Math.max(Math.min(RX, RY) * 0.03, a.r * 1.08));
+        clampInside(b, Math.max(Math.min(RX, RY) * 0.03, b.r * 1.08));
+        dx = b.x - a.x; dy = b.y - a.y; planarD = Math.hypot(dx, dy);
+      }
+      if (Math.abs(a.z - b.z) > 0.75) continue;
+      const planarD2 = dx * dx + dy * dy;
+      const zScale = Math.min(RX, RY) * 0.12;
+      const dz = (b.z - a.z) * zScale;
+      const d2 = planarD2 + dz * dz;
+      const touch = (a.r + b.r) * 1.02;
 
       /* Wake attraction. A bubble rising in the wake of another meets less
        * resistance, catches up and merges — it is why bubbles in a real
@@ -3824,13 +3936,14 @@ function coalesce(dt) {
        * essentially never happens: zero merges in thirty seconds, so the
        * population only ever shrank as bubbles reached the surface.
        */
-      const reach = (a.r + b.r) * 3.5;
-      if (d2 < reach * reach && d2 > 1e-3) {
+      const reach = (a.r + b.r) * 1.55;
+      if (d2 < reach * reach && planarD > 1e-3) {
         const d = Math.sqrt(d2);
         // Strongest when one trails the other along the rise axis.
-        const align = Math.abs((dx * gDir.x + dy * gDir.y) / d);
-        const pull = WAKE * align * (1 - d / reach) * dt;
-        const nx = dx / d, ny = dy / d;
+        const align = Math.abs((dx * gDir.x + dy * gDir.y) / planarD);
+        const depthFade = 1 - Math.min(1, Math.abs(a.z - b.z) / 0.75);
+        const pull = WAKE * align * depthFade * (1 - d / reach) * dt;
+        const nx = dx / planarD, ny = dy / planarD;
         a.vx += nx * pull; a.vy += ny * pull;
         b.vx -= nx * pull; b.vy -= ny * pull;
       }
@@ -3839,18 +3952,17 @@ function coalesce(dt) {
 
       // Spheres: volumes add, so radii add in cube.
       const merged = Math.cbrt(a.r * a.r * a.r + b.r * b.r * b.r);
-      if (merged > maxBubble) {
-        /* Too big to merge — a large bubble's film takes far longer to
-         * drain than a small one's, so they touch and stay separate. But
-         * they are still solid objects: without pushing apart they sat
-         * inside one another indefinitely, and a bubble at the size cap
-         * plus a neighbour it could never absorb rendered as two rings
-         * drawn over each other. */
+      /* Contact is not instant coalescence. The carrier's surfactant film has
+       * to drain between the bubbles; most brief collisions separate again,
+       * especially in a moving shaker. This prevents rapid merge-respawn
+       * cycles from manufacturing a raft of cap-sized bubbles. */
+      const mergeChance = 1 - Math.exp(-dt * (0.05 + motionActivity * 0.35));
+      if (merged > maxBubble || Math.random() > mergeChance) {
+        /* A film that has not drained, or a pair already too large to merge,
+         * separates instead. Otherwise cap-sized neighbours can remain
+         * interpenetrated and render as stacked rings. */
         const d = Math.sqrt(d2) || 1;
-        const nx = dx / d, ny = dy / d;
-        const push = (touch - d) * 6;
-        a.vx -= nx * push * dt; a.vy -= ny * push * dt;
-        b.vx += nx * push * dt; b.vy += ny * push * dt;
+        separateBubblePair(a, b, dx, dy, dz, d, planarD, touch, dt, zScale);
         continue;
       }
       const wa = a.r * a.r * a.r, wb = b.r * b.r * b.r, wt = wa + wb;
@@ -3860,6 +3972,7 @@ function coalesce(dt) {
       a.vy = (a.vy * wa + b.vy * wb) / wt;
       a.z = (a.z * wa + b.z * wb) / wt;
       setBubbleSize(a, merged);
+      clampInside(a, Math.max(Math.min(RX, RY) * 0.03, a.r * 1.08));
       mergeCount++;
 
       // The smaller one is consumed; respawn it as fresh fizz down below.

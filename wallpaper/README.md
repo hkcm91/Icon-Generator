@@ -352,18 +352,19 @@ gravity, the glint never turns at all. Verified by drawing one bubble at
 four gravity angles — the specular held the same clock position in all four
 while the interior inversion rotated.
 
-They rise, weave, merge and burst. A bubble climbing through liquid is
-flattened perpendicular to its motion, but only by a few percent at these
-speeds — rendering that at the earlier strength turned every one into an
-egg. New bubbles nucleate small and grow only by merging, which is the loop
-that keeps the population in balance: respawning small with a fast rise
-drained the shaker to a median radius of 3px, and respawning large ran it
-away the other way to a median of 21px and 194 interpenetrating pairs.
-Bubbles that touch merge with gas volume conserved, drawn together on the
-way up by wake attraction — a bubble in another's wake meets less resistance
-and catches it, which is why bubbles form chains in a real liquid and why
-the large ones exist at all. Without wake attraction two bubbles have to
-collide by chance: measured at zero merges in thirty seconds.
+They rise, weave, sometimes merge, and burst. A bubble climbing through
+liquid is flattened perpendicular to its motion, but only by a few percent at
+these speeds — rendering that at the earlier strength turned every one into
+an egg. A skewed seed population supplies a restrained large-bubble tail;
+replacement bubbles are mostly small and may grow through coalescence.
+
+Contact is not instant merging. A carrier film has to drain between two
+bubbles, so most short collisions separate and only sustained contacts
+coalesce, with gas volume conserved. Wake attraction is short-ranged and
+weak. The earlier 3.5-radius wake manufactured hundreds of merge-respawn
+cycles and drew large bubbles into persistent side rafts. Contact now uses
+the full depth coordinate, while large projected silhouettes also receive a
+soft separation so front/back bubbles do not render as stacked rings.
 
 Rise speed follows r-squared only while Stokes drag holds, then plateaus —
 and where that plateau sits used to be set for the wrong reason. It was at
@@ -375,25 +376,13 @@ holds the population up is where new bubbles come from and how long they
 last once they arrive, and both of those exist now, so the plateau sits at
 110px/s and a large bubble crosses in about ten seconds.
 
-**Foam coarsens, and that is where the big bubbles come from.** Film
-drainage was 1.4 seconds plus a tenth of a second per pixel of radius, and
-almost the whole size distribution turns out to hang off that one number.
-Bubbles at the surface are packed against each other, so the surface is
-where coalescence actually happens — and bursting them after a second and a
-half meant nothing ever got the chance to grow. Measured across a hundred
-seconds of stillness, every bubble above 12px died and none replaced it,
-with the largest in the vessel collapsing from 31px to 7: a shaker of
-nothing but fizz. In a gel this viscous, laden with whatever holds the
-glitter in suspension, a film takes tens of seconds to drain rather than
-one. At ten seconds plus 1.4 per pixel the population holds 3-8 bubbles
-above 12px indefinitely, with 11-17 of them resting in the surface layer at
-any moment.
-
-Two bubbles too large to merge push apart instead. A big bubble's film takes
-far longer to drain, so they touch and stay separate — but they are still
-solid objects, and without the separation a bubble at the size cap sat
-permanently inside a neighbour it could never absorb, rendering as rings
-drawn over each other.
+At the free surface a discrete bubble joins the main air pocket after a
+varied 5–10 second drainage window. The variation avoids synchronized pops,
+while the shorter lifetime prevents a flip from storing a bank of large
+bubbles at one edge. Radius-aware wall clearance and wall-induced lift push
+rising bubbles out of the narrow side gap; capillary pressure strengthens
+that inward return at the curved surface shoulder. Pairs too large to merge
+push apart instead of remaining interpenetrated.
 
 **Air gets into a sealed vessel one way: the surface folds over and drags it
 under.** Bubbles used to reappear at a uniformly random point deep in the
@@ -534,6 +523,14 @@ large flake to a dead stop in liquid that was otherwise empty. Measured, the
 big flakes were the *slowest* thing in the shaker, moving 0.518 to 0.460
 over a minute while the fine glitter that is supposed to trail them went
 0.473 to 0.336. Hindrance is what the other particles do to you.
+
+Nor can particles in different depth layers all hinder one another as if the
+pouch were a single sheet. The screen-space concentration is now converted to
+an effective volume fraction before it enters the settling law. Crowding can
+slow a flake to 22% of its free settling speed but never to zero, so a dense
+front compresses and creeps instead of becoming a permanent shelf. A mild
+gradient from the existing gas-volume field also steers glitter around large
+bubbles rather than letting it collect on their upper rims.
 
 **Settle speed is linear in radius, not quadratic.** These are thin plates cut
 from one sheet of film rather than spheres. The narrowed speed spread lets
