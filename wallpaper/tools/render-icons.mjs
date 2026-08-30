@@ -84,12 +84,12 @@ const SUSPENSION = {
  * vessel under a layer of alpha, so a dark one silts up the bottom of the
  * tile and a light one reads as marbling. */
 const COLOURWAYS = [
-  { name: 'blue',     dense: '#4aecc6', ramp: ['#0a5fd4', '#1a86f0', '#2aa8ee', '#3ec4e9'] },
-  { name: 'candy',    dense: '#ffc2e9', ramp: ['#c2186b', '#ea4b96', '#f77fb8', '#ffb3d4'] },
-  { name: 'violet',   dense: '#8ee0ff', ramp: ['#4c1d95', '#6d34c8', '#8f5cf0', '#b18cf7'] },
-  { name: 'mint',     dense: '#c8ff9e', ramp: ['#046b52', '#0f9e74', '#2fc79a', '#6fe0bd'] },
-  { name: 'amber',    dense: '#ffe2a0', ramp: ['#b4530a', '#e2851c', '#f5ad3f', '#ffd070'] },
-  { name: 'graphite', dense: '#a8c6e4', ramp: ['#1c2230', '#333c4f', '#4e5a72', '#6f7d96'] },
+  { name: 'blue', glyph: 'chat',     dense: '#4aecc6', ramp: ['#0a5fd4', '#1a86f0', '#2aa8ee', '#3ec4e9'] },
+  { name: 'candy', glyph: 'heart',    dense: '#ffc2e9', ramp: ['#c2186b', '#ea4b96', '#f77fb8', '#ffb3d4'] },
+  { name: 'violet', glyph: 'music',   dense: '#8ee0ff', ramp: ['#4c1d95', '#6d34c8', '#8f5cf0', '#b18cf7'] },
+  { name: 'mint', glyph: 'gear',     dense: '#c8ff9e', ramp: ['#046b52', '#0f9e74', '#2fc79a', '#6fe0bd'] },
+  { name: 'amber', glyph: 'bolt',    dense: '#ffe2a0', ramp: ['#b4530a', '#e2851c', '#f5ad3f', '#ffd070'] },
+  { name: 'graphite', glyph: 'camera', dense: '#a8c6e4', ramp: ['#1c2230', '#333c4f', '#4e5a72', '#6f7d96'] },
   /* Colourless liquid, which is what most real shakers actually hold: the
    * glitter is the whole show and the fluid is only there to carry it.
    *
@@ -97,11 +97,11 @@ const COLOURWAYS = [
    * headspace above the waterline is painted pale blue — take the tint out
    * of the liquid entirely and the two match, the surface disappears, and
    * the tile stops reading as a vessel with something in it. */
-  { name: 'clear', dense: '#dff6ff', ramp: ['#a8cfe0', '#c8e4f0', '#dff1f9', '#f2fbfe'] },
+  { name: 'clear', glyph: 'heart', dense: '#dff6ff', ramp: ['#a8cfe0', '#c8e4f0', '#dff1f9', '#f2fbfe'] },
 
   /* Glass: the liquid thins to a tint and the PNG keeps its alpha, so a
    * launcher composites the container over the wallpaper behind it. */
-  { name: 'glass', glass: '1', dense: '#bfe9ff', ramp: ['#8fd4f5', '#a9e2f8', '#c2ecfb', '#d8f4fd'] },
+  { name: 'glass', glyph: 'bolt', glass: '1', dense: '#bfe9ff', ramp: ['#8fd4f5', '#a9e2f8', '#c2ecfb', '#d8f4fd'] },
 ].filter((w) => !process.env.ICON_ONLY || w.name === process.env.ICON_ONLY);
 
 mkdirSync(OUT, { recursive: true });
@@ -168,6 +168,8 @@ for (const [i, way] of COLOURWAYS.entries()) {
     ramp: way.ramp.join(','),
     dense: way.dense,
     glass: way.glass ?? '0',
+    // ICON_GLYPH overrides the set; ICON_GLYPH= renders the vessels empty.
+    glyph: process.env.ICON_GLYPH ?? way.glyph ?? '',
     /* Fizz is seeded by vorticity, so the shake does raise some — but it is
      * the fastest thing in the vessel and has cleared by the time the shot is
      * taken. Simulating it would only cost frames. */

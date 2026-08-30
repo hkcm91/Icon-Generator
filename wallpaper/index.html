@@ -110,6 +110,10 @@ const CONFIG = {
    * Everything suspended in the liquid stays fully opaque. Only the fluid
    * itself thins — glitter and bubbles are objects, not tint. */
   glass: Math.max(0, Math.min(1, num("glass", 0))),
+  /* The mark suspended in the liquid: heart, bolt, chat, music, camera, gear.
+   * Empty leaves the vessel holding only glitter, which is the wallpaper. */
+  glyph: params.get("glyph") || "",
+  glyphScale: num("glyphScale", 0.62),
 };
 
 /** #rgb or #rrggbb to channel bytes. */
@@ -2539,6 +2543,162 @@ function drawBezel() {
   ctx.globalAlpha = 1;
 }
 
+/* ------------------------------------------------------------------- glyph
+ *
+ * An app's mark, suspended in the liquid as a solid object.
+ *
+ * This is the thing an icon pack cannot do. A pack ships one drawn tile per
+ * app and covers only the apps somebody drew; a container renders whatever
+ * mark it is handed, so it works for anything installed. The mark is not
+ * pasted on top of the glass — it is placed at the mid-plane of the vessel,
+ * so glitter passes behind it washed by the full thickness of liquid and in
+ * front of it sharp, which is what puts it *inside* rather than *on*.
+ *
+ * Depth comes from extrusion rather than from a drawn bevel: the silhouette
+ * is stamped repeatedly along the axis pointing away from the light, dark to
+ * light, and the front face laid over the stack. A rim is left showing on
+ * the lit side by stamping once more toward the light before the face goes
+ * down. Every offset is derived from LIGHT_ANGLE, so the mark is lit by the
+ * same light as the flakes and the bezel.
+ */
+const GLYPHS = {
+  heart(p, s) {
+    const r = s * 0.5;
+    p.moveTo(0, r * 0.86);
+    p.bezierCurveTo(-r * 1.5, -r * 0.16, -r * 0.62, -r * 1.12, 0, -r * 0.36);
+    p.bezierCurveTo(r * 0.62, -r * 1.12, r * 1.5, -r * 0.16, 0, r * 0.86);
+  },
+  bolt(p, s) {
+    const r = s * 0.5;
+    p.moveTo(r * 0.24, -r);
+    p.lineTo(-r * 0.62, r * 0.12);
+    p.lineTo(-r * 0.06, r * 0.12);
+    p.lineTo(-r * 0.26, r);
+    p.lineTo(r * 0.62, -r * 0.16);
+    p.lineTo(r * 0.04, -r * 0.16);
+    p.closePath();
+  },
+  chat(p, s) {
+    const r = s * 0.5, k = r * 0.34;
+    // Rounded body, then a tail dropped from the lower left.
+    p.moveTo(-r + k, -r * 0.82);
+    p.arcTo(r, -r * 0.82, r, r * 0.34, k);
+    p.arcTo(r, r * 0.34, -r, r * 0.34, k);
+    p.lineTo(-r * 0.30, r * 0.34);
+    p.lineTo(-r * 0.44, r * 0.94);
+    p.lineTo(-r * 0.72, r * 0.34);
+    p.arcTo(-r, r * 0.34, -r, -r * 0.82, k);
+    p.arcTo(-r, -r * 0.82, r, -r * 0.82, k);
+    p.closePath();
+  },
+  music(p, s) {
+    const r = s * 0.5;
+    p.ellipse(-r * 0.42, r * 0.60, r * 0.38, r * 0.30, -0.36, 0, Math.PI * 2);
+    p.closePath();
+    p.moveTo(-r * 0.06, r * 0.62);
+    p.lineTo(-r * 0.06, -r * 0.78);
+    p.lineTo(r * 0.74, -r * 0.98);
+    p.lineTo(r * 0.74, -r * 0.52);
+    p.lineTo(-r * 0.06, -r * 0.32);
+    p.closePath();
+  },
+  camera(p, s) {
+    const r = s * 0.5, k = r * 0.26;
+    p.moveTo(-r * 0.30, -r * 0.76);
+    p.lineTo(-r * 0.18, -r * 0.96);
+    p.lineTo(r * 0.18, -r * 0.96);
+    p.lineTo(r * 0.30, -r * 0.76);
+    p.lineTo(r - k, -r * 0.76);
+    p.arcTo(r, -r * 0.76, r, r * 0.9, k);
+    p.arcTo(r, r * 0.9, -r, r * 0.9, k);
+    p.arcTo(-r, r * 0.9, -r, -r * 0.76, k);
+    p.arcTo(-r, -r * 0.76, r, -r * 0.76, k);
+    p.closePath();
+    // Lens, knocked out by the even-odd rule so the extrusion goes through it.
+    p.moveTo(r * 0.40, r * 0.08);
+    p.arc(0, r * 0.08, r * 0.40, 0, Math.PI * 2);
+  },
+  gear(p, s) {
+    const r = s * 0.5, teeth = 8;
+    for (let i = 0; i < teeth * 2; i++) {
+      const a = (i / (teeth * 2)) * Math.PI * 2;
+      const rad = i % 2 ? r * 0.68 : r;
+      const x = Math.cos(a) * rad, y = Math.sin(a) * rad;
+      if (i === 0) p.moveTo(x, y); else p.lineTo(x, y);
+    }
+    p.closePath();
+    p.moveTo(r * 0.34, 0);
+    p.arc(0, 0, r * 0.34, 0, Math.PI * 2);
+  },
+};
+
+function drawGlyph(name, cx, cy, size) {
+  const build = GLYPHS[name];
+  if (!build) return;
+  const p = new Path2D();
+  build(p, size);
+
+  // Toward the light, and the direction thickness therefore runs.
+  const lx = SHADOW_X, ly = SHADOW_Y;
+  const depth = size * 0.14;
+  const steps = 14;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  /* Cast into the liquid under the object rather than onto a surface: soft,
+   * because it is being read through the thickness of the fluid. */
+  ctx.save();
+  ctx.filter = "blur(" + (size * 0.07).toFixed(2) + "px)";
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = "#06243f";
+  ctx.translate(-lx * size * 0.13, -ly * size * 0.13);
+  ctx.fill(p, "evenodd");
+  ctx.restore();
+
+  // Side wall, back to front, darkest at the far end.
+  for (let i = steps; i >= 1; i--) {
+    const t = i / steps;
+    const v = 0.30 + 0.34 * (1 - t);
+    ctx.save();
+    ctx.translate(-lx * depth * t, -ly * depth * t);
+    ctx.fillStyle = "rgba(" + ((110 * v) | 0) + "," + ((140 * v) | 0) + "," +
+                    ((168 * v) | 0) + ",1)";
+    ctx.fill(p, "evenodd");
+    ctx.restore();
+  }
+
+  // The lit edge: one stamp toward the light, left showing past the face.
+  ctx.save();
+  ctx.translate(lx * size * 0.022, ly * size * 0.022);
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.fill(p, "evenodd");
+  ctx.restore();
+
+  // Front face, graded along the light axis.
+  const g = ctx.createLinearGradient(lx * size * 0.6, ly * size * 0.6,
+                                     -lx * size * 0.6, -ly * size * 0.6);
+  g.addColorStop(0, "#ffffff");
+  g.addColorStop(0.5, "#eef6fb");
+  g.addColorStop(1, "#bcd0e0");
+  ctx.fillStyle = g;
+  ctx.fill(p, "evenodd");
+
+  /* Specular. Clipped to the mark so it reads as a highlight on a surface
+   * rather than a glow floating over one. */
+  ctx.save();
+  ctx.clip(p, "evenodd");
+  const hx = lx * size * 0.30, hy = ly * size * 0.30;
+  const sp = ctx.createRadialGradient(hx, hy, 0, hx, hy, size * 0.46);
+  sp.addColorStop(0, "rgba(255,255,255,0.85)");
+  sp.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = sp;
+  ctx.fillRect(-size, -size, size * 2, size * 2);
+  ctx.restore();
+
+  ctx.restore();
+}
+
 /* The render loop deliberately uses no clip() at all.
  *
  * Canvas rasterises a clip against a 100-plus-point path on every use, and
@@ -2631,6 +2791,15 @@ function render(time) {
   ctx.drawImage(dyeCanvas, 0, 0, W, H);
 
   ctx.drawImage(depthLayer, 0, 0, W, H);
+
+  /* The mark sits here, at the mid-plane: after the far-field flakes and the
+   * liquid tint that washes them, before the caustics that fall across it and
+   * the near-field flakes that drift in front. That ordering is the whole
+   * illusion — glitter passing on both sides of it is what makes it read as
+   * suspended in the liquid rather than printed on the glass. */
+  if (CONFIG.glyph) {
+    drawGlyph(CONFIG.glyph, CX, CY, Math.min(RX, RY) * CONFIG.glyphScale);
+  }
 
   /* Caustics. The free surface is a lens: where it curves concave it
    * converges the light passing through into a bright shaft in the body
