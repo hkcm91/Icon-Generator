@@ -90,7 +90,13 @@ const COLOURWAYS = [
   { name: 'mint',     dense: '#c8ff9e', ramp: ['#046b52', '#0f9e74', '#2fc79a', '#6fe0bd'] },
   { name: 'amber',    dense: '#ffe2a0', ramp: ['#b4530a', '#e2851c', '#f5ad3f', '#ffd070'] },
   { name: 'graphite', dense: '#a8c6e4', ramp: ['#1c2230', '#333c4f', '#4e5a72', '#6f7d96'] },
-];
+  /* Glass. The liquid thins to a tint and the PNG keeps its alpha, so the
+   * launcher composites the container over whatever wallpaper is behind it
+   * and the glitter appears to be floating on the home screen itself. The
+   * ramp still matters — it is what the glass is tinted with — so it goes
+   * pale rather than away. */
+  { name: 'clear', clear: '1', dense: '#bfe9ff', ramp: ['#8fd4f5', '#a9e2f8', '#c2ecfb', '#d8f4fd'] },
+].filter((w) => !process.env.ICON_ONLY || w.name === process.env.ICON_ONLY);
 
 mkdirSync(OUT, { recursive: true });
 
@@ -155,6 +161,7 @@ for (const [i, way] of COLOURWAYS.entries()) {
     corner: String(CORNER),
     ramp: way.ramp.join(','),
     dense: way.dense,
+    clear: way.clear ?? '0',
     /* Fizz is seeded by vorticity, so the shake does raise some — but it is
      * the fastest thing in the vessel and has cleared by the time the shot is
      * taken. Simulating it would only cost frames. */

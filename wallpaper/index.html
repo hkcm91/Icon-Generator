@@ -99,6 +99,17 @@ const CONFIG = {
    * It has to move with the colourway even so. A teal that reads as a second
    * phase suspended in blue reads as sludge at the bottom of pink. */
   dense: params.get("dense") || "#4aecc6",
+  /* Glass rather than paint.
+   *
+   * At 0 the liquid is opaque and the vessel is its own background, which is
+   * what a wallpaper wants — it has nothing behind it. At 1 the body and the
+   * headspace drop to a tint and whatever is behind shows through, which is
+   * what an *icon* wants: a container sitting on the home screen with the
+   * user's own wallpaper visible through the glass.
+   *
+   * Everything suspended in the liquid stays fully opaque. Only the fluid
+   * itself thins — glitter and bubbles are objects, not tint. */
+  clear: Math.max(0, Math.min(1, num("clear", 0))),
 };
 
 /** #rgb or #rrggbb to channel bytes. */
@@ -124,7 +135,9 @@ const FLAKE_COLOURS = [
 ];
 
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
+// Opaque by default: the compositor skips a whole blend when it knows there
+// is nothing behind. A clear vessel needs that blend, so it pays for it.
+const ctx = canvas.getContext("2d", { alpha: CONFIG.clear > 0 });
 const hint = document.getElementById("tap");
 const enableBtn = document.getElementById("enable");
 
@@ -2548,7 +2561,15 @@ function render(time) {
     grad.addColorStop(i / (ramp.length - 1), ramp[i]);
   }
   ctx.fillStyle = grad;
+  /* Opaque, the fill covers the previous frame on its own. Clear, it does
+   * not — so the canvas has to be emptied first or every frame accumulates
+   * on the last and the tint walks to opaque within a second. */
+  if (CONFIG.clear) {
+    ctx.clearRect(0, 0, W, H);
+    ctx.globalAlpha = 1 - CONFIG.clear * 0.86;
+  }
   ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
 
   /* Headspace. Painted as pale tinted air rather than left as page
    * background: white reads as a hole in the wallpaper, which is exactly
@@ -2571,7 +2592,11 @@ function render(time) {
   for (let i = 0; i <= 64; i++) ctx.lineTo(poly[i].x, poly[i].y);
   ctx.lineTo(poly[64].x + up.x * far, poly[64].y + up.y * far);
   ctx.closePath();
+  // Air in a clear vessel is the emptiest thing in it: almost all of this
+  // has to go, or the headspace reads as a solid pale cap.
+  if (CONFIG.clear) ctx.globalAlpha = 1 - CONFIG.clear * 0.9;
   ctx.fill();
+  ctx.globalAlpha = 1;
 
   const menisc = meniscus(poly, 64);   // array of interface segments
 
