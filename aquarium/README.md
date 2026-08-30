@@ -33,6 +33,22 @@ without waiting for a fish to swim past — the same reason `--static` exists in
 Each fish picks a point in the tank, swims to it, and picks another. Three
 things turn that from sliding into swimming:
 
+- **Dorsal up.** The body is modelled with `+y` up while canvas `y` grows
+  downward, so the perpendicular offset has to be negated as well as the axial
+  one. Until it was, the dorsal fin rendered *beneath* the fish, the anal fin
+  above it and the eye low on the head: every fish swam belly-up. Nothing looks
+  more wrong while being harder to name.
+- **A fish cannot strafe.** Velocity used to be composed per axis, with a
+  damping factor on y that the body angle knew nothing about and a crowding
+  shove worth up to half the swimming speed applied at right angles to the
+  body — so a fish pointed one way and travelled another. Motion is now along
+  the body axis and nothing else: with `facing` being the cosine of the yaw,
+  the screen projection of a body-length of travel is exactly
+  `(facing·cos pitch, sin pitch)`, which is the same transform the renderer
+  applies to the body, so nose and velocity agree by construction. Avoidance
+  banks the fish away instead of shoving it. Measured misalignment between body
+  and travel: **0.9° mean, 3.5° at the 95th percentile** — the residual being
+  drift in the current, which is as it should be.
 - **The nose leads.** The body is built nose at `x = 0` running back to the
   tail beyond `x = 1`, and travel is toward +x, so the rendered offset has to
   be negated or the tail leads and the fish swims backwards. It did, from the

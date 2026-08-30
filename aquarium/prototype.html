@@ -419,7 +419,7 @@ function swim(f, dt, depth) {
    * the same pixels, and overlapping bodies read as one confused blob rather
    * than as a school. Sixty-odd pairs a frame costs nothing at this count. */
   let px = 0, py = 0;
-  const crowd = 0.50;                        // ceiling, as a fraction of cruise
+  const crowd = 0.12;                        // token nudge; avoidance steers instead
   for (const o of fish) {
     if (o === f) continue;
     const ox = f.x - o.x, oy = f.y - o.y;
@@ -432,19 +432,27 @@ function swim(f, dt, depth) {
     }
   }
 
-  /* Clamped so that crowding can never out-push swimming. The shove is a
-   * fraction of cruise and accumulates per neighbour, so without this a fish
-   * boxed in by three others is carried faster than it can swim. */
   const pm = Math.hypot(px, py);
   if (pm > 1) { px /= pm; py /= pm; }
 
-  /* The flow used to carry a third of the fish's own speed, which made the
-   * whole school slide the same way at once — flowX depends only on y, so
-   * neighbours got identical pushes. Fish swim; they are not plankton. */
-  f.x += (Math.cos(f.head) * f.speed * f.facing + flowX(f.x, f.y, t) * 0.16
-          + px * f.cruise * crowd) * depth * dt;
-  f.y += (Math.sin(f.head) * f.speed * (0.65 + 0.35 * Math.abs(f.facing))
-          + flowY(f.x, f.y, t) * 0.16 + py * f.cruise * crowd) * depth * dt;
+  /* Avoidance steers; it does not shove. A fish cannot strafe, and pushing one
+   * sideways out of a crowd — at up to half its swimming speed, at right
+   * angles to its own body — is the least animal-like thing the model could
+   * do. It banks away instead, and keeps only a token positional nudge so two
+   * bodies still separate in a jam. */
+  if (pm > 0.02) f.head += Math.max(-0.6, Math.min(0.6, py / Math.max(pm, 1))) * dt * 2.2;
+
+  /* Motion is along the body axis, full stop. Composing x and y independently
+   * — and damping y by a factor the body angle knew nothing about — meant the
+   * fish pointed one way and travelled another, which no swimming animal does.
+   *
+   * With `facing` being the cosine of the yaw, the projection of a body-length
+   * of travel onto the screen is exactly (facing * cos pitch, sin pitch), and
+   * that is the same transform the renderer applies to the body. Nose and
+   * velocity now agree by construction. */
+  const fwdX = Math.cos(f.head) * f.facing, fwdY = Math.sin(f.head);
+  f.x += (f.speed * fwdX + flowX(f.x, f.y, t) * 0.16 + px * f.cruise * crowd) * depth * dt;
+  f.y += (f.speed * fwdY + flowY(f.x, f.y, t) * 0.16 + py * f.cruise * crowd) * depth * dt;
 
   /* No clamp. A fish that has strayed well past the roaming area is simply
    * given a goal back inside it and turns of its own accord, which reads as a
@@ -487,7 +495,9 @@ function spawnFish() {
     const bl = sp.swim[0] + rng() * (sp.swim[1] - sp.swim[0]);
     fish.push({
       sp, pts: buildFish(sp, rng, n), n,
-      x: CONFIG.pose ? W * 0.5 - (sp.len[1] * 0.55) * scale * DPR : rngTop() * W,
+      // The anchor is the nose and the body trails behind it, so pose mode
+      // offsets forward, not back, to centre the animal.
+      x: CONFIG.pose ? W * 0.5 + (sp.len[1] * 0.5) * scale * DPR : rngTop() * W,
       y: CONFIG.pose ? H * (i + 0.5) / CONFIG.fish : H * (0.12 + rngTop() * 0.72),
       z: CONFIG.pose ? 0 : rngTop() * 2 - 1,
       /* Yaw is a signed scale, not a rotation. A real fish turning around
@@ -703,7 +713,11 @@ function frame() {
        * and every fish swam backwards — true since the first version, and
        * invisible until they moved far enough for anyone to tell. */
       let lx = -(p.x - p.y * sn) * f.facing;
-      let ly = d + p.y * cs;
+      /* Canvas y grows downward while the body is modelled with +y up, so the
+       * perpendicular offset is negated too. Without this the dorsal fin
+       * renders beneath the fish, the anal fin above it and the eye low on the
+       * head: every fish was swimming belly-up. */
+      let ly = -(d + p.y * cs);
 
       if (f.burst > 0) {
         lx += p.bx * f.burst * 1.5;
