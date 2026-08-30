@@ -168,9 +168,11 @@ drops — and in a stirred liquid the lowest pressure is the core of a vortex.
 That is why a propeller trails a line of bubbles, and why fizz in a shaken
 vessel shows up in the curls rather than evenly through the volume. So it is
 seeded by vorticity: sample eight points, take the one sitting in the
-strongest swirl, and only while there is agitation to produce it. Measured:
-none at all when the shaker is still, roughly 415–420 during a sustained
-shake, and back to a handful within four seconds of stopping.
+strongest swirl, and only while there is agitation to produce it. The current
+mix deliberately keeps that signal restrained: no fizz at all while still,
+short three-to-five-bubble puffs during a shake, and a hard ceiling of 180.
+Their 0.9–1.9 second lifetime lets the eddy trail disappear promptly instead
+of hanging around as a second field of glitter.
 
 It is emitted in puffs rather than one particle at a time, because
 cavitation follows a vortex line and the gas comes out along it — spawning
@@ -671,13 +673,13 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a discrete squircle on a backdrop |
-| `fill` | `0.965` | Fraction of the sealed chamber holding liquid. The remaining air forms one stable, viscously lagged lens |
+| `fill` | `0.995` | Fraction of the sealed chamber holding liquid. The remaining air forms one stable, damped lens |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `1250` | Medium and hero glitter count |
-| `micro` | `6550` | Batched microglitter count; with `stars`, exactly twice v1.8's total |
-| `bubbles` | `156` | Persistent air-bubble count; shake-generated fizz is separate |
-| `fizz` | `420` | Ceiling on the fine fizz, which is spawned by the flow rather than seeded |
+| `stars` | `1500` | Medium and hero glitter count |
+| `micro` | `14100` | Cached microglitter count; with `stars`, 15,600 visible pieces |
+| `bubbles` | `128` | Persistent air-bubble count; shake-generated fizz is separate |
+| `fizz` | `180` | Ceiling on the short-lived fine fizz spawned by strong vortices |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the

@@ -70,13 +70,14 @@ const CONFIG = {
    * meniscus is trimmed to its true contact points and split into segments,
    * the surface can sit in the corner arc — or press against the ceiling —
    * and still terminate correctly, so the container can be properly full. */
-  fill: num("fill", 0.965),
-  // Exactly twice v1.8's population. Most of the increase stays in the
-  // batched micro layer so the denser fill does not double draw-call cost.
-  stars: num("stars", 1250),
-  micro: num("micro", 6550),
-  bubbles: num("bubbles", 156),
-  fizz: num("fizz", 420),
+  fill: num("fill", 0.995),
+  // The visible glitter population is doubled again, but most of that density
+  // remains in the batched micro layer so it still reads as suspended foil
+  // instead of 15,600 individually drawn sprites.
+  stars: num("stars", 1500),
+  micro: num("micro", 14100),
+  bubbles: num("bubbles", 128),
+  fizz: num("fizz", 180),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
   /* Blue-dominant. The green-teal is not in this ramp: it comes from the
@@ -121,6 +122,10 @@ function resize() {
   canvas.width = Math.floor(W * DPR);
   canvas.height = Math.floor(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  microBackCanvas.width = canvas.width; microBackCanvas.height = canvas.height;
+  microFrontCanvas.width = canvas.width; microFrontCanvas.height = canvas.height;
+  microBackCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  microFrontCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
   if (!bezelSrc) { bezelSrc = document.createElement("canvas"); bezelSrcCtx = bezelSrc.getContext("2d"); }
   bezelSrc.width = canvas.width; bezelSrc.height = canvas.height;
   CX = W * 0.5; CY = H * 0.5;
@@ -136,7 +141,11 @@ function resize() {
   boundsAngle = Infinity;
   displayLevelReady = false;
   displayBasisReady = false;
+  displayAngleVelocity = 0;
+  displayLevelVelocity = 0;
+  displayBasisTime = 0;
   displaySolveAngle = Infinity;
+  microPathsDirty = true;
   buildOutline();
   buildLayers();
   buildFluid();
@@ -1018,16 +1027,16 @@ function spawnFizz() {
     if (w > best) { best = w; bx = x; by = y; }
   }
   if (best < 0 || CONFIG.fizz < 1) return;
-  const spread = Math.min(RX, RY) * 0.07;
-  const n = 5 + ((Math.random() * 5) | 0);
+  const spread = Math.min(RX, RY) * 0.045;
+  const n = 3 + ((Math.random() * 3) | 0);
   for (let i = 0; i < n; i++) {
     const p = fizz.length < CONFIG.fizz ? {} : fizz[(Math.random() * fizz.length) | 0];
     p.x = bx + (Math.random() * 2 - 1) * spread;
     p.y = by + (Math.random() * 2 - 1) * spread;
-    p.r = (1.1 + Math.random() * 2.1) * bubbleUnit;
+    p.r = (1.2 + Math.random() * 2.0) * bubbleUnit;
     p.vx = 0; p.vy = 0; p.zv = 0;
     p.life = 0;
-    p.span = 1.4 + Math.random() * 2.0;
+    p.span = 0.9 + Math.random() * 1.0;
     p.z = Math.random() * 2 - 1;
     if (fizz.length < CONFIG.fizz) fizz.push(p);
   }
@@ -1037,7 +1046,7 @@ function stepFizz(dt) {
   /* How much gas is being driven out of solution. No agitation, no fizz —
    * a shaker sitting still does not sparkle, it just sits there. */
   const agit = Math.min(1.4, Math.hypot(accel.x, accel.y, accel.z) * 1.2);
-  fizzDebt += agit * agit * 220 * dt;
+  fizzDebt += agit * agit * 78 * dt;
   while (fizzDebt >= 1) { spawnFizz(); fizzDebt -= 1; }
 
   for (let i = fizz.length - 1; i >= 0; i--) {
@@ -1316,10 +1325,17 @@ let bubbleUnit = 1, maxBubble = 1;
  */
 function bubbleSeedRadius() {
   const bt = Math.random();
-  return (bt < 0.72 ? 3 + bt * 7 : 12 + (bt - 0.72) * 110) * bubbleUnit;
+  return (bt < 0.70 ? 3 + bt * 6 : 9 + (bt - 0.70) * 68) * bubbleUnit;
 }
 
 function bubbleBirthRadius() {
+  /* Shaking tears larger gas pockets out of the headspace and makes existing
+   * bubbles coalesce. Bias replacement bubbles toward that larger tail only
+   * while the phone is moving; at rest, nucleation stays fine and restrained. */
+  const agit = Math.min(1, Math.hypot(accel.x, accel.y, accel.z) * 1.35);
+  if (Math.random() < 0.08 + agit * 0.50) {
+    return (7 + Math.random() * (7 + agit * 7)) * bubbleUnit;
+  }
   return (3 + Math.random() * 5) * bubbleUnit;
 }
 
@@ -1452,7 +1468,11 @@ function floatSpawn(out, pad, cluster) {
  * gentle bias toward that resting bed, rather than staging every piece under
  * the waterline as though it were buoyant foam. */
 function settleSpawn(out, pad, cluster) {
-  const s = (Math.random() * 2 - 1) * span * 0.72;
+  /* Seed across nearly the entire free-surface span. The former 72% limit
+   * made every fresh launch begin as a conspicuous glitter column through the
+   * middle, with empty strips beside it. The per-column floor/roof bounds
+   * already keep these wider births safely inside the rounded glass. */
+  const s = (Math.random() * 2 - 1) * span * 0.94;
   const f = Math.max(0, Math.min(N - 1,
     Math.round((s + span) / (2 * span) * (N - 1))));
   const floor = surfaceFloor[f] + pad;
@@ -1575,7 +1595,7 @@ function seed() {
     microGlitter.push(p);
   }
   bubbleUnit = unit;
-  maxBubble = Math.min(RX, RY) * 0.13;
+  maxBubble = Math.min(RX, RY) * 0.09;
   for (let i = 0; i < CONFIG.bubbles; i++) {
     /* Skewed: mostly fine fizz, plus the large trapped-air bubbles a sealed
      * shaker genuinely starts with. Leaving coalescence as their only source
@@ -1973,8 +1993,8 @@ function buildSprites() {
   shadeSprite = sprite(64, (g, s) => {
     const r = s / 2;
     const grad = g.createRadialGradient(r, r, 0, r, r, r);
-    grad.addColorStop(0, "rgba(6,42,96,.85)");
-    grad.addColorStop(0.45, "rgba(6,42,96,.42)");
+    grad.addColorStop(0, "rgba(6,42,96,.50)");
+    grad.addColorStop(0.45, "rgba(6,42,96,.22)");
     grad.addColorStop(1, "rgba(6,42,96,0)");
     g.fillStyle = grad;
     g.fillRect(0, 0, s, s);
@@ -2272,18 +2292,28 @@ let inversionGuard = 0;   // suppress stale cross-flow after a face-over-face fl
 let displayUp = { x: 0, y: -1 }, displayTan = { x: 1, y: 0 };
 let displaySpan = 1, displayUpExtent = 1;
 let displayAngle = 0, displayBasisReady = false;
+let displayAngleVelocity = 0, displayBasisTime = 0, displayFrameDt = 1 / 60;
 
 function updateDisplayBasis() {
+  const now = performance.now();
+  displayFrameDt = displayBasisTime
+    ? Math.max(1 / 240, Math.min(0.04, (now - displayBasisTime) / 1000))
+    : 1 / 60;
+  displayBasisTime = now;
   if (!displayBasisReady) {
     displayAngle = basisAngle;
+    displayAngleVelocity = 0;
     displayBasisReady = true;
   } else {
     let d = basisAngle - displayAngle;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
-    // About 0.5 s of additional visual settling at 60 Hz: enough mass to
-    // suppress sensor twitch, but quick enough to follow a deliberate tilt.
-    displayAngle += d * 0.032;
+    /* A second-order response gives the liquid mass rather than mere delay:
+     * it accelerates into a turn, trails the glass, overshoots slightly, then
+     * settles without copying tiny sensor twitches into the waterline. */
+    displayAngleVelocity += (d * 28 - displayAngleVelocity * 9.5) * displayFrameDt;
+    displayAngleVelocity = Math.max(-4.2, Math.min(4.2, displayAngleVelocity));
+    displayAngle += displayAngleVelocity * displayFrameDt;
   }
   displayUp.x = Math.cos(displayAngle);
   displayUp.y = Math.sin(displayAngle);
@@ -2454,17 +2484,23 @@ function lensLiquidPolygon(lift) {
   }
   if (a < 0 || b - a < 3) return pts;
   const run = (b - a) * (2 * displaySpan / steps);
-  const bow = Math.min(Math.min(RX, RY) * 0.058, run * 0.105);
+  const turn = Math.min(1, Math.abs(displayAngleVelocity) / 2.8);
+  const bow = Math.min(Math.min(RX, RY) * (0.058 + turn * 0.008), run * 0.105);
+  const skew = Math.max(-0.24, Math.min(0.24, displayAngleVelocity * 0.085));
   for (let i = a; i <= b; i++) {
     const t = (i - a) / (b - a);
-    const d = bow * Math.pow(Math.sin(Math.PI * t), 2);
+    /* The rear half of a moving surface remains fuller for a moment while the
+     * leading contact line climbs the glass. This tiny skew is the visible
+     * consequence of inertia; it vanishes completely once the turn settles. */
+    const d = bow * Math.pow(Math.sin(Math.PI * t), 2) *
+      (1 + skew * (t * 2 - 1));
     pts[i].x -= displayUp.x * d;
     pts[i].y -= displayUp.y * d;
   }
   return pts;
 }
 
-let displayLevel = 0, displayLevelReady = false;
+let displayLevel = 0, displayLevelReady = false, displayLevelVelocity = 0;
 let displaySolved = 0, displaySolveAngle = Infinity, displaySolveTick = 0;
 
 /* The visible air pocket is one coherent free surface. Selecting the largest
@@ -2494,10 +2530,17 @@ function displayLiquidPolygon() {
   }
   if (!displayLevelReady) {
     displayLevel = displaySolved;
+    displayLevelVelocity = 0;
     displayLevelReady = true;
   } else {
-    // Sensor quantisation must not become a trembling waterline.
-    displayLevel += (displaySolved - displayLevel) * 0.20;
+    // The pocket's translation carries mass too; critically damp its volume
+    // correction so a turn never becomes a quantised, trembling waterline.
+    displayLevelVelocity += ((displaySolved - displayLevel) * 40 -
+      displayLevelVelocity * 12.5) * displayFrameDt;
+    const levelSpeed = displayUpExtent * 1.4;
+    displayLevelVelocity = Math.max(-levelSpeed,
+      Math.min(levelSpeed, displayLevelVelocity));
+    displayLevel += displayLevelVelocity * displayFrameDt;
   }
   return lensLiquidPolygon(displayLevel);
 }
@@ -2618,8 +2661,8 @@ function drawBubble(b) {
   /* Cast first, so the bubble sits on top of its own shadow. Offset away
    * from the source and softened with size, the way a shadow thrown through
    * a thick medium spreads with the distance it travels. */
-  ctx.globalAlpha = alpha * 0.30;
-  const sd = r * 1.35;
+  ctx.globalAlpha = alpha * 0.18;
+  const sd = r * 1.05;
   ctx.drawImage(shadeSprite, -SHADOW_X * sd - r, -SHADOW_Y * sd - r, r * 2, r * 2);
   ctx.globalAlpha = alpha;
 
@@ -2786,9 +2829,13 @@ function drawParticles(s0, s1, b0, b1, time) {
 /* Thousands of tiny flecks become seven colour paths and seven fills. The
  * batched squares are small enough to read as foil flashes, while the hero
  * layer above supplies the recognisable stars, diamonds and hex cuts. */
-let microPathsBack = [], microPathsFront = [];
+let microPathsBack = [], microPathsFront = [], microPathsDirty = true;
+const microBackCanvas = document.createElement("canvas");
+const microFrontCanvas = document.createElement("canvas");
+const microBackCtx = microBackCanvas.getContext("2d");
+const microFrontCtx = microFrontCanvas.getContext("2d");
 
-/* Build both depth passes in one walk. With 6,550 flecks, traversing the
+/* Build both depth passes in one walk. With 14,100 flecks, traversing the
  * entire population once for the rear and again for the front cost more than
  * the actual seven batched fills. The split still renders on opposite sides
  * of the liquid tint; only the bookkeeping is shared. */
@@ -2806,17 +2853,31 @@ function buildMicroPaths() {
     (p.z >= 0 ? microPathsFront : microPathsBack)[p.hueIdx]
       .rect(x - r, y - r, r * 2, r * 2);
   }
+
+  /* Rasterise each depth pass only when its 20 Hz physics advances. Replaying
+   * fourteen thousand retained rectangles through the main compositor every
+   * display frame was still almost as costly as rebuilding them; these two
+   * transparent layers turn that work into two ordinary image blits. */
+  const raster = (g, paths, front) => {
+    g.clearRect(0, 0, W, H);
+    g.globalCompositeOperation = "screen";
+    g.globalAlpha = 1;
+    for (let i = 0; i < paths.length; i++) {
+      g.fillStyle = FLAKE_COLOURS[i][front ? 0 : 1];
+      g.fill(paths[i]);
+    }
+    g.globalCompositeOperation = "source-over";
+  };
+  raster(microBackCtx, microPathsBack, false);
+  raster(microFrontCtx, microPathsFront, true);
+  microPathsDirty = false;
 }
 
 function drawMicro(front) {
-  const paths = front ? microPathsFront : microPathsBack;
   ctx.save();
   ctx.globalCompositeOperation = "screen";
   ctx.globalAlpha = front ? 0.82 : 0.38;
-  for (let i = 0; i < paths.length; i++) {
-    ctx.fillStyle = FLAKE_COLOURS[i][front ? 0 : 1];
-    ctx.fill(paths[i]);
-  }
+  ctx.drawImage(front ? microFrontCanvas : microBackCanvas, 0, 0, W, H);
   ctx.restore();
 }
 
@@ -2919,12 +2980,15 @@ function drawBezel() {
  * which is what a real meniscus does anyway. */
 function render(time) {
   const poly = displayLiquidPolygon();
-  buildMicroPaths();
+  /* Microglitter physics runs at 20 Hz. Rebuilding 14,100 path rectangles at
+   * the display's 60/120 Hz would waste most of the doubled population's
+   * frame budget on identical geometry. */
+  if (microPathsDirty) buildMicroPaths();
 
   /* Liquid body, graded along the gravity axis so the deep blue always sits
    * at the top of the pour no matter how the phone is held. Filled across
    * the whole screen rather than into the liquid polygon: the shaker is
-   * ~95% full, so painting the small headspace afterwards is far less
+   * ~99.5% full, so painting the small headspace afterwards is far less
    * overdraw than covering the screen twice. */
   const grad = ctx.createLinearGradient(
     CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel,
@@ -3383,11 +3447,16 @@ function fixedStep(dt, time) {
      * bed on the downhill wall, but the tangent edges get a soft carrier
      * return toward the body so glitter cannot remain pasted to both sides. */
     const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
-    const sideStart = span * (0.70 - 0.20 * inversionGuard);
+    /* At rest only discourage flakes from entering the last sliver against
+     * the glass. During a face-over-face flip the guard deliberately widens
+     * this return zone, preventing the stale cross-flow from sweeping the
+     * whole population onto the side walls. Keeping the old wide zone active
+     * at rest squeezed every fresh spawn into a central column. */
+    const sideStart = span * (0.92 - 0.37 * inversionGuard);
     const sideDepth = Math.max(0, Math.abs(along) - sideStart);
     if (sideDepth > 0) {
       const wallReturn = Math.sign(along) * sideDepth *
-        (1.85 + 1.8 * inversionGuard);
+        (0.35 + 3.0 * inversionGuard);
       tx -= tan.x * wallReturn;
       ty -= tan.y * wallReturn;
     }
@@ -3442,11 +3511,11 @@ function fixedStep(dt, time) {
       let tx = carriedX * particleFlow + fallX * drift;
       let ty = carriedY * particleFlow + fallY * drift;
       const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
-      const sideStart = span * (0.68 - 0.18 * inversionGuard);
+      const sideStart = span * (0.92 - 0.37 * inversionGuard);
       const sideDepth = Math.max(0, Math.abs(along) - sideStart);
       if (sideDepth > 0) {
         const wallReturn = Math.sign(along) * sideDepth *
-          (1.55 + 1.6 * inversionGuard);
+          (0.35 + 3.0 * inversionGuard);
         tx -= tan.x * wallReturn;
         ty -= tan.y * wallReturn;
       }
@@ -3463,6 +3532,7 @@ function fixedStep(dt, time) {
       if (clampInside(p, pad)) hitWall(p, attemptedX, attemptedY);
       stepDepth(p, mdt, 0.55);
     }
+    microPathsDirty = true;
   }
 
   const invDt = 1 / Math.max(dt, 1e-4);
