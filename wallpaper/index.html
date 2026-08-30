@@ -71,6 +71,14 @@ const CONFIG = {
    * the surface can sit in the corner arc — or press against the ceiling —
    * and still terminate correctly, so the container can be properly full. */
   fill: num("fill", 0.965),
+  /* How large the suspension is against its vessel. One flake diameter is a
+   * fixed fraction of a phone screen, which is right for a wallpaper and
+   * wrong for anything small: a shaker drawn at 48dp with wallpaper-sized
+   * glitter is a field of sub-pixel speckle that reads as blue noise. Raising
+   * this renders a physically smaller vessel — fewer flake-diameters across —
+   * rather than magnifying a picture of a big one, so the flakes get their
+   * own drag, terminal velocity and mass at the new size. */
+  zoom: num("zoom", 1),
   stars: num("stars", 620),
   bubbles: num("bubbles", 110),
   fizz: num("fizz", 300),
@@ -78,8 +86,12 @@ const CONFIG = {
   columns: 96,
   /* Blue-dominant. The green-teal is not in this ramp: it comes from the
    * denser second phase settling out, so the colour is a consequence of
-   * stratification rather than a painted gradient. */
-  ramp: ["#0a5fd4", "#1a86f0", "#2aa8ee", "#3ec4e9"],
+   * stratification rather than a painted gradient.
+   *
+   * Addressable as a comma-separated list so a colourway is a URL rather than
+   * an edit — the icon renderer sweeps this to produce a set. Any number of
+   * stops works; they are spread evenly along the gravity axis. */
+  ramp: (params.get("ramp") || "#0a5fd4,#1a86f0,#2aa8ee,#3ec4e9").split(","),
 };
 
 /* Holographic foil comes in pairs, not flat colours. Each flake shifts from
@@ -1330,7 +1342,7 @@ function floatSpawn(out, pad, cluster) {
 
 function seed() {
   stars.length = 0; bubbles.length = 0; fizz.length = 0; fizzDebt = 0;
-  const unit = Math.min(W, H) / 720;
+  const unit = Math.min(W, H) / 720 * CONFIG.zoom;
   for (let i = 0; i < CONFIG.stars; i++) {
     // Skewed size distribution: mostly fine glitter with a scatter of big
     // hero flakes. A uniform range gave an even speckle that read as noise
@@ -3197,6 +3209,11 @@ function start() {
   targetArea = 0;
   h.fill(0); wv.fill(0);
   seed();
+  /* One frame drawn synchronously, before anything is scheduled. The manifest
+   * icon is a picture of this canvas, and it is asked for on the line after
+   * start() returns — with the first frame left to the animation callback the
+   * icon was a snapshot of a canvas nothing had drawn into yet. */
+  render(simTime);
   last = performance.now();
   if (!raf) raf = requestAnimationFrame(frame);
 }
@@ -3253,25 +3270,32 @@ function installIcon(size) {
   const c = document.createElement("canvas");
   c.width = c.height = size;
   const g = c.getContext("2d");
-  const grad = g.createLinearGradient(0, 0, 0, size);
-  const ramp = CONFIG.ramp;
-  for (let i = 0; i < ramp.length; i++) {
-    grad.addColorStop(i / (ramp.length - 1), ramp[i]);
-  }
-  g.fillStyle = grad;
+  g.imageSmoothingQuality = "high";
+
+  // The centre square of the live canvas, which in full-bleed mode is the
+  // container and in pouch mode is the container plus its backdrop.
+  const side = Math.min(canvas.width, canvas.height);
+  const ox = (canvas.width - side) / 2, oy = (canvas.height - side) / 2;
+  const k = size / side;
+
+  /* Clipped to the vessel's own boundary rather than to a rounded square
+   * drawn to resemble it, so the icon is bounded by whatever shape the
+   * container actually has — including the corner radius the page was asked
+   * for. `outline` is in CSS pixels; the canvas is scaled by DPR on top of
+   * that, and the icon is the centre square of the result. */
   g.beginPath();
-  const r = size * 0.22;
-  g.moveTo(r, 0);
-  g.arcTo(size, 0, size, size, r); g.arcTo(size, size, 0, size, r);
-  g.arcTo(0, size, 0, 0, r);       g.arcTo(0, 0, size, 0, r);
-  g.closePath(); g.fill();
-  const stars = [[0.30, 0.34, 0.13], [0.68, 0.28, 0.09], [0.55, 0.62, 0.16],
-                 [0.24, 0.70, 0.07], [0.80, 0.72, 0.06]];
-  for (const [x, y, k] of stars) {
-    g.fillStyle = "rgba(255,255,255,.92)";
-    flakePath(g, x * size, y * size, k * size, 0);
-    g.fill();
+  for (let i = 0; i < outline.length; i++) {
+    const x = (outline[i].x * DPR - ox) * k, y = (outline[i].y * DPR - oy) * k;
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
   }
+  g.closePath();
+  g.clip();
+
+  /* Drawn from the simulation, not approximated from the palette. The five
+   * hand-placed flakes this used to draw were the one thing on the home
+   * screen that was not the real optics: no refraction, no caustics, no
+   * settled distribution, and a specular that belonged to nothing. */
+  g.drawImage(canvas, ox, oy, side, side, 0, 0, size, size);
   return c.toDataURL("image/png");
 }
 
@@ -3398,6 +3422,11 @@ window.__shaker = {
 
   /** Frame timing to the console, for a host that has no other way to see it. */
   diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; diagJs = 0; },
+
+  /** A picture of the container as it stands right now, clipped to its own
+   *  boundary and returned as a PNG data URL. This is what the icon renderer
+   *  reads out once it has driven the simulation to the state it wants. */
+  icon(size) { return installIcon(size); },
 };
 
 start();
