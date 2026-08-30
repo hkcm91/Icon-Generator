@@ -623,10 +623,13 @@ flips held the glitter's mean lateral spread at 68–73px rather than walking it
 outward on every inversion.
 
 Once a real face-over-face reversal completes, the released resting bed also
-gets a five-second, decaying pull toward the new centreline. It produces the
-central waterfall seen in a physical shaker without forcing every ordinary
-tilt into a permanent centre column. The heavier cut foil now falls a little
-faster than before, while the fine glitter retains a wider, slower tail.
+gets a five-second, decaying cross-gravity damper. Each piece falls from the
+part of the bed it already occupied instead of being swept sideways. Every
+piece keeps a loose memory of its naturally even first-spawn lane, so repeat
+flips can gently restore a full-width curtain without teleporting glitter or
+locking it into rigid columns. Only the extreme glass corners receive an
+extra inward correction. The heavier cut foil falls a little faster than
+before, while the fine glitter retains a wider, slower tail.
 
 The residual also passes through a 0.045g radial dead zone before it reaches
 the solver. That is above the stationary noise floor of the phone sensor but
