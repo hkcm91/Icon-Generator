@@ -76,7 +76,7 @@ const CONFIG = {
   // instead of 19,500 individually drawn sprites.
   stars: num("stars", 1650),
   micro: num("micro", 17850),
-  bubbles: num("bubbles", 128),
+  bubbles: num("bubbles", 112),
   fizz: num("fizz", 180),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
@@ -1356,7 +1356,9 @@ let bubbleUnit = 1, maxBubble = 1;
  */
 function bubbleSeedRadius() {
   const bt = Math.random();
-  return (bt < 0.70 ? 3 + bt * 6 : 9 + (bt - 0.70) * 68) * bubbleUnit;
+  return (bt < 0.82
+    ? 2.8 + bt * 5.6
+    : 7.5 + ((bt - 0.82) / 0.18) * 12.5) * bubbleUnit;
 }
 
 function bubbleBirthRadius() {
@@ -1364,10 +1366,10 @@ function bubbleBirthRadius() {
    * bubbles coalesce. Bias replacement bubbles toward that larger tail only
    * while the phone is moving; at rest, nucleation stays fine and restrained. */
   const agit = Math.min(1, Math.hypot(accel.x, accel.y, accel.z) * 1.35);
-  if (Math.random() < 0.08 + agit * 0.50) {
-    return (7 + Math.random() * (7 + agit * 7)) * bubbleUnit;
+  if (Math.random() < 0.04 + agit * 0.26) {
+    return (6.5 + Math.random() * (4.5 + agit * 5)) * bubbleUnit;
   }
-  return (3 + Math.random() * 5) * bubbleUnit;
+  return (2.8 + Math.random() * 4.4) * bubbleUnit;
 }
 
 /* Buoyant gravity for the bubbles, px/s^2 per g. Deliberately far below the
@@ -1380,7 +1382,7 @@ const BUOY_G = 244;
  * Strouhal's 0.2 because the scene's speeds are slowed relative to its
  * sizes; what carries over is the shape of the law, which is what makes a
  * stalled bubble stop weaving and a fast one weave quickly. */
-const WEAVE_ST = 7.5;
+const WEAVE_ST = 4.5;
 
 /** Buoyancy against drag: both rise speed and response time follow from the
  *  radius, so a bubble's whole behaviour is set by its size alone. */
@@ -1418,7 +1420,7 @@ function setBubbleSize(b, r) {
    * across its own rise. The threshold is real and was simply absent — every
    * bubble down to the finest fizz wove from side to side at a rate drawn at
    * random when it was born, which is why the fizz shimmered. */
-  b.weave = Math.max(0, Math.min(1, (u - 5) / 7));
+  b.weave = Math.max(0, Math.min(0.72, (u - 7) / 10));
 }
 
 /* Where a new bubble comes from.
@@ -1461,7 +1463,8 @@ function respawnBubble(b) {
   // A bubble that has just teleported has not "seen" the flow accelerate;
   // without this the difference against its old sample is a spurious kick.
   sampleFlow(b.x, b.y, flow);
-  b.pfx = flow.x; b.pfy = flow.y;
+  b.sfx = b.pfx = flow.x; b.sfy = b.pfy = flow.y;
+  b.leadAx = 0; b.leadAy = 0;
 }
 
 /* A bursting bubble leaves a dimple where its film was, and that dimple
@@ -1635,7 +1638,7 @@ function seed() {
     microGlitter.push(p);
   }
   bubbleUnit = unit;
-  maxBubble = Math.min(RX, RY) * 0.09;
+  maxBubble = Math.min(RX, RY) * 0.065;
   for (let i = 0; i < CONFIG.bubbles; i++) {
     /* Skewed: mostly fine fizz, plus the large trapped-air bubbles a sealed
      * shaker genuinely starts with. Leaving coalescence as their only source
@@ -1655,7 +1658,9 @@ function seed() {
       rest: 0,           // seconds spent sitting under the surface
       drain: 0.78 + Math.random() * 0.44,
       pop: 1,            // burst expansion, 1 until the film lets go
-      pfx: 0, pfy: 0,    // last flow sample, for the fluid's acceleration
+      pfx: 0, pfy: 0,    // last smoothed flow, for fluid acceleration
+      sfx: 0, sfy: 0,    // low-passed local flow, suppresses pixel jitter
+      leadAx: 0, leadAy: 0,
       // Film thickness varies bubble to bubble, and with it how much of the
       // refracted band interferes away. Three sprites is enough to stop a
       // field of them reading as one stamp repeated.
@@ -1667,6 +1672,8 @@ function seed() {
     // Bubbles climb faster than the glitter and so sit closer to the line,
     // but they are also being made all through the body, hence the tail.
     floatSpawn(b, r, 2.8);
+    sampleFlow(b.x, b.y, flow);
+    b.sfx = b.pfx = flow.x; b.sfy = b.pfy = flow.y;
     bubbles.push(b);
   }
   /* Draw order is depth order, and depth is now a real coordinate rather
@@ -3796,15 +3803,25 @@ function fixedStep(dt, time) {
   for (const b of bubbles) {
     sampleFlow(b.x, b.y, flow);
 
+    /* The grid flow changes in cell-sized steps as a bubble crosses it. A
+     * real bubble samples the liquid over its whole diameter, not at one
+     * mathematical point, so low-pass the local carrier before using it for
+     * both advection and acceleration. This removes resting pixel jitter
+     * while retaining the quicker response during an intentional shake. */
+    const flowTau = 0.18 - motionActivity * 0.10;
+    const flowK = 1 - Math.exp(-dt / flowTau);
+    b.sfx += (flow.x - b.sfx) * flowK;
+    b.sfy += (flow.y - b.sfy) * flowK;
+
     /* Vortex shedding. The zigzag frequency follows speed over diameter, so
      * a bubble that stalls in the flow stops weaving and a fast one weaves
      * quickly — and `weave` is zero below the critical size, so fine fizz
      * rises straight. Before, every bubble wove at a fixed rate whatever it
      * was doing. */
-    const rvx = b.vx - flow.x, rvy = b.vy - flow.y;
+    const rvx = b.vx - b.sfx, rvy = b.vy - b.sfy;
     const rel = Math.hypot(rvx, rvy);
     b.phase += WEAVE_ST * rel / (2 * b.r) * dt;
-    const wob = Math.sin(b.phase) * b.weave * rel * 0.5;
+    const wob = Math.sin(b.phase) * b.weave * rel * 0.18;
 
     /* Added mass, and the one thing about a bubble that relaxing toward the
      * flow can never reproduce.
@@ -3820,21 +3837,26 @@ function fixedStep(dt, time) {
      * sample follows the bubble) rather than by the container's: what the
      * liquid actually did is what the bubble responds to.
      */
-    const ax = (flow.x - b.pfx) * invDt, ay = (flow.y - b.pfy) * invDt;
-    b.pfx = flow.x; b.pfy = flow.y;
+    const rawAx = (b.sfx - b.pfx) * invDt;
+    const rawAy = (b.sfy - b.pfy) * invDt;
+    b.pfx = b.sfx; b.pfy = b.sfy;
+    const leadTau = 0.22 - motionActivity * 0.13;
+    const leadK = 1 - Math.exp(-dt / leadTau);
+    b.leadAx += (rawAx - b.leadAx) * leadK;
+    b.leadAy += (rawAy - b.leadAy) * leadK;
     const lead = 2 * b.tau;               // 3x the fluid, less the 1x it rides
     /* Added-mass lead matters during a turn, but feeding a bubble's own quiet
      * airlift circulation back at full gain forms a self-sustaining wall jet.
      * Close that loop as the shaker settles while preserving the fast lead
      * during real handset motion. */
-    const leadGain = 0.12 + motionActivity * 0.88;
-    const lx = Math.max(-260, Math.min(260, ax * lead)) * leadGain;
-    const ly = Math.max(-260, Math.min(260, ay * lead)) * leadGain;
+    const leadGain = motionActivity;
+    const lx = Math.max(-220, Math.min(220, b.leadAx * lead)) * leadGain;
+    const ly = Math.max(-220, Math.min(220, b.leadAy * lead)) * leadGain;
 
     const climb = b.rise * gMag;
-    const bubbleFlow = 0.12 + motionActivity * 0.88;
-    let tx = flow.x * bubbleFlow - gDir.x * climb - gDir.y * wob + lx;
-    let ty = flow.y * bubbleFlow - gDir.y * climb + gDir.x * wob + ly;
+    const bubbleFlow = 0.035 + motionActivity * 0.965;
+    let tx = b.sfx * bubbleFlow - gDir.x * climb - gDir.y * wob + lx;
+    let ty = b.sfy * bubbleFlow - gDir.y * climb + gDir.x * wob + ly;
 
     /* Capillary centring at the free surface. A large bubble pressed into the
      * rounded shoulder has less room and a stronger pressure gradient on its
@@ -3858,8 +3880,8 @@ function fixedStep(dt, time) {
     }
     if (approach > -b.r * 3.2) {
       const tangentSpeed = b.vx * tan.x + b.vy * tan.y;
-      tx -= tan.x * tangentSpeed * (0.05 + size * 0.12);
-      ty -= tan.y * tangentSpeed * (0.05 + size * 0.12);
+      tx -= tan.x * tangentSpeed * (0.16 + size * 0.28);
+      ty -= tan.y * tangentSpeed * (0.16 + size * 0.28);
     }
     const k = 1 - Math.exp(-dt / b.tau);
     b.vx += (tx - b.vx) * k;

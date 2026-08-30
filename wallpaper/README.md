@@ -417,6 +417,16 @@ still liquid: fizz generates 0.0px/s of lateral motion, large bubbles
 25.8px/s at 2.9Hz — and when the rise speed fell by a factor of three in a
 later run, the frequency fell with it, to 0.9Hz.
 
+The visible population now favours small and medium bubbles. The persistent
+count is 112 rather than 128, only a small tail is born large, and coalescence
+is capped at roughly 6.5% of the short screen axis. On a 390x844 test canvas,
+the number above 14px radius fell from 33 to 6 and the maximum fell from about
+32px to 19px. Local carrier flow and its material acceleration are sampled
+through diameter-scale low-pass filters; deliberate shake still opens the
+coupling quickly, while quiet-grid changes no longer reverse a bubble from
+frame to frame. Resting sideways reversals fell from roughly 850 per second
+to 38 per second after a shake-and-settle cycle.
+
 **Response time is not a free parameter.** A bubble reaches terminal speed
 when buoyancy balances drag, so tau = v_t / 3g, the 3 being the added-mass
 result that a body of negligible density accelerates at three times the
@@ -693,7 +703,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `1650` | Medium and hero glitter count |
 | `micro` | `17850` | Cached microglitter count; with `stars`, 19,500 visible pieces |
-| `bubbles` | `128` | Persistent air-bubble count; shake-generated fizz is separate |
+| `bubbles` | `112` | Persistent air-bubble count; shake-generated fizz is separate |
 | `fizz` | `180` | Ceiling on the short-lived fine fizz spawned by strong vortices |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
