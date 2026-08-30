@@ -70,10 +70,14 @@ const CONFIG = {
    * meniscus is trimmed to its true contact points and split into segments,
    * the surface can sit in the corner arc — or press against the ceiling —
    * and still terminate correctly, so the container can be properly full. */
-  fill: num("fill", 0.965),
-  stars: num("stars", 620),
-  bubbles: num("bubbles", 110),
-  fizz: num("fizz", 300),
+  fill: num("fill", 0.98),
+  // The visible glitter population is doubled again, but most of that density
+  // remains in the batched micro layer so it still reads as suspended foil
+  // instead of 19,500 individually drawn sprites.
+  stars: num("stars", 1650),
+  micro: num("micro", 17850),
+  bubbles: num("bubbles", 112),
+  fizz: num("fizz", 180),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
   /* Blue-dominant. The green-teal is not in this ramp: it comes from the
@@ -105,12 +109,23 @@ let W = 0, H = 0, DPR = 1;
 let CX = 0, CY = 0, RX = 0, RY = 0;   // container centre and half-extents
 
 function resize() {
+  const nextW = Math.floor(window.innerWidth);
+  const nextH = Math.floor(window.innerHeight);
+  // A WebView can execute the document before its host view is attached. In
+  // that state both dimensions are zero; building the gravity basis then
+  // produces a zero span, and the first simulation step permanently poisons
+  // the height field with NaN values. Wait for a real surface instead.
+  if (nextW < 2 || nextH < 2) return false;
   DPR = Math.min(window.devicePixelRatio || 1, 2);
-  W = Math.floor(window.innerWidth);
-  H = Math.floor(window.innerHeight);
+  W = nextW;
+  H = nextH;
   canvas.width = Math.floor(W * DPR);
   canvas.height = Math.floor(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  microBackCanvas.width = canvas.width; microBackCanvas.height = canvas.height;
+  microFrontCanvas.width = canvas.width; microFrontCanvas.height = canvas.height;
+  microBackCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  microFrontCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
   if (!bezelSrc) { bezelSrc = document.createElement("canvas"); bezelSrcCtx = bezelSrc.getContext("2d"); }
   bezelSrc.width = canvas.width; bezelSrc.height = canvas.height;
   CX = W * 0.5; CY = H * 0.5;
@@ -123,9 +138,27 @@ function resize() {
   } else {
     RX = RY = Math.min(W, H) * 0.5 * CONFIG.scale;
   }
+  boundsAngle = Infinity;
+  displayLevelReady = false;
+  displayBasisReady = false;
+  displayAngleVelocity = 0;
+  displayLevelVelocity = 0;
+  displayCompression = 0;
+  displayCompressionVelocity = 0;
+  displayBubbleOffset = 0;
+  displayBubbleVelocity = 0;
+  displayBasisTime = 0;
+  displaySolveAngle = Infinity;
+  displaySolveCompression = Infinity;
+  displaySolveBubbleOffset = Infinity;
+  cascadeSpreadHold = 0;
+  cascadeLanePolarity = 1;
+  flipArmed = false;
+  microPathsDirty = true;
   buildOutline();
   buildLayers();
   buildFluid();
+  return true;
 }
 
 /* ---------------------------------------------------------------- geometry */
@@ -255,6 +288,10 @@ function clampInside(p, pad) {
 const grav = { x: 0, y: 1 };        // low-passed, magnitude 0..1
 const gDir = { x: 0, y: 1 };        // unit direction, holds last good value
 let gMag = 1;
+// While the phone passes through face-up during a flip, its in-plane gravity
+// is almost zero and its direction is dominated by sensor noise. Hold the
+// last trustworthy direction until the projected gravity is meaningful again.
+const GRAVITY_DIRECTION_FLOOR = 0.24;
 
 /* Container acceleration in the phone's frame, in units of g.
  *
@@ -265,45 +302,94 @@ let gMag = 1;
  * random velocity to every particle, which is white noise — it looked like
  * the flakes were vibrating rather than being carried by moving liquid.
  */
-const accel = { x: 0, y: 0 };
-const gravRaw = { x: 0, y: 1 };   // running low-pass of the raw reading
+const accel = { x: 0, y: 0, z: 0 };
+const gravRaw = { x: 0, y: 1, z: 0 }; // running low-pass of the raw reading
+let gravZ = 0;                         // gravity through the screen plane
 let swirlInput = 0;               // twist about the viewing axis
 let haveAccelGravity = false;
+let motionActivity = 0;           // 0 settled, 1 actively moved; slow release
+let cascadeActivity = 0;          // longer tail for post-shake settling speed
+let basisKick = 0;                 // angular motion between gravity bases
+
+/* MEMS accelerometers never become perfectly quiet. On the S24, feeding the
+ * residual straight into the solver made a phone resting on a desk look as
+ * though it were being continuously tapped. Remove the noise floor as a
+ * vector (so diagonals are treated the same as axes), then ease the remaining
+ * motion in and out. Real hand motion is comfortably above this threshold. */
+const ACCEL_DEAD_ZONE = 0.045;     // g
+const ACCEL_LIMIT = 2.6;           // protect the solver from sensor spikes
+
+function filterAcceleration(x, y, z) {
+  const m = Math.hypot(x, y, z);
+  let tx = 0, ty = 0, tz = 0;
+  if (m > ACCEL_DEAD_ZONE) {
+    const kept = Math.min(ACCEL_LIMIT, m - ACCEL_DEAD_ZONE);
+    tx = x / m * kept;
+    ty = y / m * kept;
+    tz = z / m * kept;
+  }
+  // Slower attack gives the liquid mass; the quicker release lets it come
+  // properly to rest instead of preserving a tiny residual indefinitely.
+  const k = Math.hypot(tx, ty, tz) > Math.hypot(accel.x, accel.y, accel.z) ? 0.14 : 0.28;
+  accel.x += (tx - accel.x) * k;
+  accel.y += (ty - accel.y) * k;
+  accel.z += (tz - accel.z) * k;
+  if (Math.hypot(accel.x, accel.y, accel.z) < 0.003) {
+    accel.x = 0; accel.y = 0; accel.z = 0;
+  }
+}
 
 function setGravityVector(x, y) {
+  // Bad sensor samples must not enter the long-lived basis or fluid state.
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
   grav.x = x; grav.y = y;
   gMag = Math.min(1, Math.hypot(x, y));
   // Flat on a table there is no meaningful in-plane direction; keep the last
   // good one rather than snapping to sensor noise.
-  if (gMag > 0.04) { gDir.x = x / gMag; gDir.y = y / gMag; }
+  if (gMag > GRAVITY_DIRECTION_FLOOR) {
+    gDir.x = x / gMag; gDir.y = y / gMag;
+  }
 }
 
 function onMotion(e) {
   const a = e.accelerationIncludingGravity;
-  if (!a || a.x === null) return;
+  if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) return;
   hint.classList.add("hide");
+  const firstGravitySample = !haveAccelGravity;
   haveAccelGravity = true;
 
   // Device +Y runs up the screen while canvas +y runs down, hence the sign
   // flip on x only. Units of g.
   const sx = -a.x / 9.81, sy = a.y / 9.81;
+  const sz = Number.isFinite(a.z) ? a.z / 9.81 : 0;
 
   /* Split the reading into gravity and hand motion with a low-pass filter,
    * rather than gating on "is the magnitude near 1g" as before. The slow
    * component is which way is down; the residual is the shake. This is why
    * the shake no longer needs a jerk heuristic — it is a measured quantity. */
-  const k = 0.06;
-  gravRaw.x += (sx - gravRaw.x) * k;
-  gravRaw.y += (sy - gravRaw.y) * k;
-  setGravityVector(gravRaw.x, gravRaw.y);
-
-  accel.x = sx - gravRaw.x;
-  accel.y = sy - gravRaw.y;
+  if (firstGravitySample) {
+    // Starting from the hard-coded upright vector would interpret the first
+    // second of a still, flat phone as a shake while the baseline caught up.
+    gravRaw.x = sx; gravRaw.y = sy; gravRaw.z = sz;
+    gravZ = Math.max(-1, Math.min(1, sz));
+    setGravityVector(sx, sy);
+    accel.x = 0; accel.y = 0; accel.z = 0;
+  } else {
+    const k = 0.025;
+    gravRaw.x += (sx - gravRaw.x) * k;
+    gravRaw.y += (sy - gravRaw.y) * k;
+    gravRaw.z += (sz - gravRaw.z) * k;
+    gravZ = Math.max(-1, Math.min(1, gravRaw.z));
+    setGravityVector(gravRaw.x, gravRaw.y);
+    filterAcceleration(sx - gravRaw.x, sy - gravRaw.y, sz - gravRaw.z);
+  }
 
   // A twist about the viewing axis stirs the liquid without translating it.
   if (e.rotationRate) {
-    const spin = (e.rotationRate.alpha || 0) / 360;
-    swirlInput = Math.max(-3, Math.min(3, spin));
+    let spin = (e.rotationRate.alpha || 0) / 360;
+    if (Math.abs(spin) < 0.012) spin = 0;
+    spin = Math.max(-3, Math.min(3, spin));
+    swirlInput += (spin - swirlInput) * 0.18;
   }
 }
 
@@ -371,7 +457,7 @@ canvas.addEventListener("pointermove", (e) => {
 });
 const endDrag = () => {
   dragging = false;
-  accel.x = 0; accel.y = 0;
+  accel.x = 0; accel.y = 0; accel.z = 0;
   setGravityVector(0, 1);   // settle back to real down
 };
 canvas.addEventListener("pointerup", endDrag);
@@ -682,7 +768,17 @@ function fluidStep(dt) {
   }
   const gasMean = gasCells ? gasSum / gasCells : 0;
   // Body force from the container's acceleration, in the non-inertial frame.
-  const fx = -accel.x * FLUID_DRIVE, fy = -accel.y * FLUID_DRIVE;
+  // During a face-over-face inversion, most of the apparent transverse
+  // residual is rotating gravity leaking through the low-pass rather than a
+  // real sideways shove. Apply the same temporary cross-axis guard used by
+  // the glitter so that leak cannot seed a lateral vortex.
+  const accelAlong = accel.x * gDir.x + accel.y * gDir.y;
+  const accelCrossKeep = 1 - 0.88 * inversionGuard;
+  const guardedAccelX = gDir.x * accelAlong +
+    (accel.x - gDir.x * accelAlong) * accelCrossKeep;
+  const guardedAccelY = gDir.y * accelAlong +
+    (accel.y - gDir.y * accelAlong) * accelCrossKeep;
+  const fx = -guardedAccelX * FLUID_DRIVE, fy = -guardedAccelY * FLUID_DRIVE;
   const swirl = swirlInput * FLUID_SWIRL;
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
@@ -751,6 +847,22 @@ function fluidStep(dt) {
 
   fluidProject(18);
 
+  /* Do not merely hide an inversion vortex from the particles: dissipate its
+   * cross-gravity momentum while the chamber is face-on. Otherwise the stale
+   * sideways flow waits under the guard, then grabs the glitter again as the
+   * guard releases a few seconds later. The gravity-parallel circulation is
+   * preserved, so the upward/downward exchange that makes a flip satisfying
+   * remains intact. */
+  if (inversionGuard > 0.01) {
+    const crossDecay = Math.exp(-6.0 * inversionGuard * dt);
+    for (let k = 0; k < n; k++) {
+      if (fsolid[k] || fair[k]) continue;
+      const along = fu[k] * gDir.x + fv[k] * gDir.y;
+      fu[k] = gDir.x * along + (fu[k] - gDir.x * along) * crossDecay;
+      fv[k] = gDir.y * along + (fv[k] - gDir.y * along) * crossDecay;
+    }
+  }
+
   // The dense phase rides the velocity field it just helped create.
   advectDye(dt);
 
@@ -812,13 +924,13 @@ function fluidStep(dt) {
 
 let driftU = 0, driftV = 0;   // the persistent part of the bulk motion
 
-const FLUID_DRIVE = 2600;   // px/s^2 per g of container acceleration
-const SLOSH = 2600;        // px/s^2 per g, per unit of surface slope — the same
-                          // scale the container acceleration uses, because it
-                          // is the same gravity doing both
+const FLUID_DRIVE = 1550;   // px/s^2 per g of container acceleration
+const SLOSH = 1900;        // px/s^2 per g, per unit of surface slope
+                          // lower than direct shake drive: a viscous gel's
+                          // body follows tilt without racing down the glass
 const FLUID_SWIRL = 1.6;    // rad/s^2 per unit of twist
-const FLUID_VISC = 0.62;    // 1/s
-const FLUID_WALL_DRAG = 3.2; // 1/s, applied only in cells touching glass
+const FLUID_VISC = 1.18;    // 1/s; a glitter gel, not free-running water
+const FLUID_WALL_DRAG = 4.8; // 1/s, applied only in cells touching glass
 /* Particle reaction fed back to the fluid. Roughly three times what it was:
  * at the old strength the convection a settling suspension drives could not
  * go unstable, so the flow after a flip decayed from 357px/s to 29 and
@@ -832,7 +944,7 @@ const COUPLE = 0.16;
 const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
 /* Far larger than DYE_BUOY, and it should be: the dense phase is a few per
  * cent heavier than the liquid, a bubble is a hundred per cent lighter. */
-const GAS_LIFT = 900;       // px/s^2 per g at a cell entirely full of gas
+const GAS_LIFT = 380;       // px/s^2 per g at a cell entirely full of gas
 /* Down-gradient drift, cut from 1100. At that strength nothing could ever
  * settle: measured from a well-mixed start, the glitter's centre of mass sat
  * at 0.49 of the container and was still at 0.53 a hundred seconds later,
@@ -864,8 +976,10 @@ const DISPERSE = 660;
  * equilibrium the dispersion has to match the rise, and a cap in the same
  * units is a cap on the balance itself. */
 const DISPERSE_CAP = 180;
-const PHI_MAX = 1.0;         // solid fraction at which a bed stops settling
-const WAKE = 150;           // px/s^2 of wake attraction between near bubbles
+const PHI_MAX = 0.9;          // projected solid fraction where crowding is strong
+const CONC_DEPTH_SCALE = 0.06; // 2-D projection represents a deep 3-D chamber
+const HIND_FLOOR = 0.22;      // crowded glitter creeps; it never welds solid
+const WAKE = 18;              // short wake attraction between genuinely near bubbles
 
 /* Two-way coupling: a particle dragged by the liquid drags back.
  *
@@ -924,16 +1038,16 @@ function spawnFizz() {
     if (w > best) { best = w; bx = x; by = y; }
   }
   if (best < 0 || CONFIG.fizz < 1) return;
-  const spread = Math.min(RX, RY) * 0.07;
-  const n = 3 + ((Math.random() * 4) | 0);
+  const spread = Math.min(RX, RY) * 0.045;
+  const n = 3 + ((Math.random() * 3) | 0);
   for (let i = 0; i < n; i++) {
     const p = fizz.length < CONFIG.fizz ? {} : fizz[(Math.random() * fizz.length) | 0];
     p.x = bx + (Math.random() * 2 - 1) * spread;
     p.y = by + (Math.random() * 2 - 1) * spread;
-    p.r = (1.1 + Math.random() * 2.1) * bubbleUnit;
-    p.vx = 0; p.vy = 0;
+    p.r = (1.2 + Math.random() * 2.0) * bubbleUnit;
+    p.vx = 0; p.vy = 0; p.zv = 0;
     p.life = 0;
-    p.span = 1.0 + Math.random() * 2.0;
+    p.span = 0.9 + Math.random() * 1.0;
     p.z = Math.random() * 2 - 1;
     if (fizz.length < CONFIG.fizz) fizz.push(p);
   }
@@ -942,8 +1056,8 @@ function spawnFizz() {
 function stepFizz(dt) {
   /* How much gas is being driven out of solution. No agitation, no fizz —
    * a shaker sitting still does not sparkle, it just sits there. */
-  const agit = Math.min(1.4, Math.hypot(accel.x, accel.y) * 1.2);
-  fizzDebt += agit * agit * 150 * dt;
+  const agit = Math.min(1.4, Math.hypot(accel.x, accel.y, accel.z) * 1.2);
+  fizzDebt += agit * agit * 78 * dt;
   while (fizzDebt >= 1) { spawnFizz(); fizzDebt -= 1; }
 
   for (let i = fizz.length - 1; i >= 0; i--) {
@@ -955,6 +1069,8 @@ function stepFizz(dt) {
     const rise = 26 * gMag;
     p.vx += ((flow.x - gDir.x * rise) - p.vx) * Math.min(1, dt * 22);
     p.vy += ((flow.y - gDir.y * rise) - p.vy) * Math.min(1, dt * 22);
+    p.zv += (-accel.z * 1.4 - p.zv * 3.2) * dt;
+    p.z = Math.max(-1, Math.min(1, p.z + p.zv * dt));
     p.x += p.vx * dt; p.y += p.vy * dt;
     if (depthOf(p.x, p.y) > -p.r) { p.life = p.span; }
     clampInside(p, 2);
@@ -970,7 +1086,8 @@ function drawFizz() {
     if (a < 0.03) continue;
     const r = p.r * (1 + p.z * 0.3) * (0.6 + 0.4 * Math.min(1, t * 5));
     ctx.globalAlpha = a * (0.45 + 0.55 * (p.z + 1) * 0.5);
-    ctx.drawImage(fizzSprite, p.x + parallaxX(p.z) - r, p.y + parallaxY(p.z) - r, r * 2, r * 2);
+    ctx.drawImage(fizzSprite, projectedX(p.x, p.z) - r,
+      projectedY(p.y, p.z) - r, r * 2, r * 2);
   }
   ctx.globalAlpha = 1;
 }
@@ -1020,7 +1137,26 @@ const disperse = { x: 0, y: 0 };
 function sampleConc(x, y) {
   const i = Math.max(1, Math.min(GW - 2, (x / cell) | 0));
   const j = Math.max(1, Math.min(GH - 2, (y / cell) | 0));
-  return conc[j * GW + i] / (cell * cell);
+  /* `conc` is a screen-space projection of every depth layer. Treating that
+   * projected area as a literal packing fraction made flakes at the front,
+   * middle and back hinder one another as though they occupied the same thin
+   * sheet. Account for the chamber depth before applying hindered settling. */
+  return conc[j * GW + i] / (cell * cell) * CONC_DEPTH_SCALE;
+}
+
+/* A flake cannot settle through the gas volume of a large bubble. Use the
+ * existing void field as a cheap, smooth exclusion field so glitter parts
+ * around a bubble instead of collecting on its upper rim. This is deliberately
+ * mild: different Z layers may pass visually, and the liquid flow still owns
+ * nearly all particle motion. */
+const gasAvoid = { x: 0, y: 0 };
+function sampleGasAvoid(x, y, out) {
+  const i = Math.max(1, Math.min(GW - 2, (x / cell) | 0));
+  const j = Math.max(1, Math.min(GH - 2, (y / cell) | 0));
+  const k = j * GW + i;
+  const scale = 0.35 + gas[k];
+  out.x = -(gas[k + 1] - gas[k - 1]) * 0.5 / scale;
+  out.y = -(gas[k + GW] - gas[k - GW]) * 0.5 / scale;
 }
 
 function sampleDisperse(x, y, out) {
@@ -1081,6 +1217,8 @@ const N = CONFIG.columns;
 const h = new Float32Array(N);
 const wv = new Float32Array(N);
 const surfDrive = new Float32Array(N);   // flow velocity normal to the surface
+const surfaceRoof = new Float32Array(N); // local glass ceiling in gravity space
+const surfaceFloor = new Float32Array(N);// local glass floor in gravity space
 let level = 0;              // signed distance of the surface from centre
 let targetArea = 0;
 
@@ -1106,21 +1244,20 @@ function stepWaves(dt) {
   const sub = Math.min(12, Math.max(1,
     Math.ceil(Math.max(c * dt / 0.4, Math.sqrt(sigma * 16) * dt / 0.5))));
   const sdt = dt / sub;
-  const damp = Math.exp(-0.9 * sdt);
+  const damp = Math.exp(-1.65 * sdt);
   const c2 = c * c;
-  /* Asymmetric bounds, because the container is not symmetric about the
-   * surface. Upward the crest may reach the ceiling and press against it —
-   * in a nearly full vessel that is exactly what happens, and the air pocket
-   * simply migrates elsewhere; the render trims the surface to the glass, so
-   * the waterline correctly breaks where liquid meets the top wall. Downward
-   * there is the whole body of liquid to draw from. */
-  const ceiling = Math.max(4, upExtent - level) + upExtent * 0.05;
-  const trough = upExtent * 0.34;
+  /* A nearly full thin chamber has a confined air lens, not a free diagonal
+   * waterline extending beyond the walls. Each column is bounded by the
+   * actual rounded glass at that tangent coordinate. This lets the liquid
+   * press against the ceiling everywhere except the small migrating pocket,
+   * without wave samples hiding outside a corner and reappearing as spikes. */
+  const wallGap = Math.max(1.5, Math.min(RX, RY) * 0.004);
 
   // Sloshing: acceleration along the surface tilts it, exactly as an
   // effective gravity would. This replaces the random splashes, which
   // injected noise unrelated to how the phone actually moved.
-  const aTan = (accel.x * tan.x + accel.y * tan.y) * 900;
+  const aTan = (accel.x * tan.x + accel.y * tan.y) *
+               (1 - 0.88 * inversionGuard) * 560;
 
   /* Kinematic free-surface coupling: the surface rides whatever the fluid
    * underneath is doing.
@@ -1142,20 +1279,42 @@ function stepWaves(dt) {
 
   for (let s = 0; s < sub; s++) {
     for (let i = 0; i < N; i++) {
-      const l = h[i > 0 ? i - 1 : 0];
-      const r = h[i < N - 1 ? i + 1 : N - 1];
-      const l2 = h[i > 1 ? i - 2 : 0];
-      const r2 = h[i < N - 2 ? i + 2 : N - 1];
+      const ceiling = surfaceRoof[i] - level - wallGap;
+      /* Once a column is pressed against the glass it is no longer a free
+       * surface, so the wave equation must not pull it back into the liquid.
+       * Rotation changes the local roof and naturally releases the columns
+       * that cease to be uphill. Treating ceiling contact as an ordinary wave
+       * sample was quietly draining 97.5% fill to ~84% on a side tilt. */
+      if (h[i] >= ceiling - 0.75) {
+        h[i] = ceiling;
+        wv[i] = 0;
+        continue;
+      }
+      /* Wall-contact columns are a boundary of the free interface, not a
+       * high neighbouring wave sample. Use a zero-slope (Neumann) boundary
+       * there; otherwise the large roof contour drags the small exposed lens
+       * down into a giant triangular air wedge on every side tilt. */
+      const freeNeighbour = (j) => {
+        j = Math.max(0, Math.min(N - 1, j));
+        const cap = surfaceRoof[j] - level - wallGap;
+        return h[j] >= cap - 0.75 ? h[i] : h[j];
+      };
+      const l = freeNeighbour(i - 1);
+      const r = freeNeighbour(i + 1);
+      const l2 = freeNeighbour(i - 2);
+      const r2 = freeNeighbour(i + 2);
       wv[i] += (l + r - 2 * h[i]) * c2 * sdt;                       // gravity
       wv[i] -= (l2 - 4 * l + 6 * h[i] - 4 * r + r2) * sigma * sdt;  // capillary
       wv[i] -= aTan * (i / (N - 1) - 0.5) * 2 * sdt;
-      wv[i] += (surfDrive[i] - wv[i]) * 6 * sdt;
+      wv[i] += (surfDrive[i] - wv[i]) * 4.2 * sdt;
       wv[i] *= damp;
     }
     for (let i = 0; i < N; i++) {
       h[i] += wv[i] * sdt;
-      if (h[i] > ceiling) { h[i] = ceiling; wv[i] *= 0.4; }
-      else if (h[i] < -trough) { h[i] = -trough; wv[i] *= 0.4; }
+      const ceiling = surfaceRoof[i] - level - wallGap;
+      const floor = surfaceFloor[i] - level + wallGap;
+      if (h[i] > ceiling) { h[i] = ceiling; wv[i] *= 0.24; }
+      else if (h[i] < floor) { h[i] = floor; wv[i] *= 0.24; }
     }
   }
 
@@ -1181,7 +1340,7 @@ function stepWaves(dt) {
 
 /* --------------------------------------------------------------- particles */
 
-const stars = [], bubbles = [];
+const stars = [], microGlitter = [], bubbles = [];
 let bubbleUnit = 1, maxBubble = 1;
 
 /* Sizes. The shaker is seeded with a spread including the large trapped-air
@@ -1197,11 +1356,20 @@ let bubbleUnit = 1, maxBubble = 1;
  */
 function bubbleSeedRadius() {
   const bt = Math.random();
-  return (bt < 0.72 ? 3 + bt * 7 : 12 + (bt - 0.72) * 110) * bubbleUnit;
+  return (bt < 0.82
+    ? 2.8 + bt * 5.6
+    : 7.5 + ((bt - 0.82) / 0.18) * 12.5) * bubbleUnit;
 }
 
 function bubbleBirthRadius() {
-  return (3 + Math.random() * 5) * bubbleUnit;
+  /* Shaking tears larger gas pockets out of the headspace and makes existing
+   * bubbles coalesce. Bias replacement bubbles toward that larger tail only
+   * while the phone is moving; at rest, nucleation stays fine and restrained. */
+  const agit = Math.min(1, Math.hypot(accel.x, accel.y, accel.z) * 1.35);
+  if (Math.random() < 0.04 + agit * 0.26) {
+    return (6.5 + Math.random() * (4.5 + agit * 5)) * bubbleUnit;
+  }
+  return (2.8 + Math.random() * 4.4) * bubbleUnit;
 }
 
 /* Buoyant gravity for the bubbles, px/s^2 per g. Deliberately far below the
@@ -1214,7 +1382,7 @@ const BUOY_G = 244;
  * Strouhal's 0.2 because the scene's speeds are slowed relative to its
  * sizes; what carries over is the shape of the law, which is what makes a
  * stalled bubble stop weaving and a fast one weave quickly. */
-const WEAVE_ST = 7.5;
+const WEAVE_ST = 4.5;
 
 /** Buoyancy against drag: both rise speed and response time follow from the
  *  radius, so a bubble's whole behaviour is set by its size alone. */
@@ -1252,7 +1420,7 @@ function setBubbleSize(b, r) {
    * across its own rise. The threshold is real and was simply absent — every
    * bubble down to the finest fizz wove from side to side at a rate drawn at
    * random when it was born, which is why the fizz shimmered. */
-  b.weave = Math.max(0, Math.min(1, (u - 5) / 7));
+  b.weave = Math.max(0, Math.min(0.72, (u - 7) / 10));
 }
 
 /* Where a new bubble comes from.
@@ -1268,7 +1436,8 @@ function setBubbleSize(b, r) {
  */
 function respawnBubble(b) {
   b.vx = 0; b.vy = 0; b.squash = 0; b.pop = 1;
-  const agit = Math.min(1, Math.hypot(accel.x, accel.y) * 1.4);
+  b.drain = 0.78 + Math.random() * 0.44;
+  const agit = Math.min(1, Math.hypot(accel.x, accel.y, accel.z) * 1.4);
   if (Math.random() < 0.2 + 0.75 * agit) {
     const s = (Math.random() * 2 - 1) * span * 0.95;
     const lift = level + surfaceAt(s) - b.r * (1.5 + Math.random() * 4);
@@ -1290,11 +1459,12 @@ function respawnBubble(b) {
       b.x -= up.x * drop; b.y -= up.y * drop;
     }
   }
-  clampInside(b, Math.min(RX, RY) * 0.03);
+  clampInside(b, Math.max(Math.min(RX, RY) * 0.03, b.r * 1.08));
   // A bubble that has just teleported has not "seen" the flow accelerate;
   // without this the difference against its old sample is a spurious kick.
   sampleFlow(b.x, b.y, flow);
-  b.pfx = flow.x; b.pfy = flow.y;
+  b.sfx = b.pfx = flow.x; b.sfy = b.pfy = flow.y;
+  b.leadAx = 0; b.leadAy = 0;
 }
 
 /* A bursting bubble leaves a dimple where its film was, and that dimple
@@ -1325,18 +1495,41 @@ function floatSpawn(out, pad, cluster) {
   const lift = level + surfaceAt(s) - deep;
   out.x = CX + tan.x * s + up.x * lift;
   out.y = CY + tan.y * s + up.y * lift;
-  clampInside(out, Math.min(RX, RY) * 0.03);
+  clampInside(out, Math.max(Math.min(RX, RY) * 0.03, pad * 1.08));
+}
+
+/* Glitter in a water/glycerol shaker is mostly denser than the carrier and
+ * settles toward the downhill glass. Start it throughout the body with a
+ * gentle bias toward that resting bed, rather than staging every piece under
+ * the waterline as though it were buoyant foam. */
+function settleSpawn(out, pad, cluster) {
+  /* Seed across nearly the entire free-surface span. The former 72% limit
+   * made every fresh launch begin as a conspicuous glitter column through the
+   * middle, with empty strips beside it. The per-column floor/roof bounds
+   * already keep these wider births safely inside the rounded glass. */
+  const s = (Math.random() * 2 - 1) * span * 0.94;
+  const f = Math.max(0, Math.min(N - 1,
+    Math.round((s + span) / (2 * span) * (N - 1))));
+  const floor = surfaceFloor[f] + pad;
+  const roof = Math.min(surfaceRoof[f] - pad, level + surfaceAt(s) - pad);
+  const lift = floor + Math.pow(Math.random(), cluster) * Math.max(1, roof - floor);
+  out.x = CX + tan.x * s + up.x * lift;
+  out.y = CY + tan.y * s + up.y * lift;
+  clampInside(out, Math.min(RX, RY) * 0.025);
 }
 
 function seed() {
-  stars.length = 0; bubbles.length = 0; fizz.length = 0; fizzDebt = 0;
+  stars.length = 0; microGlitter.length = 0;
+  bubbles.length = 0; fizz.length = 0; fizzDebt = 0;
   const unit = Math.min(W, H) / 720;
   for (let i = 0; i < CONFIG.stars; i++) {
-    // Skewed size distribution: mostly fine glitter with a scatter of big
-    // hero flakes. A uniform range gave an even speckle that read as noise
-    // rather than as confetti suspended at different depths.
+    // Medium foil plus a restrained scatter of hero cuts. Fine glitter has a
+    // separate batched system below, so these pieces can remain legible.
     const t = Math.random();
-    const r = (t < 0.72 ? 1.9 + t * 2.8 : 5.2 + (t - 0.72) * 30) * unit;
+    const r = (t < 0.75
+      ? 1.7 + Math.pow(t / 0.75, 1.6) * 3.2
+      : 5.1 + Math.pow((t - 0.75) / 0.25, 1.35) * 6.9) * unit;
+    const z = Math.random() * 2 - 1;
     stars.push({
       x: 0, y: 0,
       vx: 0, vy: 0,
@@ -1344,7 +1537,10 @@ function seed() {
       spin: Math.random() * Math.PI * 2,
       spinRate: (Math.random() - 0.5) * 0.06,
       hueIdx: (Math.random() * FLAKE_COLOURS.length) | 0,
-      shape: Math.random() > 0.42 ? 0 : 1 + ((Math.random() * 3) | 0),
+      // Oversized five-point stars read as icons rather than pieces of foil.
+      // Keep stars in the fine/medium mix and make hero flakes clean cuts.
+      shape: Math.random() < (t > 0.75 ? 0.30 : 0.46)
+        ? 0 : 1 + ((Math.random() * 3) | 0),
       hue: FLAKE_COLOURS[(Math.random() * FLAKE_COLOURS.length) | 0][1],
       // Holographic flakes catch the light intermittently as they turn.
       flashPhase: Math.random() * Math.PI * 2,
@@ -1354,7 +1550,7 @@ function seed() {
        * big flakes lag, overshoot on a turn and sink noticeably faster. That
        * spread is what makes the settle look like a real suspension instead
        * of every flake moving as one sheet. */
-      tau: 0.02 + (r / unit) * (r / unit) * 0.0016,
+      tau: 0.038 + (r / unit) * (r / unit) * 0.0021,
       /* Settling speed. Turning a real glitter shaker over empties it in
        * tens of seconds, not minutes, and this was three times slower than
        * that — the glitter had nowhere it was visibly going. It was set low
@@ -1383,12 +1579,23 @@ function seed() {
        * same convection on the same terms, and what settles out is a
        * gradient instead: concentrated under the waterline, thinning down
        * through the body, holding that shape indefinitely. */
-      terminal: (22 + (r / unit) * 4.84) * unit,
+      terminal: (36 + (r / unit) * 10.2) * unit,
+      /* Nominally identical film still falls at visibly different rates.
+       * Larger cuts hold their edge-on attitude longer and slip faster,
+       * while fine cuts spend more of the fall broadside. Keep that spread
+       * correlated with size instead of applying one gravity multiplier to
+       * the entire glitter cloud. */
+      settleScale: 0.78 + Math.pow(Math.min(1, r / (12 * unit)), 0.72) * 0.36 +
+                   Math.random() * 0.14,
+      // Most commercial PET glitter sinks, a few pieces are near-neutral,
+      // and a tiny fraction can be carried upward by the viscous flow.
+      density: Math.random() < 0.94 ? 1 : (Math.random() < 0.75 ? 0.16 : -0.34),
       // Flakes rock from side to side as they sink rather than dropping
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
       flutterPhase: Math.random() * Math.PI * 2,
-      flutterAmp: (6 + Math.random() * 14) * unit,
+      flutterClock: Math.random() * Math.PI * 2,
+      flutterAmp: (10 + Math.random() * 20) * unit,
       // Mass proxy for the reaction it exerts back on the liquid.
       mass: (r / unit) * (r / unit),
       /* Position through the thickness of the pouch, -1 at the back wall
@@ -1396,13 +1603,42 @@ function seed() {
        * pouch is not, and this is what buys back the depth: flakes behind
        * the liquid are drawn under the tint and read as immersed, flakes in
        * front are drawn over it and read as pressed against the glass. */
-      z: Math.random() * 2 - 1,
-      zDrift: (Math.random() - 0.5) * 0.09,
+      z, zHome: z, zv: 0,
     });
-    floatSpawn(stars[stars.length - 1], r, 2.2);
+    const flake = stars[stars.length - 1];
+    settleSpawn(flake, r, 0.95);
+    /* Preserve the naturally broad first-spawn curtain as this flake's
+     * loose horizontal home. Repeat flips may steer it gently back toward
+     * this lane, but never teleport it or lock it to a column. */
+    flake.releaseLane = Math.max(-0.94, Math.min(0.94,
+      ((flake.x - CX) * tan.x + (flake.y - CY) * tan.y) / span));
+  }
+
+  /* Microglitter supplies the dense sparkle a physical shaker gets from
+   * thousands of tiny foil flecks. It is deliberately lightweight: one-pixel
+   * marks, batched by colour at render time, with simple flow-following
+   * physics. This adds richness without multiplying the expensive hero-flake
+   * gradients and geometry. */
+  for (let i = 0; i < CONFIG.micro; i++) {
+    const z = Math.random() * 2 - 1;
+    const p = {
+      x: 0, y: 0, vx: 0, vy: 0,
+      r: (0.55 + Math.random() * 1.25) * unit,
+      hueIdx: (Math.random() * FLAKE_COLOURS.length) | 0,
+      phase: Math.random() * Math.PI * 2,
+      terminal: (8 + Math.random() * 16) * unit,
+      // Dust-size flecks remain suspended behind the heavier cut foil.
+      settleScale: 0.52 + Math.random() * 0.30,
+      density: Math.random() < 0.96 ? 1 : (Math.random() < 0.84 ? 0.10 : -0.26),
+      z, zHome: z, zv: 0,
+    };
+    settleSpawn(p, Math.max(1, p.r), 1.0);
+    p.releaseLane = Math.max(-0.94, Math.min(0.94,
+      ((p.x - CX) * tan.x + (p.y - CY) * tan.y) / span));
+    microGlitter.push(p);
   }
   bubbleUnit = unit;
-  maxBubble = Math.min(RX, RY) * 0.13;
+  maxBubble = Math.min(RX, RY) * 0.065;
   for (let i = 0; i < CONFIG.bubbles; i++) {
     /* Skewed: mostly fine fizz, plus the large trapped-air bubbles a sealed
      * shaker genuinely starts with. Leaving coalescence as their only source
@@ -1410,6 +1646,7 @@ function seed() {
      * because merging only just keeps pace with popping. Coalescence now
      * adds to this population rather than being the whole of it. */
     const r = bubbleSeedRadius();
+    const z = Math.random() * 2 - 1;
     const b = {
       x: 0, y: 0,
       vx: 0, vy: 0,
@@ -1419,20 +1656,24 @@ function seed() {
       alpha: Math.random(),
       fading: false,
       rest: 0,           // seconds spent sitting under the surface
+      drain: 0.78 + Math.random() * 0.44,
       pop: 1,            // burst expansion, 1 until the film lets go
-      pfx: 0, pfy: 0,    // last flow sample, for the fluid's acceleration
+      pfx: 0, pfy: 0,    // last smoothed flow, for fluid acceleration
+      sfx: 0, sfy: 0,    // low-passed local flow, suppresses pixel jitter
+      leadAx: 0, leadAy: 0,
       // Film thickness varies bubble to bubble, and with it how much of the
       // refracted band interferes away. Three sprites is enough to stop a
       // field of them reading as one stamp repeated.
       variant: (Math.random() * BUB_VARIANTS) | 0,
       squash: 0,         // deformation, driven by how fast it is climbing
-      z: Math.random() * 2 - 1,
-      zDrift: (Math.random() - 0.5) * 0.07,
+      z, zHome: z, zv: 0,
     };
     setBubbleSize(b, r);
     // Bubbles climb faster than the glitter and so sit closer to the line,
     // but they are also being made all through the body, hence the tail.
     floatSpawn(b, r, 2.8);
+    sampleFlow(b.x, b.y, flow);
+    b.sfx = b.pfx = flow.x; b.sfy = b.pfy = flow.y;
     bubbles.push(b);
   }
   /* Draw order is depth order, and depth is now a real coordinate rather
@@ -1674,16 +1915,18 @@ function flakePath(g, cx, cy, R, shape) {
       i === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
     }
   } else {
-    /* Crushed foil, not a pebble. The old shard was a six-sided blob with
-     * gentle radius variation and read as a rounded lozenge; real glitter
-     * shards are angular offcuts with sharp corners and long facets. */
-    const sides = 5 + (shape % 3);
-    const seed = shape * 7.13;
-    for (let i = 0; i < sides; i++) {
-      const a = (i / sides) * Math.PI * 2 + Math.sin(seed + i) * 0.35;
-      const t = Math.sin(seed * 2.1 + i * 2.7);
-      const r = R * (0.42 + 0.58 * (t * 0.5 + 0.5));
-      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+    /* Authored convex foil cuts. The old pseudo-random radius formula could
+     * put adjacent corners at radically different depths; enlarged hero
+     * flakes then looked folded, pinched or nearly self-intersecting. These
+     * silhouettes stay irregular and angular without broken geometry. */
+    const cuts = [
+      null,
+      [[-0.72,-0.58],[0.28,-0.82],[0.82,-0.28],[0.70,0.52],[-0.18,0.86],[-0.84,0.20]],
+      [[-0.34,-0.88],[0.54,-0.70],[0.86,0.02],[0.38,0.84],[-0.56,0.68],[-0.82,-0.16]],
+      [[-0.70,-0.46],[-0.08,-0.88],[0.66,-0.62],[0.86,0.18],[0.34,0.86],[-0.46,0.72],[-0.88,0.04]],
+    ][shape];
+    for (let i = 0; i < cuts.length; i++) {
+      const x = cx + cuts[i][0] * R, y = cy + cuts[i][1] * R;
       i === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
     }
   }
@@ -1776,8 +2019,8 @@ function buildFlakeSprites() {
         paintFlakeSpec(g, FLAKE_PX, shape, k / SPEC_K * Math.PI * 2)));
     }
   }
-  for (const c of flakeSprites) flakeFar.push(defocus(c, 3.2));
-  for (const c of flakeSmall) flakeSmallFar.push(defocus(c, 1.1));
+  for (const c of flakeSprites) flakeFar.push(defocus(c, 5.0));
+  for (const c of flakeSmall) flakeSmallFar.push(defocus(c, 1.6));
   for (let shape = 0; shape < SHAPES; shape++) {
     flashSprites.push(sprite(FLAKE_PX, (g) => {
       const c = FLAKE_PX / 2, R = FLAKE_PX / 2 - 2;
@@ -1798,8 +2041,8 @@ function buildSprites() {
   shadeSprite = sprite(64, (g, s) => {
     const r = s / 2;
     const grad = g.createRadialGradient(r, r, 0, r, r, r);
-    grad.addColorStop(0, "rgba(6,42,96,.85)");
-    grad.addColorStop(0.45, "rgba(6,42,96,.42)");
+    grad.addColorStop(0, "rgba(6,42,96,.50)");
+    grad.addColorStop(0.45, "rgba(6,42,96,.22)");
     grad.addColorStop(1, "rgba(6,42,96,0)");
     g.fillStyle = grad;
     g.fillRect(0, 0, s, s);
@@ -2004,8 +2247,8 @@ function buildSprites() {
     bubbleBody[v] = sprite(192, paintBubbleBody(v));
   }
   bubbleGlint = sprite(192, paintBubbleGlint);
-  bubbleBodyFar = bubbleBody.map((c) => defocus(c, 9));
-  bubbleGlintFar = defocus(bubbleGlint, 9);
+  bubbleBodyFar = bubbleBody.map((c) => defocus(c, 12));
+  bubbleGlintFar = defocus(bubbleGlint, 12);
   /* Fine fizz: at four or five pixels across none of the structure survives,
    * so bake one flattened copy at the size it is actually drawn. The reason
    * is the same as for the flakes — canvas does not mipmap, and downscaling
@@ -2014,7 +2257,7 @@ function buildSprites() {
     paintBubbleBody(1)(g, s);
     paintBubbleGlint(g, s);
   });
-  bubbleSmallFar = defocus(bubbleSmall, 1.4);
+  bubbleSmallFar = defocus(bubbleSmall, 1.8);
 
   /* One soft light shaft, blitted per caustic.
    *
@@ -2087,6 +2330,72 @@ let span = 1;        // along `tan`
 let upExtent = 1;    // along `up`
 
 let basisAngle = 0, basisReady = false;
+let inversionGuard = 0;   // suppress stale cross-flow after a face-over-face flip
+let cascadeSpreadHold = 0; // keeps a released resting bed broad across the glass
+let cascadeLanePolarity = 1; // tangent reverses sign on each face-over-face flip
+let flipArmed = false, flipStartX = 0, flipStartY = 1;
+
+/* The air pocket is the largest single mass cue in the scene. Its silhouette
+ * should not rotate in lock-step with the sensor while the heavier liquid and
+ * glitter are still catching up. This second basis follows the real gravity
+ * frame with a short viscous lag and is used only by the visible free surface;
+ * the fluid solver and particle gravity stay on the physical basis above. */
+let displayUp = { x: 0, y: -1 }, displayTan = { x: 1, y: 0 };
+let displaySpan = 1, displayUpExtent = 1;
+let displayAngle = 0, displayBasisReady = false;
+let displayAngleVelocity = 0, displayBasisTime = 0, displayFrameDt = 1 / 60;
+let displayCompression = 0, displayCompressionVelocity = 0;
+let displayBubbleOffset = 0, displayBubbleVelocity = 0;
+
+function updateDisplayBasis() {
+  const now = performance.now();
+  displayFrameDt = displayBasisTime
+    ? Math.max(1 / 240, Math.min(0.04, (now - displayBasisTime) / 1000))
+    : 1 / 60;
+  displayBasisTime = now;
+  if (!displayBasisReady) {
+    displayAngle = basisAngle;
+    displayAngleVelocity = 0;
+    displayBasisReady = true;
+  } else {
+    let d = basisAngle - displayAngle;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    /* A second-order response gives the liquid mass rather than mere delay:
+     * it accelerates into a turn, trails the glass, overshoots slightly, then
+     * settles without copying tiny sensor twitches into the waterline. */
+    displayAngleVelocity += (d * 28 - displayAngleVelocity * 9.5) * displayFrameDt;
+    displayAngleVelocity = Math.max(-4.2, Math.min(4.2, displayAngleVelocity));
+    displayAngle += displayAngleVelocity * displayFrameDt;
+  }
+  /* Motion toward and away from the glass compresses the visible air lens
+   * before it rebounds. This is a separate, damped depth mode: mapping Z
+   * acceleration onto X or Y would only make another sideways slosh. */
+  displayCompressionVelocity += (-accel.z * 4.0 - displayCompression * 14 -
+    displayCompressionVelocity * 6.5) * displayFrameDt;
+  displayCompression += displayCompressionVelocity * displayFrameDt;
+  displayCompression = Math.max(-0.20, Math.min(0.20, displayCompression));
+  displayUp.x = Math.cos(displayAngle);
+  displayUp.y = Math.sin(displayAngle);
+  displayTan.x = -displayUp.y;
+  displayTan.y = displayUp.x;
+  displaySpan = Math.abs(displayTan.x) * RX + Math.abs(displayTan.y) * RY;
+  displayUpExtent = Math.abs(displayUp.x) * RX + Math.abs(displayUp.y) * RY;
+
+  /* The headspace is one trapped bubble, not a waterline glued to the centre.
+   * Tangential acceleration and the turning surface displace its bulge along
+   * the interface; a lightly underdamped spring gives it lag, overshoot and a
+   * soft return. The wetting ends stay fixed at the glass. */
+  const alongAccel = accel.x * displayTan.x + accel.y * displayTan.y;
+  displayBubbleVelocity += (-alongAccel * 3.8 - displayAngleVelocity * 0.32 -
+    displayBubbleOffset * 7.5 - displayBubbleVelocity * 3.8) * displayFrameDt;
+  displayBubbleVelocity = Math.max(-0.72, Math.min(0.72, displayBubbleVelocity));
+  displayBubbleOffset += displayBubbleVelocity * displayFrameDt;
+  if (Math.abs(displayBubbleOffset) > 0.20) {
+    displayBubbleOffset = Math.sign(displayBubbleOffset) * 0.20;
+    displayBubbleVelocity *= -0.22;
+  }
+}
 
 /* Turning the container tilts the water in it.
  *
@@ -2103,6 +2412,37 @@ let basisAngle = 0, basisReady = false;
  * tilt back and forth across the vessel until it damps out. All of the
  * sloshing on a tilt or a flip comes from these two lines.
  */
+let boundsAngle = Infinity;
+
+/* Intersect tangent-space columns with the sampled container wall. The
+ * resulting upper and lower lifts are the real local limits for both the
+ * free surface and settled particles, including the rounded phone corners. */
+function updateSurfaceBounds(force = false) {
+  if (!force && Math.abs(basisAngle - boundsAngle) < 0.0025) return;
+  boundsAngle = basisAngle;
+  for (let i = 0; i < N; i++) {
+    const s = -span + 2 * span * (i / (N - 1));
+    let lo = Infinity, hi = -Infinity;
+    for (let j = 0; j < outline.length; j++) {
+      const a = outline[j], b = outline[(j + 1) % outline.length];
+      const adx = a.x - CX, ady = a.y - CY;
+      const bdx = b.x - CX, bdy = b.y - CY;
+      const sa = adx * tan.x + ady * tan.y;
+      const sb = bdx * tan.x + bdy * tan.y;
+      if ((s < sa && s < sb) || (s > sa && s > sb) || Math.abs(sb - sa) < 1e-7) continue;
+      const q = (s - sa) / (sb - sa);
+      if (q < 0 || q > 1) continue;
+      const la = adx * up.x + ady * up.y;
+      const lb = bdx * up.x + bdy * up.y;
+      const lift = la + (lb - la) * q;
+      if (lift < lo) lo = lift;
+      if (lift > hi) hi = lift;
+    }
+    surfaceFloor[i] = Number.isFinite(lo) ? lo : -upExtent;
+    surfaceRoof[i] = Number.isFinite(hi) ? hi : upExtent;
+  }
+}
+
 function updateBasis() {
   const prev = basisAngle;
   up = { x: -gDir.x, y: -gDir.y };
@@ -2115,11 +2455,20 @@ function updateBasis() {
   while (d > Math.PI) d -= Math.PI * 2;
   while (d < -Math.PI) d += Math.PI * 2;
   if (basisReady && d !== 0) {
+    basisKick = Math.max(basisKick, Math.min(1, Math.abs(d) * 18));
+    if (Math.abs(d) > Math.PI * 0.72) inversionGuard = 1;
+    /* The old `d * s` term is only the small-angle approximation to a
+     * rotated plane. It becomes catastrophically wrong at an inversion:
+     * d=pi injected the largest possible diagonal ramp even though the
+     * sideways projection of a 180-degree flip is sin(pi)=0. That artificial
+     * ramp drove the fluid—and all the glitter—to both side walls. */
+    const projectedTilt = Math.sin(d);
     for (let i = 0; i < N; i++) {
-      h[i] -= d * (-span + 2 * span * (i / (N - 1)));
+      h[i] -= projectedTilt * (-span + 2 * span * (i / (N - 1)));
     }
   }
   basisReady = true;
+  updateSurfaceBounds(!Number.isFinite(boundsAngle));
 }
 
 function surfaceAt(s) {
@@ -2128,6 +2477,21 @@ function surfaceAt(s) {
   const i = Math.max(0, Math.min(N - 2, Math.floor(f)));
   const frac = f - i;
   return h[i] * (1 - frac) + h[i + 1] * frac;
+}
+
+/* Rendering the solver's samples directly makes the waterline advertise its
+ * grid whenever it tilts. This five-tap kernel removes cell-scale kinks but
+ * preserves the broad crest and trough that carry the actual slosh. Physics
+ * continues to use the unsmoothed height and slope. */
+function surfaceVisualAt(s) {
+  const f = (s + span) / (2 * span) * (N - 1);
+  const sample = (j) => h[Math.max(0, Math.min(N - 1, j))];
+  const smooth = (j) =>
+    (sample(j - 2) + sample(j - 1) * 2 + sample(j) * 3 +
+     sample(j + 1) * 2 + sample(j + 2)) / 9;
+  const i = Math.max(0, Math.min(N - 2, Math.floor(f)));
+  const frac = f - i;
+  return smooth(i) * (1 - frac) + smooth(i + 1) * frac;
 }
 
 /** How steeply the surface leans, in rise per unit run along `tan`. */
@@ -2142,7 +2506,25 @@ function depthOf(x, y) {
   const dx = x - CX, dy = y - CY;
   const along = dx * tan.x + dy * tan.y;
   const height = dx * up.x + dy * up.y;
-  return height - (level + surfaceAt(along));
+  return height - (level + surfaceVisualAt(along));
+}
+
+/* A solid flake cannot remain on the air side of the physical free surface.
+ * Cancelling only its outward velocity left already-escaped particles parked
+ * above the liquid until a later wave made them pop back into view. Project
+ * the position below the interface as well, preserving tangential motion. */
+function clampUnderSurface(p, clearance) {
+  const d = depthOf(p.x, p.y);
+  if (d <= -clearance) return false;
+  const correction = d + clearance;
+  p.x -= up.x * correction;
+  p.y -= up.y * correction;
+  const vn = p.vx * up.x + p.vy * up.y;
+  if (vn > 0) {
+    p.vx -= up.x * vn;
+    p.vy -= up.y * vn;
+  }
+  return true;
 }
 
 function liquidPolygon() {
@@ -2152,7 +2534,7 @@ function liquidPolygon() {
   const steps = 64;
   for (let i = 0; i <= steps; i++) {
     const s = -span + (2 * span) * (i / steps);
-    const lift = level + surfaceAt(s);
+    const lift = level + surfaceVisualAt(s);
     pts.push({
       x: CX + tan.x * s + up.x * lift,
       y: CY + tan.y * s + up.y * lift,
@@ -2163,6 +2545,135 @@ function liquidPolygon() {
   pts.push({ x: CX + tan.x * span - up.x * far, y: CY + tan.y * span - up.y * far });
   pts.push({ x: CX - tan.x * span - up.x * far, y: CY - tan.y * span - up.y * far });
   return pts;
+}
+
+function flatLiquidPolygon(lift) {
+  const pts = [];
+  const steps = 64;
+  for (let i = 0; i <= steps; i++) {
+    const s = -displaySpan + 2 * displaySpan * (i / steps);
+    pts.push({
+      x: CX + displayTan.x * s + displayUp.x * lift,
+      y: CY + displayTan.y * s + displayUp.y * lift,
+    });
+  }
+  const far = (displaySpan + displayUpExtent) * 2;
+  pts.push({ x: CX + displayTan.x * displaySpan - displayUp.x * far,
+             y: CY + displayTan.y * displaySpan - displayUp.y * far });
+  pts.push({ x: CX - displayTan.x * displaySpan - displayUp.x * far,
+             y: CY - displayTan.y * displaySpan - displayUp.y * far });
+  return pts;
+}
+
+function lensLiquidPolygon(lift) {
+  const pts = flatLiquidPolygon(lift);
+  const steps = 64;
+  let a = -1, b = -1;
+  for (let i = 0; i <= steps; i++) {
+    if (!isInside(pts[i].x, pts[i].y)) continue;
+    if (a < 0) a = i;
+    b = i;
+  }
+  if (a < 0 || b - a < 3) return pts;
+  const run = (b - a) * (2 * displaySpan / steps);
+  const turn = Math.min(1, Math.abs(displayAngleVelocity) / 2.8);
+  const breathing = 1 + displayCompression * 1.20;
+  const bow = Math.min(Math.min(RX, RY) * (0.090 + turn * 0.010), run * 0.145) *
+    breathing;
+  const skew = Math.max(-0.24, Math.min(0.24, displayAngleVelocity * 0.085));
+  const centre = 0.5 + displayBubbleOffset;
+  for (let i = a; i <= b; i++) {
+    const t = (i - a) / (b - a);
+    /* The rear half of a moving surface remains fuller for a moment while the
+     * leading contact line climbs the glass. This tiny skew is the visible
+     * consequence of inertia; it vanishes completely once the turn settles. */
+    /* Concentrate the fixed air volume into a deeper, readable centre while
+     * keeping narrow wetting shoulders at both contact lines. A broad, deep
+     * lens cannot fit at 98% fill and silently makes the toy look underfilled. */
+    const q = t <= centre ? t / centre : (1 - t) / (1 - centre);
+    const d = bow * Math.pow(Math.sin(Math.PI * 0.5 * q), 4.2) *
+      (1 + skew * (t * 2 - 1));
+    pts[i].x -= displayUp.x * d;
+    pts[i].y -= displayUp.y * d;
+  }
+  return pts;
+}
+
+let displayLevel = 0, displayLevelReady = false, displayLevelVelocity = 0;
+let displaySolved = 0, displaySolveAngle = Infinity, displaySolveTick = 0;
+let displaySolveCompression = Infinity, displaySolveBubbleOffset = Infinity;
+
+/* The visible air pocket is one coherent free surface. Selecting the largest
+ * trough from the physics field made the pocket jump whenever two troughs
+ * traded size by a pixel. Solve a single gravity-level plane for the sealed
+ * volume instead: it stays connected, follows tilt continuously, and cannot
+ * sprout needle-shaped holes during a shake. The physical wave field still
+ * drives the fluid and particles; it simply no longer dictates a glitchy
+ * silhouette. */
+function displayLiquidPolygon() {
+  updateDisplayBasis();
+  displaySolveTick++;
+  let d = Number.isFinite(displaySolveAngle) ? displayAngle - displaySolveAngle : Infinity;
+  if (Number.isFinite(d)) {
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+  }
+  const compressionDelta = Math.abs(displayCompression - displaySolveCompression);
+  const bubbleDelta = Math.abs(displayBubbleOffset - displaySolveBubbleOffset);
+  if (!displayLevelReady || ((displaySolveTick & 1) === 0 &&
+      (Math.abs(d) > 0.0025 || compressionDelta > 0.002 || bubbleDelta > 0.002))) {
+    let lo = -displayUpExtent * 1.05, hi = displayUpExtent * 1.05;
+    for (let solve = 0; solve < 9; solve++) {
+      const mid = (lo + hi) * 0.5;
+      const area = polygonArea(clipToContainer(lensLiquidPolygon(mid)));
+      if (area < targetArea) lo = mid; else hi = mid;
+    }
+    displaySolved = (lo + hi) * 0.5;
+    displaySolveAngle = displayAngle;
+    displaySolveCompression = displayCompression;
+    displaySolveBubbleOffset = displayBubbleOffset;
+  }
+  if (!displayLevelReady) {
+    displayLevel = displaySolved;
+    displayLevelVelocity = 0;
+    displayLevelReady = true;
+  } else {
+    // The pocket's translation carries mass too; critically damp its volume
+    // correction so a turn never becomes a quantised, trembling waterline.
+    displayLevelVelocity += ((displaySolved - displayLevel) * 40 -
+      displayLevelVelocity * 12.5) * displayFrameDt;
+    const levelSpeed = displayUpExtent * 1.4;
+    displayLevelVelocity = Math.max(-levelSpeed,
+      Math.min(levelSpeed, displayLevelVelocity));
+    displayLevel += displayLevelVelocity * displayFrameDt;
+  }
+  return lensLiquidPolygon(displayLevel);
+}
+
+/* The visible surface is deliberately allowed to lag the physical solver,
+ * but render culling must use the surface that was actually drawn. Cache its
+ * 65 sampled lifts once per frame so particles and the air pocket cannot
+ * disagree about which side of the interface a pixel belongs on. */
+const DISPLAY_SURFACE_STEPS = 64;
+const displaySurfaceLifts = new Float32Array(DISPLAY_SURFACE_STEPS + 1);
+
+function cacheDisplaySurface(poly) {
+  for (let i = 0; i <= DISPLAY_SURFACE_STEPS; i++) {
+    displaySurfaceLifts[i] = (poly[i].x - CX) * displayUp.x +
+      (poly[i].y - CY) * displayUp.y;
+  }
+}
+
+function displayDepthOf(x, y) {
+  const dx = x - CX, dy = y - CY;
+  const along = dx * displayTan.x + dy * displayTan.y;
+  const f = Math.max(0, Math.min(DISPLAY_SURFACE_STEPS,
+    (along + displaySpan) / (2 * displaySpan) * DISPLAY_SURFACE_STEPS));
+  const i = Math.min(DISPLAY_SURFACE_STEPS - 1, Math.floor(f));
+  const frac = f - i;
+  const surface = displaySurfaceLifts[i] * (1 - frac) +
+    displaySurfaceLifts[i + 1] * frac;
+  return dx * displayUp.x + dy * displayUp.y - surface;
 }
 
 /* The stretch of surface that genuinely touches air, ending exactly where
@@ -2216,7 +2727,7 @@ function meniscus(poly, steps) {
       if (d >= reach) continue;
       const t = 1 - d / reach;
       const lift = climb * t * t;
-      p.x += up.x * lift; p.y += up.y * lift;
+      p.x += displayUp.x * lift; p.y += displayUp.y * lift;
     }
     segs.push(pts);
   }
@@ -2231,6 +2742,24 @@ function polygonArea(pts) {
   return Math.abs(a) * 0.5;
 }
 
+/* Append a quadratic-smoothed polyline. Midpoint curves keep the meniscus
+ * fluid at steep tilts without overshooting its wall contact points. */
+function appendSmooth(points, off, reverse, move, dx = 0, dy = 0) {
+  const n = points.length;
+  const at = (i) => points[reverse ? n - 1 - i : i];
+  const first = at(0);
+  const fx = first.x + displayUp.x * off + dx, fy = first.y + displayUp.y * off + dy;
+  if (move) ctx.moveTo(fx, fy); else ctx.lineTo(fx, fy);
+  for (let i = 1; i < n - 1; i++) {
+    const p = at(i), q = at(i + 1);
+    const px = p.x + displayUp.x * off + dx, py = p.y + displayUp.y * off + dy;
+    const qx = q.x + displayUp.x * off + dx, qy = q.y + displayUp.y * off + dy;
+    ctx.quadraticCurveTo(px, py, (px + qx) * 0.5, (py + qy) * 0.5);
+  }
+  const last = at(n - 1);
+  ctx.lineTo(last.x + displayUp.x * off + dx, last.y + displayUp.y * off + dy);
+}
+
 /* A bubble is a deformable object, not a stamp.
  *
  * A gas bubble rising through liquid is flattened perpendicular to its
@@ -2241,12 +2770,12 @@ function polygonArea(pts) {
  * and only the ones near the glass keep a hard bright rim.
  */
 function drawBubble(b) {
-  const sc = 1 + b.z * 0.3;
+  const sc = 1 + b.z * 0.42;
   const r = b.r * b.pop * sc;
-  const x = b.x + parallaxX(b.z), y = b.y + parallaxY(b.z);
+  const x = projectedX(b.x, b.z), y = projectedY(b.y, b.z);
   // Same aerial perspective as the flakes: a bubble at the back wall is seen
   // through the whole thickness of the liquid and loses most of its contrast.
-  const alpha = b.alpha * (0.40 + 0.60 * (b.z + 1) * 0.5);
+  const alpha = b.alpha * (0.24 + 0.76 * (b.z + 1) * 0.5);
 
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -2263,8 +2792,8 @@ function drawBubble(b) {
   /* Cast first, so the bubble sits on top of its own shadow. Offset away
    * from the source and softened with size, the way a shadow thrown through
    * a thick medium spreads with the distance it travels. */
-  ctx.globalAlpha = alpha * 0.30;
-  const sd = r * 1.35;
+  ctx.globalAlpha = alpha * 0.18;
+  const sd = r * 1.05;
   ctx.drawImage(shadeSprite, -SHADOW_X * sd - r, -SHADOW_Y * sd - r, r * 2, r * 2);
   ctx.globalAlpha = alpha;
 
@@ -2292,9 +2821,9 @@ function drawStar(p, time) {
   // the transform — but still blit the sprite. Substituting a fillRect here
   // is faster again and looks it: hard little squares read as cheap dither,
   // where the downscaled sprite reads as soft glitter.
-  const sc = 1 + p.z * 0.3;
+  const sc = 1 + p.z * 0.42;
   const rr = p.r * sc;
-  const px = p.x + parallaxX(p.z), py = p.y + parallaxY(p.z);
+  const px = projectedX(p.x, p.z), py = projectedY(p.y, p.z);
 
   /* Threshold raised from 2.2px: enlarging the flakes to match the
    * reference pushed most of the population off this fast path and onto the
@@ -2306,7 +2835,7 @@ function drawStar(p, time) {
    * longer path leave you with. The ramp used to run 0.68 to 1.0, which is
    * barely a fifth of the range, and the fine glitter did not get it at all:
    * every small flake was drawn at full strength however deep it sat. */
-  const depthFade = 0.34 + 0.66 * (p.z + 1) * 0.5;
+  const depthFade = 0.20 + 0.80 * (p.z + 1) * 0.5;
 
   if (rr < 3.0) {
     ctx.globalAlpha = depthFade;
@@ -2351,7 +2880,9 @@ function drawStar(p, time) {
   }
 
   // Full-face flash when it turns square to the source.
-  const flash = Math.sin(time * p.flashRate + p.flashPhase);
+  // A still flake holds one highlight. Tying this to simulation time made the
+  // whole wallpaper sparkle and dim even while the phone sat untouched.
+  const flash = Math.sin(p.spin * 2.3 + p.flashPhase);
   if (flash > 0.86) {
     ctx.globalAlpha = (flash - 0.86) / 0.14;
     ctx.drawImage(flashSprites[p.shape], -rr, -rr, s, s);
@@ -2380,11 +2911,48 @@ function drawStar(p, time) {
  * between them. Using the gravity direction as the proxy for that angle
  * costs nothing and is right to first order: upright it is zero, and the
  * further the phone leans the more the layers separate. */
-function parallaxX(z) { return z * PARALLAX * gDir.x; }
-function parallaxY(z) { return z * PARALLAX * (gDir.y - 1); }
-const PARALLAX = 9;
+function parallaxX(z) {
+  return z * PARALLAX * (grav.x + accel.x * 0.10);
+}
+function parallaxY(z) {
+  return z * PARALLAX * ((grav.y - 1) - gravZ * 0.32 + accel.y * 0.10);
+}
+const PARALLAX = 18;
+const DEPTH_PERSPECTIVE = 0.040;
+const DEPTH_PULSE_PERSPECTIVE = 0.22;
+
+/* Perspective was the missing half of Z motion. A particle moving toward the
+ * front glass now travels radially outward and grows; one moving away travels
+ * inward and shrinks. The existing parallax still supplies the directional
+ * shear from a tilted viewing angle. */
+function projectedX(x, z) {
+  return CX + (x - CX) * (1 + z * DEPTH_PERSPECTIVE +
+    displayCompression * DEPTH_PULSE_PERSPECTIVE) + parallaxX(z);
+}
+function projectedY(y, z) {
+  return CY + (y - CY) * (1 + z * DEPTH_PERSPECTIVE +
+    displayCompression * DEPTH_PULSE_PERSPECTIVE) + parallaxY(z);
+}
+
+/* Motion through the pouch thickness. `zHome` keeps a particle within the
+ * layer it was born into; gravity through the screen and a normal shake move
+ * it around that layer with spring-and-dashpot dynamics, so depth has mass
+ * rather than being an animated offset. */
+function stepDepth(p, dt, response) {
+  const target = Math.max(-0.86, Math.min(0.86,
+    p.zHome + gravZ * 0.22 * response));
+  /* Slightly under-damped so a fore-aft shake produces a visible return
+   * stroke instead of one muted displacement. The dead-zoned accelerometer
+   * still brings this completely to rest when the phone is still. */
+  p.zv += ((target - p.z) * 1.10 - p.zv * 1.65 -
+    accel.z * response * 2.80) * dt;
+  p.z += p.zv * dt;
+  if (p.z < -1) { p.z = -1; p.zv = Math.abs(p.zv) * 0.28; }
+  else if (p.z > 1) { p.z = 1; p.zv = -Math.abs(p.zv) * 0.28; }
+}
 
 let starSplit = 0, bubbleSplit = 0;
+let depthSortTime = 0;
 
 /** Index of the first particle at or in front of the mid-plane. */
 function depthSplit(list) {
@@ -2396,16 +2964,72 @@ function depthSplit(list) {
 function drawParticles(s0, s1, b0, b1, time) {
   for (let i = b0; i < b1; i++) {
     const b = bubbles[i];
-    if (b.alpha <= 0 || depthOf(b.x, b.y) > 0) continue;
+    if (b.alpha <= 0 || displayDepthOf(projectedX(b.x, b.z),
+        projectedY(b.y, b.z)) > 0) continue;
     drawBubble(b);
   }
   ctx.globalAlpha = 1;
   for (let i = s0; i < s1; i++) {
     const p = stars[i];
-    if (depthOf(p.x, p.y) > 0) continue;
+    if (displayDepthOf(projectedX(p.x, p.z), projectedY(p.y, p.z)) > 0) continue;
     drawStar(p, time);
   }
   ctx.globalAlpha = 1;
+}
+
+/* Thousands of tiny flecks become seven colour paths and seven fills. The
+ * batched squares are small enough to read as foil flashes, while the hero
+ * layer above supplies the recognisable stars, diamonds and hex cuts. */
+let microPathsBack = [], microPathsFront = [], microPathsDirty = true;
+const microBackCanvas = document.createElement("canvas");
+const microFrontCanvas = document.createElement("canvas");
+const microBackCtx = microBackCanvas.getContext("2d");
+const microFrontCtx = microFrontCanvas.getContext("2d");
+
+/* Build both depth passes in one walk. With 17,850 flecks, traversing the
+ * entire population once for the rear and again for the front cost more than
+ * the actual seven batched fills. The split still renders on opposite sides
+ * of the liquid tint; only the bookkeeping is shared. */
+function buildMicroPaths() {
+  microPathsBack = FLAKE_COLOURS.map(() => new Path2D());
+  microPathsFront = FLAKE_COLOURS.map(() => new Path2D());
+  for (const p of microGlitter) {
+    const x = projectedX(p.x, p.z), y = projectedY(p.y, p.z);
+    if (displayDepthOf(x, y) > 0) continue;
+    const zScale = 0.72 + (p.z + 1) * 0.22;
+    // Position supplies a deterministic foil angle: it changes as the fleck
+    // moves through the liquid and becomes perfectly still when the fleck is.
+    const flash = 0.76 + 0.24 * Math.sin(p.phase + p.x * 0.015 + p.y * 0.011);
+    const r = Math.max(0.42, p.r * zScale * flash);
+    (p.z >= 0 ? microPathsFront : microPathsBack)[p.hueIdx]
+      .rect(x - r, y - r, r * 2, r * 2);
+  }
+
+  /* Rasterise each depth pass only when its 20 Hz physics advances. Replaying
+   * fourteen thousand retained rectangles through the main compositor every
+   * display frame was still almost as costly as rebuilding them; these two
+   * transparent layers turn that work into two ordinary image blits. */
+  const raster = (g, paths, front) => {
+    g.clearRect(0, 0, W, H);
+    g.globalCompositeOperation = "screen";
+    g.globalAlpha = 1;
+    for (let i = 0; i < paths.length; i++) {
+      g.fillStyle = FLAKE_COLOURS[i][front ? 0 : 1];
+      g.fill(paths[i]);
+    }
+    g.globalCompositeOperation = "source-over";
+  };
+  raster(microBackCtx, microPathsBack, false);
+  raster(microFrontCtx, microPathsFront, true);
+  microPathsDirty = false;
+}
+
+function drawMicro(front) {
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.globalAlpha = front ? 0.82 : 0.38;
+  ctx.drawImage(front ? microFrontCanvas : microBackCanvas, 0, 0, W, H);
+  ctx.restore();
 }
 
 /* The wall has thickness, and near the silhouette you are looking through a
@@ -2496,6 +3120,61 @@ function drawBezel() {
   ctx.globalAlpha = 1;
 }
 
+/* Paint the same headspace twice: once as the background and once after the
+ * particles. The second pass is a cheap, exact surface mask. It prevents a
+ * cached microglitter layer—or a large flake whose centre is submerged but
+ * whose corners are not—from flickering through the air pocket during tilt. */
+function paintHeadspace(poly) {
+  const air = ctx.createLinearGradient(
+    CX + displayUp.x * displayUpExtent, CY + displayUp.y * displayUpExtent,
+    CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel);
+  air.addColorStop(0, "#c9dfec");
+  air.addColorStop(0.45, "#eaf5fb");
+  air.addColorStop(1, "#a9d4e6");
+  ctx.fillStyle = air;
+  ctx.beginPath();
+  const far = (displaySpan + displayUpExtent) * 2;
+  ctx.moveTo(poly[0].x + displayUp.x * far, poly[0].y + displayUp.y * far);
+  for (let i = 0; i <= DISPLAY_SURFACE_STEPS; i++) {
+    ctx.lineTo(poly[i].x, poly[i].y);
+  }
+  ctx.lineTo(poly[DISPLAY_SURFACE_STEPS].x + displayUp.x * far,
+    poly[DISPLAY_SURFACE_STEPS].y + displayUp.y * far);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/* A moving specular inside the trapped headspace makes its displaced bulge
+ * read as one surface bubble rather than an empty strip. It is anchored to
+ * the deepest point of the lens, so it follows the inertial offset above. */
+function paintSurfaceBubbleGlint(poly) {
+  let peak = poly[0], minLift = Infinity;
+  for (let i = 0; i <= DISPLAY_SURFACE_STEPS; i++) {
+    const lift = (poly[i].x - CX) * displayUp.x +
+      (poly[i].y - CY) * displayUp.y;
+    if (lift < minLift) { minLift = lift; peak = poly[i]; }
+  }
+  const depth = displayLevel - minLift;
+  if (depth < 4) return;
+  const r = Math.min(34, Math.max(15, displaySpan * 0.085));
+  const x = peak.x + displayUp.x * depth * 0.50;
+  const y = peak.y + displayUp.y * depth * 0.50;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(Math.atan2(displayTan.y, displayTan.x));
+  ctx.scale(1, Math.max(0.16, Math.min(0.34, depth / r * 0.48)));
+  const glow = ctx.createRadialGradient(-r * 0.24, -r * 0.18, 0,
+    -r * 0.06, 0, r);
+  glow.addColorStop(0, "rgba(255,255,255,.42)");
+  glow.addColorStop(0.34, "rgba(255,255,255,.16)");
+  glow.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 /* The render loop deliberately uses no clip() at all.
  *
  * Canvas rasterises a clip against a 100-plus-point path on every use, and
@@ -2506,16 +3185,21 @@ function drawBezel() {
  * the waterline, and the meniscus glow simply bleeds a little into the air,
  * which is what a real meniscus does anyway. */
 function render(time) {
-  const poly = liquidPolygon();
+  const poly = displayLiquidPolygon();
+  cacheDisplaySurface(poly);
+  /* Microglitter physics runs at 20 Hz. Rebuilding 17,850 path rectangles at
+   * the display's 60/120 Hz would waste most of the doubled population's
+   * frame budget on identical geometry. */
+  if (microPathsDirty) buildMicroPaths();
 
   /* Liquid body, graded along the gravity axis so the deep blue always sits
    * at the top of the pour no matter how the phone is held. Filled across
    * the whole screen rather than into the liquid polygon: the shaker is
-   * ~95% full, so painting the small headspace afterwards is far less
+   * ~98% full, so painting the small headspace afterwards is far less
    * overdraw than covering the screen twice. */
   const grad = ctx.createLinearGradient(
-    CX + up.x * level, CY + up.y * level,
-    CX - up.x * upExtent, CY - up.y * upExtent);
+    CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel,
+    CX - displayUp.x * displayUpExtent, CY - displayUp.y * displayUpExtent);
   const ramp = CONFIG.ramp;
   for (let i = 0; i < ramp.length; i++) {
     grad.addColorStop(i / (ramp.length - 1), ramp[i]);
@@ -2531,20 +3215,7 @@ function render(time) {
    * the waterline. Spanning the whole container instead left the thin band
    * sampling one end of the ramp, so it rendered as a flat grey slab that
    * read like a UI bar sitting on top of the wallpaper. */
-  const air = ctx.createLinearGradient(
-    CX + up.x * upExtent, CY + up.y * upExtent,
-    CX + up.x * level, CY + up.y * level);
-  air.addColorStop(0, "#c9dfec");    // inner top wall, slightly shadowed
-  air.addColorStop(0.45, "#eaf5fb");
-  air.addColorStop(1, "#a9d4e6");    // liquid showing through the meniscus
-  ctx.fillStyle = air;
-  ctx.beginPath();
-  const far = (span + upExtent) * 2;
-  ctx.moveTo(poly[0].x + up.x * far, poly[0].y + up.y * far);
-  for (let i = 0; i <= 64; i++) ctx.lineTo(poly[i].x, poly[i].y);
-  ctx.lineTo(poly[64].x + up.x * far, poly[64].y + up.y * far);
-  ctx.closePath();
-  ctx.fill();
+  paintHeadspace(poly);
 
   const menisc = meniscus(poly, 64);   // array of interface segments
 
@@ -2556,6 +3227,7 @@ function render(time) {
   // Behind the mid-plane: seen through the full thickness of the liquid, so
   // out of focus and washed toward the liquid's own colour.
   farField = true;
+  drawMicro(false);
   drawParticles(0, starSplit, 0, bubbleSplit, time);
   farField = false;
 
@@ -2599,7 +3271,8 @@ function render(time) {
    * to where the light has faded out. Blitting the full container instead
    * meant a whole-screen additive composite every frame, and in software
    * rasterisation that alone is most of the frame budget. */
-  const bandTop = -(level + upExtent * 0.18);
+  const lightLevel = displayLevel + (level - displayLevel) * motionActivity;
+  const bandTop = -(lightLevel + upExtent * 0.18);
   const bandH = upExtent * 1.33;
   const reach = upExtent * 1.15;
   const pitch = 2 * span / (N - 1);
@@ -2612,13 +3285,17 @@ function render(time) {
      * per-shaft width give the uneven spacing real caustics have. */
     const seed = Math.sin(i * 12.9898) * 43758.5453;
     const jitter = seed - Math.floor(seed);
-    const amb = 0.05 + 0.032 * Math.sin(time * 0.41 + i * 0.29)
-                     + 0.022 * Math.sin(time * 0.23 - i * 0.73);
-    const a = Math.max(0, Math.min(0.24, amb + curv * 0.010));
+    const shimmer = 0.032 * Math.sin(time * 0.41 + i * 0.29)
+                  + 0.022 * Math.sin(time * 0.23 - i * 0.73);
+    const amb = 0.052 + shimmer * motionActivity;
+    const a = Math.max(0, Math.min(0.24,
+      amb + curv * 0.010 * motionActivity));
     if (a < 0.012) continue;
     const w = pitch * (5 + jitter * 7);
     const sx = -span + 2 * span * (i / (N - 1)) + (jitter - 0.5) * pitch * 4;
-    const sy = -(level + h[i]);
+    const surfaceLift = displayLevel +
+      (level + h[i] - displayLevel) * motionActivity;
+    const sy = -surfaceLift;
     cg.globalAlpha = a;
     cg.drawImage(shaftSprite, toX(sx - w / 2), toY(sy),
                  w / (2 * span) * CAUSTIC_W, reach / bandH * CAUSTIC_H);
@@ -2633,19 +3310,26 @@ function render(time) {
 
   // Light pooling just under the surface, the way it does in a real pouch.
   const under = ctx.createLinearGradient(
-    CX + up.x * level, CY + up.y * level,
-    CX + up.x * (level - upExtent * 0.55),
-    CY + up.y * (level - upExtent * 0.55));
+    CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel,
+    CX + displayUp.x * (displayLevel - displayUpExtent * 0.55),
+    CY + displayUp.y * (displayLevel - displayUpExtent * 0.55));
   under.addColorStop(0, "rgba(255,255,255,.30)");
   under.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = under;
   ctx.fillRect(0, 0, W, H);
 
   // Depth pass two: everything in front of the mid-plane, over the tint.
+  drawMicro(true);
   drawParticles(starSplit, stars.length, bubbleSplit, bubbles.length, time);
   // Fizz last: it is the brightest, smallest thing in the liquid and it
   // belongs on top of the glitter it is swirling around.
   drawFizz();
+
+  /* Reassert the exact visible air lens after every depth pass. Particle
+   * physics can lag or lead this deliberately damped display surface, but no
+   * glitter pixel is allowed to flash through the headspace. */
+  paintHeadspace(poly);
+  paintSurfaceBubbleGlint(poly);
 
   /* Meniscus. Three passes: a soft glow bleeding down into the liquid, the
    * bright surface line itself, and a thin darker line above it. One flat
@@ -2665,30 +3349,41 @@ function render(time) {
    * piping through the wedge of liquid under the meniscus. Drawn as a
    * hairline it read as a stroke somebody had drawn on top of the picture.
    */
-  const band = Math.max(5, Math.min(RX, RY) * 0.030);
+  const band = Math.max(5, Math.min(RX, RY) * 0.022);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
   for (const seg of menisc) {
-    const path = (off) => {
+    const path = (off, dx = 0, dy = 0) => {
       ctx.beginPath();
-      ctx.moveTo(seg[0].x + up.x * off, seg[0].y + up.y * off);
-      for (let i = 1; i < seg.length; i++) {
-        ctx.lineTo(seg[i].x + up.x * off, seg[i].y + up.y * off);
-      }
+      appendSmooth(seg, off, false, true, dx, dy);
     };
+
+    /* Back edge of the liquid's top plane. It separates from the front rim
+     * only as the phone tilts, turning a drawn waterline into a shallow
+     * translucent surface with visible thickness. */
+    const rearX = (parallaxX(-1) - parallaxX(1)) * 0.28;
+    const rearY = (parallaxY(-1) - parallaxY(1)) * 0.28;
+    if (Math.hypot(rearX, rearY) > 0.5) {
+      ctx.beginPath();
+      appendSmooth(seg, 0, false, true, rearX, rearY);
+      appendSmooth(seg, 0, true, false);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(220,246,255,.20)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(120,183,215,.26)";
+      ctx.lineWidth = Math.max(1, RX * 0.003);
+      path(0, rearX, rearY); ctx.stroke();
+    }
 
     // Body of the band: the lit wedge of liquid held under the surface.
     ctx.beginPath();
-    ctx.moveTo(seg[0].x, seg[0].y);
-    for (let i = 1; i < seg.length; i++) ctx.lineTo(seg[i].x, seg[i].y);
-    for (let i = seg.length - 1; i >= 0; i--) {
-      ctx.lineTo(seg[i].x - up.x * band, seg[i].y - up.y * band);
-    }
+    appendSmooth(seg, 0, false, true);
+    appendSmooth(seg, -band, true, false);
     ctx.closePath();
     const mid = seg[(seg.length / 2) | 0];
     const g = ctx.createLinearGradient(
-      mid.x, mid.y, mid.x - up.x * band, mid.y - up.y * band);
+      mid.x, mid.y, mid.x - displayUp.x * band, mid.y - displayUp.y * band);
     g.addColorStop(0, "rgba(255,255,255,.72)");
     g.addColorStop(0.45, "rgba(214,244,255,.34)");
     g.addColorStop(1, "rgba(255,255,255,0)");
@@ -2735,6 +3430,7 @@ function render(time) {
 const FIXED_DT = 1 / 60;
 let accumulator = 0;
 let simTime = 0;
+let microTick = 0;
 
 function step(dt) {
   accumulator += dt;
@@ -2751,22 +3447,83 @@ function step(dt) {
 
 function fixedStep(dt, time) {
   updateBasis();
+  /* A real face-over-face flip announces itself first through the screen
+   * axis, before the filtered in-plane gravity has completed its reversal.
+   * Arm the cross-flow guard from that motion immediately; waiting for the
+   * basis to jump by pi lets the gravity filter's transient masquerade as a
+   * sideways shake for several hundred milliseconds. */
+  /* Z translation is not automatically a flip. The old cue armed this guard
+   * for every fore-aft shake and the guard's broad wall return squeezed the
+   * glitter into a central column. A real face-over-face inversion has both
+   * Z acceleration and gravity pointing through the screen, so require the
+   * two signals together; the later pi-angle check remains the hard fallback. */
+  const faceOn = Math.max(0, Math.min(1, (Math.abs(gravZ) - 0.32) / 0.55));
+  inversionGuard = Math.max(inversionGuard,
+    faceOn * Math.min(1, Math.abs(accel.z) * 1.8));
+  /* Detect the completed orientation change as well as the acceleration that
+   * caused it. A slow flip can pass face-on with almost no residual Z shake;
+   * remember the incoming gravity and arm the cascade only if the phone exits
+   * face-on pointing substantially the other way. Returning from a flat table
+   * in the same orientation does nothing. */
+  if (faceOn > 0.58 && !flipArmed) {
+    flipArmed = true;
+    flipStartX = gDir.x; flipStartY = gDir.y;
+  } else if (flipArmed && faceOn < 0.22 && gMag > 0.62) {
+    if (gDir.x * flipStartX + gDir.y * flipStartY < -0.45) {
+      inversionGuard = 1;
+      cascadeSpreadHold = 1;
+      cascadeLanePolarity *= -1;
+    }
+    flipArmed = false;
+  }
+  cascadeSpreadHold = Math.max(cascadeSpreadHold, inversionGuard);
+  const inputActivity = Math.min(1,
+    Math.hypot(accel.x, accel.y, accel.z) * 0.72 +
+    Math.abs(swirlInput) * 0.45 + basisKick);
+  const activityEase = inputActivity > motionActivity ? 0.20 : 0.012;
+  motionActivity += (inputActivity - motionActivity) * activityEase;
+  if (motionActivity < 0.004) motionActivity = 0;
+  const cascadeEase = inputActivity > cascadeActivity ? 0.16 : 0.0032;
+  cascadeActivity += (inputActivity - cascadeActivity) * cascadeEase;
+  if (cascadeActivity < 0.004) cascadeActivity = 0;
+  basisKick *= 0.74;
+  inversionGuard *= Math.exp(-dt / 2.4);
+  cascadeSpreadHold *= Math.exp(-dt / 5.2);
   fluidStep(dt);
   stepWaves(dt);
 
   // Volume conservation: nudge the level until the drawn liquid area matches
   // the target. A feedback loop is far cheaper than solving the tilted
   // squircle's area analytically, and settles within a few frames.
-  const clipped = clipToContainer(liquidPolygon());
-  if (clipped.length >= 3) {
-    const area = polygonArea(clipped);
-    if (targetArea === 0) targetArea = area;
-    // Raising `level` raises the surface, which *increases* the area — so an
-    // over-full container has to pull the level down. Adding here instead
-    // makes the loop positively fed back, and the pouch floods to the brim
-    // on the first shake.
-    level -= (area - targetArea) / (span * 4) * 0.5;
-    const limit = upExtent * 1.2;
+  /* Project the free surface back to the exact sealed volume every tick.
+   * A feedback nudge spread over several seconds is visibly wrong here: a
+   * vigorous shake can make a sealed 97.5%-full toy appear one-third empty
+   * before the controller catches up. Ceiling-contact columns remain pinned
+   * to the glass; only the exposed air-liquid lens moves. Its tangent width
+   * is the derivative d(area)/d(level), so this is a small Newton solve. */
+  for (let solve = 0; solve < 5; solve++) {
+    const clipped = clipToContainer(liquidPolygon());
+    if (clipped.length < 3) break;
+    const error = polygonArea(clipped) - targetArea;
+    if (Math.abs(error) < Math.max(3, targetArea * 0.00005)) break;
+    let free = 0;
+    for (let i = 0; i < N; i++) {
+      const cap = surfaceRoof[i] - Math.max(1.5, Math.min(RX, RY) * 0.004);
+      if (level + h[i] < cap - 0.9) free++;
+    }
+    const freeWidth = Math.max(2 * span / (N - 1) * 2,
+      free / (N - 1) * 2 * span);
+    const oldLevel = level;
+    let delta = -error / freeWidth;
+    const maxDelta = upExtent * 0.16;
+    delta = Math.max(-maxDelta, Math.min(maxDelta, delta));
+    level += delta;
+    for (let i = 0; i < N; i++) {
+      const cap = surfaceRoof[i] - Math.max(1.5, Math.min(RX, RY) * 0.004);
+      const wasContact = oldLevel + h[i] >= cap - 0.9;
+      if (wasContact || level + h[i] > cap) h[i] = cap - level;
+    }
+    const limit = upExtent * 1.35;
     level = Math.max(-limit, Math.min(limit, level));
   }
 
@@ -2776,13 +3533,33 @@ function fixedStep(dt, time) {
    * tangential component lets flakes slide along the glass; the old blanket
    * 65% velocity cut plus a nudge toward the centre killed all energy at the
    * wall and welded settled flakes into a hard line along the rim. */
-  const hitWall = (p, ox, oy) => {
-    const dx = p.x - ox, dy = p.y - oy;
+  const hitWall = (p, attemptedX, attemptedY) => {
+    /* `clampInside` has already moved the attempted point back into the
+     * chamber, so this correction is the actual local inward wall normal.
+     * Using the previous frame's point here mistook downward travel along a
+     * side wall for the normal, cancelled it, and made glitter cling. */
+    const dx = p.x - attemptedX, dy = p.y - attemptedY;
     const len = Math.hypot(dx, dy);
     if (len < 1e-6) return;
     const nx = dx / len, ny = dy / len;           // points back inside
     const vn = p.vx * nx + p.vy * ny;
     if (vn < 0) { p.vx -= vn * nx * 1.15; p.vy -= vn * ny * 1.15; }
+
+    /* Low-Re oblate particles near a wall exhibit glancing and sliding
+     * trajectories rather than becoming glued to it. Preserve the component
+     * of gravity tangent to a lateral wall and add a small lubrication-like
+     * separation. At the downhill floor `side` is zero, so a real bed can
+     * still form instead of bouncing forever. */
+    const gn = gDir.x * nx + gDir.y * ny;
+    const side = Math.max(0, 1 - Math.abs(gn) / 0.72);
+    if (side > 0 && p.density > 0) {
+      const slide = p.terminal * p.settleScale * p.density * gMag * settleRate;
+      const gx = gDir.x - nx * gn, gy = gDir.y - ny * gn;
+      p.vx += (gx * 0.42 + nx * 0.14) * slide * side;
+      p.vy += (gy * 0.42 + ny * 0.14) * slide * side;
+      const release = Math.min(1.5, Math.max(0.35, p.r * 0.12)) * side;
+      p.x += nx * release; p.y += ny * release;
+    }
   };
 
   /* Which way is up, for the bubbles' refracted interiors. Gravity, not the
@@ -2790,24 +3567,39 @@ function fixedStep(dt, time) {
    * gradient, and that is anchored to gravity. */
   riseAngle = Math.atan2(gDir.y, gDir.x) + Math.PI * 1.5;
   const gAng = Math.atan2(gDir.y, gDir.x);
+  // Internal convection must not keep a resting toy in perpetual motion. A
+  // shake opens the coupling immediately, then it closes over a few seconds
+  // as the viscous carrier settles.
+  const particleFlow = 0.015 + 0.985 * motionActivity;
+  // Even a quiet toy keeps sedimenting smoothly. The old 7% floor looked
+  // frozen once the post-shake tail ended; 12% remains viscous without
+  // turning sensor noise back into visible jitter.
+  const settleRate = 0.12 + 0.88 * cascadeActivity;
 
   for (const p of stars) {
     sampleFlow(p.x, p.y, flow);
+    /* A face-over-face inversion leaves the old convection field expressed
+     * in screen coordinates while gravity has reversed. Let its component
+     * parallel to the new fall continue carrying flakes, but fade the stale
+     * cross-flow briefly; otherwise opening particle coupling on the flip
+     * sweeps the whole suspension sideways before it can fall. */
+    const crossKeep = (1 - inversionGuard) * (1 - inversionGuard);
+    let fallX = gDir.x, fallY = gDir.y;
+    // Once an inversion has landed nearly upright, discard the last few
+    // degrees of cross-axis filter residue instead of letting it pull the
+    // settling bed sideways for several seconds.
+    if (Math.abs(fallX) < 0.12 && Math.abs(fallY) > 0.88) {
+      fallX = 0; fallY = Math.sign(fallY);
+    }
+    const flowAlong = flow.x * fallX + flow.y * fallY;
+    const carriedX = fallX * flowAlong + (flow.x - fallX * flowAlong) * crossKeep;
+    const carriedY = fallY * flowAlong + (flow.y - fallY * flowAlong) * crossKeep;
 
-    /* The glitter is buoyant, and that is the whole toy.
-     *
-     * These flakes are lighter than the gel they are suspended in — which is
-     * how a liquid-motion shaker is actually built, the liquid loaded until
-     * it outweighs the film — so they do not sink, they climb, and they
-     * gather in a drift under the waterline. Turning the shaker over puts
-     * that drift at the bottom and you watch it float back up. Modelled the
-     * other way round it was a sedimentation tank: everything ended on the
-     * floor and a flip only gave you the same thing upside down.
-     *
-     * Terminal velocity relative to the fluid rather than an acceleration
-     * that drag then fights: a flake this small reaches its terminal speed
-     * almost immediately, so relaxing toward (flow + rise) is both cheaper
-     * and better behaved than integrating buoyancy and damping separately.
+    /* A real glycerol shaker is a deliberately slow sedimentation display:
+     * most PET foil is denser than its carrier and cascades down after a flip.
+     * A small near-neutral/buoyant minority keeps the body alive instead of
+     * collapsing into one mechanically perfect layer. Terminal velocity is
+     * relative to the fluid; small flakes reach it almost immediately.
      *
      * Driven by gravity alone, not gravity plus the shake. Feeding the
      * container's acceleration in here as well double-counts it: relaxing
@@ -2818,7 +3610,14 @@ function fixedStep(dt, time) {
      * plate moving through liquid tips, the lift from tipping pushes it
      * sideways, which tips it back — so the sideways force follows the
      * flake's own angle to gravity, and stops when the flake stops turning. */
-    const flut = Math.sin(2 * (p.spin - gAng)) * p.flutterAmp * gMag;
+    /* A falling foil plate alternately stalls broadside and slips edge-on.
+     * Advance its flutter clock from actual travel, not wall time: a falling
+     * flake rocks, while a flake that has reached the glass becomes still. */
+    const speed = Math.hypot(p.vx, p.vy);
+    const flutterDrive = Math.min(1, speed / (p.terminal * 0.55 + 5));
+    p.flutterClock += p.flutterRate * flutterDrive * dt;
+    const flut = Math.sin(p.flutterClock + p.flutterPhase +
+                          2 * (p.spin - gAng)) * p.flutterAmp * gMag * flutterDrive;
     sampleDisperse(p.x, p.y, disperse);
     /* A flake is a plate, not a sphere. Broadside to its travel it presents
      * its whole area to the liquid and creeps; edge-on it presents almost
@@ -2833,7 +3632,8 @@ function fixedStep(dt, time) {
     /* Hindered rise. A flake climbing through a crowd of other flakes has to
      * drag the liquid they displace down past itself, so a dense suspension
      * moves far slower than a dilute one — Richardson and Zaki's (1 - phi)
-     * to the 4.65. It is why a separating suspension forms a sharp front,
+     * to roughly 4.5 for non-Brownian low-Re particles. It is why a
+     * separating suspension forms a sharp front,
      * with clearing liquid behind it and a packing drift ahead, rather than
      * thinning out evenly everywhere. It is also self-limiting, which is
      * what stops the drift under the waterline collapsing into a single
@@ -2847,10 +3647,16 @@ function fixedStep(dt, time) {
      * the slowest thing in the shaker, moving 0.518 to 0.460 over a minute
      * while the fine glitter that is supposed to trail them went 0.473 to
      * 0.336. Hindrance is what the *other* particles do to you. */
-    const own = Math.PI * p.r * p.r / (cell * cell);
-    const hind = Math.pow(
-      Math.max(0, 1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX), 4.65);
-    const climb = p.terminal * gMag * (1.573 / (1 + 0.9 * broad)) * hind;
+    const own = Math.PI * p.r * p.r / (cell * cell) * CONC_DEPTH_SCALE;
+    const freeFraction = Math.max(0,
+      1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX);
+    /* Crowding slows sedimentation, but a loose glitter bed is not cement.
+     * The former zero let a transient projected overlap become permanent and
+     * then catch every later flake. Preserve hindered settling while retaining
+     * a slow squeeze-through velocity in the most crowded cells. */
+    const hind = HIND_FLOOR + (1 - HIND_FLOOR) * Math.pow(freeFraction, 2.4);
+    const drift = p.terminal * p.settleScale * p.density * gMag * settleRate *
+                  (1.573 / (1 + 0.9 * broad)) * hind;
     /* Dispersion is a perturbation on the drift, not a transport in its own
      * right, and left unbounded it does not stay one. A stronger climb
      * sharpens the gradient, a sharper gradient strengthens the dispersion
@@ -2861,8 +3667,47 @@ function fixedStep(dt, time) {
     let dx = disperse.x * DISPERSE, dy = disperse.y * DISPERSE;
     const dm = Math.hypot(dx, dy), cap = DISPERSE_CAP;
     if (dm > cap) { const q = cap / dm; dx *= q; dy *= q; }
-    let tx = flow.x - gDir.x * climb - gDir.y * flut + dx;
-    let ty = flow.y - gDir.y * climb + gDir.x * flut + dy;
+    const disperseFlow = 0.05 + 0.95 * motionActivity;
+    dx *= disperseFlow; dy *= disperseFlow;
+    sampleGasAvoid(p.x, p.y, gasAvoid);
+    const voidSlip = 10 + motionActivity * 24;
+    dx += gasAvoid.x * voidSlip;
+    dy += gasAvoid.y * voidSlip;
+    let tx = carriedX * particleFlow + fallX * drift - fallY * flut + dx;
+    let ty = carriedY * particleFlow + fallY * drift + fallX * flut + dy;
+
+    /* Release the lateral glass boundary layer. Gravity is allowed to build a
+     * bed on the downhill wall, but the tangent edges get a soft carrier
+     * return toward the body so glitter cannot remain pasted to both sides. */
+    const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
+    /* A rested bed should release as a broad curtain after a true
+     * face-over-face flip. Briefly damp only the cross-gravity velocity so
+     * every part of the settled bed falls from the column it already occupied.
+     * Pulling position toward the centre made repeat flips collapse into one
+     * narrow stream even though a fresh seed correctly covered the glass. */
+    const cascadeStraighten = cascadeSpreadHold *
+      (p.density > 0 ? 0.82 : 0.62);
+    const cascadeCross = tx * tan.x + ty * tan.y;
+    tx -= tan.x * cascadeCross * cascadeStraighten;
+    ty -= tan.y * cascadeCross * cascadeStraighten;
+    const laneError = along - p.releaseLane * cascadeLanePolarity * span;
+    const laneReturn = laneError * cascadeSpreadHold *
+      (p.density > 0 ? 0.16 : 0.08);
+    tx -= tan.x * laneReturn;
+    ty -= tan.y * laneReturn;
+    /* At rest only discourage flakes from entering the last sliver against
+     * the glass. During a face-over-face flip the guard deliberately widens
+     * this return zone, preventing the stale cross-flow from sweeping the
+     * whole population onto the side walls. Keeping the old wide zone active
+     * at rest squeezed every fresh spawn into a central column. */
+    const sideStart = span * (0.92 - 0.06 * inversionGuard);
+    const sideDepth = Math.max(0, Math.abs(along) - sideStart);
+    if (sideDepth > 0) {
+      const wallReturn = Math.sign(along) * sideDepth *
+        (0.35 + 1.1 * inversionGuard);
+      tx -= tan.x * wallReturn;
+      ty -= tan.y * wallReturn;
+    }
 
     /* The surface is a ceiling. Buoyancy would otherwise carry the glitter
      * straight through the waterline and into the headspace, where there is
@@ -2878,33 +3723,105 @@ function fixedStep(dt, time) {
     p.vy += (ty - p.vy) * k;
 
     // Third law: whatever drag the liquid applied to the flake, the flake
-    // applies back. Rising glitter therefore drives upwelling plumes, and
-    // the liquid it displaces has to come down somewhere else.
+    // applies back. Settling glitter displaces carrier upward and gives the
+    // suspension its slow recirculating plumes.
     scatterForce(p.x, p.y, (flow.x - p.vx) * p.mass * COUPLE,
                            (flow.y - p.vy) * p.mass * COUPLE);
     depositConc(p.x, p.y, p.r * p.r * Math.PI);
 
-    const ox = p.x, oy = p.y;
     p.x += p.vx * dt; p.y += p.vy * dt;
+    const attemptedX = p.x, attemptedY = p.y;
     // Half the local vorticity is the rotation rate of a fluid element,
     // and a small suspended particle simply goes with it.
-    p.spin += (0.5 * sampleCurl(p.x, p.y) + p.spinRate * 6) * dt;
-    if (clampInside(p, pad)) hitWall(p, ox, oy);
+    p.spin += (0.5 * sampleCurl(p.x, p.y) * particleFlow +
+               p.spinRate * 6 * flutterDrive) * dt;
+    if (clampInside(p, pad)) hitWall(p, attemptedX, attemptedY);
+    if (clampUnderSurface(p, Math.max(0.5, p.r * 0.35))) clampInside(p, pad);
+    stepDepth(p, dt, 0.82);
+  }
+
+  /* The micro layer runs at 20 Hz. Its grains are sub-pixel flecks with short
+   * response times, so display interpolation hides the third-rate step. That
+   * makes room for twice the visible glitter without doubling fluid samples. */
+  microTick++;
+  if (microTick % 3 === 0) {
+    const mdt = dt * 3;
+    for (const p of microGlitter) {
+      sampleFlow(p.x, p.y, flow);
+      const crossKeep = (1 - inversionGuard) * (1 - inversionGuard);
+      let fallX = gDir.x, fallY = gDir.y;
+      if (Math.abs(fallX) < 0.12 && Math.abs(fallY) > 0.88) {
+        fallX = 0; fallY = Math.sign(fallY);
+      }
+      const flowAlong = flow.x * fallX + flow.y * fallY;
+      const carriedX = fallX * flowAlong + (flow.x - fallX * flowAlong) * crossKeep;
+      const carriedY = fallY * flowAlong + (flow.y - fallY * flowAlong) * crossKeep;
+      const drift = p.terminal * p.settleScale * p.density * gMag * settleRate;
+      let tx = carriedX * particleFlow + fallX * drift;
+      let ty = carriedY * particleFlow + fallY * drift;
+      sampleGasAvoid(p.x, p.y, gasAvoid);
+      const voidSlip = 7 + motionActivity * 18;
+      tx += gasAvoid.x * voidSlip;
+      ty += gasAvoid.y * voidSlip;
+      const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
+      const cascadeStraighten = cascadeSpreadHold *
+        (p.density > 0 ? 0.88 : 0.68);
+      const cascadeCross = tx * tan.x + ty * tan.y;
+      tx -= tan.x * cascadeCross * cascadeStraighten;
+      ty -= tan.y * cascadeCross * cascadeStraighten;
+      const laneError = along - p.releaseLane * cascadeLanePolarity * span;
+      const laneReturn = laneError * cascadeSpreadHold *
+        (p.density > 0 ? 0.19 : 0.09);
+      tx -= tan.x * laneReturn;
+      ty -= tan.y * laneReturn;
+      const sideStart = span * (0.92 - 0.06 * inversionGuard);
+      const sideDepth = Math.max(0, Math.abs(along) - sideStart);
+      if (sideDepth > 0) {
+        const wallReturn = Math.sign(along) * sideDepth *
+          (0.35 + 1.1 * inversionGuard);
+        tx -= tan.x * wallReturn;
+        ty -= tan.y * wallReturn;
+      }
+      const depth = depthOf(p.x, p.y);
+      if (depth > -p.r) {
+        const into = tx * up.x + ty * up.y;
+        if (into > 0) { tx -= up.x * into; ty -= up.y * into; }
+      }
+      const k = 1 - Math.exp(-mdt / 0.055);
+      p.vx += (tx - p.vx) * k;
+      p.vy += (ty - p.vy) * k;
+      p.x += p.vx * mdt; p.y += p.vy * mdt;
+      const attemptedX = p.x, attemptedY = p.y;
+      if (clampInside(p, pad)) hitWall(p, attemptedX, attemptedY);
+      if (clampUnderSurface(p, Math.max(0.35, p.r * 0.30))) clampInside(p, pad);
+      stepDepth(p, mdt, 0.55);
+    }
+    microPathsDirty = true;
   }
 
   const invDt = 1 / Math.max(dt, 1e-4);
   for (const b of bubbles) {
     sampleFlow(b.x, b.y, flow);
 
+    /* The grid flow changes in cell-sized steps as a bubble crosses it. A
+     * real bubble samples the liquid over its whole diameter, not at one
+     * mathematical point, so low-pass the local carrier before using it for
+     * both advection and acceleration. This removes resting pixel jitter
+     * while retaining the quicker response during an intentional shake. */
+    const flowTau = 0.18 - motionActivity * 0.10;
+    const flowK = 1 - Math.exp(-dt / flowTau);
+    b.sfx += (flow.x - b.sfx) * flowK;
+    b.sfy += (flow.y - b.sfy) * flowK;
+
     /* Vortex shedding. The zigzag frequency follows speed over diameter, so
      * a bubble that stalls in the flow stops weaving and a fast one weaves
      * quickly — and `weave` is zero below the critical size, so fine fizz
      * rises straight. Before, every bubble wove at a fixed rate whatever it
      * was doing. */
-    const rvx = b.vx - flow.x, rvy = b.vy - flow.y;
+    const rvx = b.vx - b.sfx, rvy = b.vy - b.sfy;
     const rel = Math.hypot(rvx, rvy);
     b.phase += WEAVE_ST * rel / (2 * b.r) * dt;
-    const wob = Math.sin(b.phase) * b.weave * rel * 0.5;
+    const wob = Math.sin(b.phase) * b.weave * rel * 0.18;
 
     /* Added mass, and the one thing about a bubble that relaxing toward the
      * flow can never reproduce.
@@ -2920,15 +3837,52 @@ function fixedStep(dt, time) {
      * sample follows the bubble) rather than by the container's: what the
      * liquid actually did is what the bubble responds to.
      */
-    const ax = (flow.x - b.pfx) * invDt, ay = (flow.y - b.pfy) * invDt;
-    b.pfx = flow.x; b.pfy = flow.y;
+    const rawAx = (b.sfx - b.pfx) * invDt;
+    const rawAy = (b.sfy - b.pfy) * invDt;
+    b.pfx = b.sfx; b.pfy = b.sfy;
+    const leadTau = 0.22 - motionActivity * 0.13;
+    const leadK = 1 - Math.exp(-dt / leadTau);
+    b.leadAx += (rawAx - b.leadAx) * leadK;
+    b.leadAy += (rawAy - b.leadAy) * leadK;
     const lead = 2 * b.tau;               // 3x the fluid, less the 1x it rides
-    const lx = Math.max(-260, Math.min(260, ax * lead));
-    const ly = Math.max(-260, Math.min(260, ay * lead));
+    /* Added-mass lead matters during a turn, but feeding a bubble's own quiet
+     * airlift circulation back at full gain forms a self-sustaining wall jet.
+     * Close that loop as the shaker settles while preserving the fast lead
+     * during real handset motion. */
+    const leadGain = motionActivity;
+    const lx = Math.max(-220, Math.min(220, b.leadAx * lead)) * leadGain;
+    const ly = Math.max(-220, Math.min(220, b.leadAy * lead)) * leadGain;
 
     const climb = b.rise * gMag;
-    const tx = flow.x - gDir.x * climb - gDir.y * wob + lx;
-    const ty = flow.y - gDir.y * climb + gDir.x * wob + ly;
+    const bubbleFlow = 0.035 + motionActivity * 0.965;
+    let tx = b.sfx * bubbleFlow - gDir.x * climb - gDir.y * wob + lx;
+    let ty = b.sfy * bubbleFlow - gDir.y * climb + gDir.x * wob + ly;
+
+    /* Capillary centring at the free surface. A large bubble pressed into the
+     * rounded shoulder has less room and a stronger pressure gradient on its
+     * wall side, so it migrates back toward the broad middle of the lens.
+     * Without this, tangential flow could park every large bubble at the two
+     * ends indefinitely. Smaller bubbles may still roam nearly the full span. */
+    const approach = depthOf(b.x, b.y);
+    const size = Math.min(1, b.r / Math.max(1, maxBubble));
+    const along = (b.x - CX) * tan.x + (b.y - CY) * tan.y;
+    const freeSpan = span * (0.82 - size * 0.22);
+    const shoulder = Math.max(0, Math.abs(along) - freeSpan);
+    if (shoulder > 0) {
+      /* Wall-induced lift acts during the whole ascent; pressure on the narrow
+       * wall-side gap pushes a rising bubble back into the body. It strengthens
+       * further when that bubble reaches the curved surface shoulder. */
+      const nearSurface = approach > -b.r * 3.2;
+      const returnGain = (0.55 + size * 1.20) * (nearSurface ? 1.65 : 1);
+      const returnSpeed = Math.sign(along) * shoulder * returnGain;
+      tx -= tan.x * returnSpeed;
+      ty -= tan.y * returnSpeed;
+    }
+    if (approach > -b.r * 3.2) {
+      const tangentSpeed = b.vx * tan.x + b.vy * tan.y;
+      tx -= tan.x * tangentSpeed * (0.16 + size * 0.28);
+      ty -= tan.y * tangentSpeed * (0.16 + size * 0.28);
+    }
     const k = 1 - Math.exp(-dt / b.tau);
     b.vx += (tx - b.vx) * k;
     b.vy += (ty - b.vy) * k;
@@ -2941,9 +3895,10 @@ function fixedStep(dt, time) {
       depositVoid(b.x, b.y, b.alpha * Math.PI * b.r * b.r / (cell * cell));
     }
 
-    const ox = b.x, oy = b.y;
     b.x += b.vx * dt; b.y += b.vy * dt;
-    if (clampInside(b, pad)) hitWall(b, ox, oy);
+    const attemptedX = b.x, attemptedY = b.y;
+    const bubblePad = Math.max(pad, b.r * 1.08);
+    if (clampInside(b, bubblePad)) hitWall(b, attemptedX, attemptedY);
 
     // Oblate when climbing: a rising bubble is flattened perpendicular to
     // its motion, and the faster it goes the more so.
@@ -2951,7 +3906,7 @@ function fixedStep(dt, time) {
      * percent, and rendering it at 0.22 turned every bubble into an egg. */
     const target = Math.min(0.07, Math.hypot(b.vx, b.vy) / (b.rise + 60) * 0.2);
     b.squash += (target - b.squash) * Math.min(1, dt * 5);
-    b.z = Math.max(-1, Math.min(1, b.z + b.zDrift * dt));
+    stepDepth(b, dt, 1.15);
 
     /* The free surface is a lid.
      *
@@ -2964,28 +3919,25 @@ function fixedStep(dt, time) {
     const d = depthOf(b.x, b.y);
     const perch = b.r * 0.36;
     if (d > -b.r * 0.9) {
+      /* Once the film touches the free surface, buoyancy no longer keeps
+       * accelerating the bubble through it. Cancel that normal component at
+       * contact, not only after the centre has already overshot the line. */
+      const vn = b.vx * up.x + b.vy * up.y;
+      if (vn > 0) { b.vx -= up.x * vn; b.vy -= up.y * vn; }
       if (d > perch) {
         const over = d - perch;
         b.x -= up.x * over; b.y -= up.y * over;
-        const vn = b.vx * up.x + b.vy * up.y;
-        if (vn > 0) { b.vx -= up.x * vn; b.vy -= up.y * vn; }
       }
+      clampInside(b, bubblePad);
       if (!b.fading) {
         b.rest += dt;
-        /* Film drainage, and it has to be slow.
-         *
-         * A big bubble's film holds more liquid and takes proportionally
-         * longer to thin to the point where it goes — and in a gel this
-         * viscous, laden with whatever keeps the glitter in suspension, that
-         * is tens of seconds rather than one or two. Which matters for more
-         * than the bubble it applies to: bubbles at the surface are packed
-         * against each other, so it is where coalescence actually happens,
-         * and a foam coarsens by exactly that. Bursting them after a second
-         * and a half meant nothing ever got the chance to grow — measured
-         * across a hundred seconds, every bubble above 12px died and none
-         * replaced it, with the largest in the vessel collapsing from 31px
-         * to 7. The bubbles the reference shows are made here. */
-        if (b.rest > 10 + b.r * 1.4) { b.fading = true; burstRipple(b); }
+        /* Surface-film drainage. Larger bubbles remain longer, but a varied
+         * 5–10 second window lets them join the headspace before a flip can
+         * accumulate a stationary foam bank. Variation prevents a row of
+         * bubbles from popping in synchrony. */
+        if (b.rest > (3 + b.r * 0.28) * b.drain) {
+          b.fading = true; burstRipple(b);
+        }
       }
     } else if (!b.fading) {
       b.rest = 0;
@@ -3014,6 +3966,17 @@ function fixedStep(dt, time) {
   // most expensive thing the bubbles do.
   stepFizz(dt);
 
+  // Z motion changes draw order. Resort a few times a second rather than
+  // every frame; the depth movement is deliberately slow and continuous.
+  depthSortTime += dt;
+  if (depthSortTime >= 0.25) {
+    depthSortTime = 0;
+    stars.sort((a, b) => a.z - b.z);
+    bubbles.sort((a, b) => a.z - b.z);
+    starSplit = depthSplit(stars);
+    bubbleSplit = depthSplit(bubbles);
+  }
+
   coalesceTick = !coalesceTick;
   if (coalesceTick) coalesce(dt * 2);
 
@@ -3039,6 +4002,28 @@ function fixedStep(dt, time) {
  */
 let mergeCount = 0;
 let coalesceTick = false;
+
+function separateBubblePair(a, b, dx, dy, dz, d, planarD, touch, dt, zScale) {
+  const overlap = touch - d;
+  if (planarD > 1e-3) {
+    const nx = dx / planarD, ny = dy / planarD;
+    const move = overlap * 0.52 * planarD / d;
+    a.x -= nx * move; a.y -= ny * move;
+    b.x += nx * move; b.y += ny * move;
+    const separateSpeed = Math.min(70, overlap * 3.5) * dt;
+    a.vx -= nx * separateSpeed; a.vy -= ny * separateSpeed;
+    b.vx += nx * separateSpeed; b.vy += ny * separateSpeed;
+  }
+  if (Math.abs(dz) > 1e-3) {
+    const moveZ = overlap * 0.52 * Math.abs(dz) / d / zScale;
+    const signZ = Math.sign(b.z - a.z);
+    a.z = Math.max(-1, Math.min(1, a.z - signZ * moveZ));
+    b.z = Math.max(-1, Math.min(1, b.z + signZ * moveZ));
+  }
+  clampInside(a, Math.max(Math.min(RX, RY) * 0.03, a.r * 1.08));
+  clampInside(b, Math.max(Math.min(RX, RY) * 0.03, b.r * 1.08));
+}
+
 function coalesce(dt) {
   for (let i = 0; i < bubbles.length; i++) {
     const a = bubbles[i];
@@ -3046,15 +4031,39 @@ function coalesce(dt) {
     for (let j = i + 1; j < bubbles.length; j++) {
       const b = bubbles[j];
       if (b.fading || b.alpha < 0.9) continue;
-      /* Only bubbles at a similar depth can touch — but the window was
-       * tight enough that wake attraction pulled bubbles into a cluster it
-       * then forbade them to merge out of, and they sat there overlapping
-       * as a tangle of rings. A bubble is a sphere: if their centres are
-       * within a radius in the plane, they are close enough in depth too. */
-      if (Math.abs(a.z - b.z) > 0.85) continue;
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const d2 = dx * dx + dy * dy;
-      const touch = (a.r + b.r) * 0.9;
+      /* Bubble contact is three-dimensional. Collapsing all depth layers onto
+       * the screen made unrelated front/back bubbles attract and pack into one
+       * apparent raft. Convert the normalised Z separation to chamber pixels
+       * before testing wakes or contact. */
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let planarD = Math.hypot(dx, dy);
+      /* Even bubbles separated through the pouch depth should not repeatedly
+       * draw as one stack of large rings. Give large silhouettes a soft 2-D
+       * exclusion before the true 3-D collision test. Smaller bubbles may
+       * still occlude naturally. */
+      const visualTouch = (a.r + b.r) * 0.98;
+      if ((a.r > 8 * bubbleUnit || b.r > 8 * bubbleUnit) &&
+          planarD < visualTouch) {
+        let nx, ny;
+        if (planarD > 1e-3) {
+          nx = dx / planarD; ny = dy / planarD;
+        } else {
+          const angle = (i * 2.39996 + j * 0.75488) % (Math.PI * 2);
+          nx = Math.cos(angle); ny = Math.sin(angle); planarD = 0;
+        }
+        const move = (visualTouch - planarD) * 0.42;
+        a.x -= nx * move; a.y -= ny * move;
+        b.x += nx * move; b.y += ny * move;
+        clampInside(a, Math.max(Math.min(RX, RY) * 0.03, a.r * 1.08));
+        clampInside(b, Math.max(Math.min(RX, RY) * 0.03, b.r * 1.08));
+        dx = b.x - a.x; dy = b.y - a.y; planarD = Math.hypot(dx, dy);
+      }
+      if (Math.abs(a.z - b.z) > 0.75) continue;
+      const planarD2 = dx * dx + dy * dy;
+      const zScale = Math.min(RX, RY) * 0.12;
+      const dz = (b.z - a.z) * zScale;
+      const d2 = planarD2 + dz * dz;
+      const touch = (a.r + b.r) * 1.02;
 
       /* Wake attraction. A bubble rising in the wake of another meets less
        * resistance, catches up and merges — it is why bubbles in a real
@@ -3063,13 +4072,14 @@ function coalesce(dt) {
        * essentially never happens: zero merges in thirty seconds, so the
        * population only ever shrank as bubbles reached the surface.
        */
-      const reach = (a.r + b.r) * 3.5;
-      if (d2 < reach * reach && d2 > 1e-3) {
+      const reach = (a.r + b.r) * 1.55;
+      if (d2 < reach * reach && planarD > 1e-3) {
         const d = Math.sqrt(d2);
         // Strongest when one trails the other along the rise axis.
-        const align = Math.abs((dx * gDir.x + dy * gDir.y) / d);
-        const pull = WAKE * align * (1 - d / reach) * dt;
-        const nx = dx / d, ny = dy / d;
+        const align = Math.abs((dx * gDir.x + dy * gDir.y) / planarD);
+        const depthFade = 1 - Math.min(1, Math.abs(a.z - b.z) / 0.75);
+        const pull = WAKE * align * depthFade * (1 - d / reach) * dt;
+        const nx = dx / planarD, ny = dy / planarD;
         a.vx += nx * pull; a.vy += ny * pull;
         b.vx -= nx * pull; b.vy -= ny * pull;
       }
@@ -3078,18 +4088,17 @@ function coalesce(dt) {
 
       // Spheres: volumes add, so radii add in cube.
       const merged = Math.cbrt(a.r * a.r * a.r + b.r * b.r * b.r);
-      if (merged > maxBubble) {
-        /* Too big to merge — a large bubble's film takes far longer to
-         * drain than a small one's, so they touch and stay separate. But
-         * they are still solid objects: without pushing apart they sat
-         * inside one another indefinitely, and a bubble at the size cap
-         * plus a neighbour it could never absorb rendered as two rings
-         * drawn over each other. */
+      /* Contact is not instant coalescence. The carrier's surfactant film has
+       * to drain between the bubbles; most brief collisions separate again,
+       * especially in a moving shaker. This prevents rapid merge-respawn
+       * cycles from manufacturing a raft of cap-sized bubbles. */
+      const mergeChance = 1 - Math.exp(-dt * (0.05 + motionActivity * 0.35));
+      if (merged > maxBubble || Math.random() > mergeChance) {
+        /* A film that has not drained, or a pair already too large to merge,
+         * separates instead. Otherwise cap-sized neighbours can remain
+         * interpenetrated and render as stacked rings. */
         const d = Math.sqrt(d2) || 1;
-        const nx = dx / d, ny = dy / d;
-        const push = (touch - d) * 6;
-        a.vx -= nx * push * dt; a.vy -= ny * push * dt;
-        b.vx += nx * push * dt; b.vy += ny * push * dt;
+        separateBubblePair(a, b, dx, dy, dz, d, planarD, touch, dt, zScale);
         continue;
       }
       const wa = a.r * a.r * a.r, wb = b.r * b.r * b.r, wt = wa + wb;
@@ -3099,6 +4108,7 @@ function coalesce(dt) {
       a.vy = (a.vy * wa + b.vy * wb) / wt;
       a.z = (a.z * wa + b.z * wb) / wt;
       setBubbleSize(a, merged);
+      clampInside(a, Math.max(Math.min(RX, RY) * 0.03, a.r * 1.08));
       mergeCount++;
 
       // The smaller one is consumed; respawn it as fresh fizz down below.
@@ -3178,7 +4188,8 @@ function diagSample(now, js) {
   console.log("shaker fps=" + fps.toFixed(1) +
               " js=" + (diagJs / diagFrames).toFixed(1) + "ms" +
               " canvas=" + canvas.width + "x" + canvas.height +
-              " stars=" + stars.length + " bubbles=" + bubbles.length +
+              " stars=" + stars.length + " micro=" + microGlitter.length +
+              " bubbles=" + bubbles.length +
               " fizz=" + fizz.length);
   diagFrames = 0; diagJs = 0; diagSince = now;
 }
@@ -3189,19 +4200,30 @@ function frame(now) {
 }
 
 function start() {
-  resize();
+  if (!resize()) {
+    requestAnimationFrame(start);
+    return;
+  }
   updateBasis();
   // `level` is the surface's signed height along `up`, so a fill above half
   // is a positive offset from centre. Inverting this drains the container.
   level = (CONFIG.fill - 0.5) * 2 * upExtent;
-  targetArea = 0;
+  // Preserve the requested *volume*, not whatever area happens to survive
+  // the first wave/clamp step. Seeding targetArea from the first rendered
+  // polygon made the rounded ceiling quietly turn 97.5% into about 87%.
+  targetArea = polygonArea(outline) * CONFIG.fill;
   h.fill(0); wv.fill(0);
   seed();
   last = performance.now();
   if (!raf) raf = requestAnimationFrame(frame);
 }
 
-window.addEventListener("resize", () => { resize(); targetArea = 0; });
+window.addEventListener("resize", () => {
+  if (resize()) {
+    updateBasis();
+    targetArea = polygonArea(outline) * CONFIG.fill;
+  }
+});
 // A live wallpaper is hidden whenever the launcher is not showing; stopping
 // the loop there is the difference between a wallpaper and a battery leak.
 document.addEventListener("visibilitychange", () => {
