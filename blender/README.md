@@ -12,6 +12,17 @@ flags, so a change is a flag rather than a trip through the UI.
 The interactive counterpart lives in [`../wallpaper`](../wallpaper). A baked
 loop cannot react to being shaken; that one can. Use both.
 
+## Sibling scene
+
+[`water_ring_toy.py`](./water_ring_toy.py) uses this file as its template —
+importing its plan curve, pillow loft, fill-line boolean and render plumbing
+rather than copying them — and builds the nineties handheld water ring-toss
+game: a sealed water window, little plastic rings, pegs to land them on, and a
+button that fires a jet of water and bubbles up through the chamber. See
+[WATER-RING-TOY.md](./WATER-RING-TOY.md). Because the two share this file's
+geometry, a change here lands in both, so re-render both after touching
+`plan_curve`, `pillow` or `cut_above`.
+
 ## Running it
 
 ```bash
