@@ -160,20 +160,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                      help="override the palette's metal as r,g,b in 0-1")
 
     motion = p.add_argument_group("motion")
-    motion.add_argument("--loop", type=int, default=240,
-                        help="frames in the finished loop")
-    motion.add_argument("--fps", type=int, default=30)
-    motion.add_argument("--rise", type=int, default=1,
-                        help="round trips per loop for the slowest blobs. An "
-                             "integer because the loop closes on integer "
-                             "harmonics and nothing else")
-    motion.add_argument("--dwell", type=float, default=0.7,
-                        help="how long a blob loiters at the top and bottom "
-                             "of its climb. Below 1 it hangs at the ends and "
-                             "crosses the middle quickly; 1 is a plain sine")
-    motion.add_argument("--wander", type=float, default=0.55,
-                        help="lateral drift as a fraction of the room a blob "
-                             "has before it touches the glass")
+    motion.add_argument("--loop", type=int, default=0,
+                        help="frames in the finished loop. 0 takes it from "
+                             "the physics: the median blob's own convection "
+                             "period, times --fps. A lava lamp is slow, so "
+                             "that is a long loop — see --fps")
+    motion.add_argument("--fps", type=int, default=12,
+                        help="frames per second. Low on purpose: the wax "
+                             "moves at millimetres per second, and motion "
+                             "that slow is indistinguishable at 12fps from "
+                             "30fps while costing 60%% less to render")
+
+    physics = p.add_argument_group("physics")
+    physics.add_argument("--viscosity", type=float, default=0.014,
+                         help="dynamic viscosity of the medium in Pa s. The "
+                              "single most direct speed control: blob "
+                              "velocity is inversely proportional to it")
+    physics.add_argument("--lift", type=float, default=3.4,
+                         help="density swing of the wax between cold and "
+                              "fully heated, in kg/m3. Small numbers are "
+                              "correct — a lava lamp works because the two "
+                              "liquids are within a gram per litre of each "
+                              "other")
+    physics.add_argument("--lag", type=float, default=20.0,
+                         help="thermal time constant of a blob in seconds. "
+                              "This, not the travel speed, is what sets the "
+                              "period: a blob rises for as long as it holds "
+                              "its heat and sinks once it has lost it")
+    physics.add_argument("--neutral", type=float, default=0.45,
+                         help="normalised temperature at which wax and medium "
+                              "have the same density. Below it wax sinks, "
+                              "above it wax rises")
+    physics.add_argument("--circulation", type=float, default=0.25,
+                         help="strength of the liquid's own convection roll "
+                              "as a fraction of a reference blob's rise "
+                              "speed. It should perturb the wax, not carry "
+                              "it: past about 0.5 the roll traps blobs in "
+                              "mid-column and the lamp stops cycling")
     motion.add_argument("--depth", type=float, default=0.0,
                         help="how much of the vessel's depth the wax uses. 1 "
                              "is the whole bottle; lower crowds it toward the "
@@ -211,12 +234,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     out.add_argument("--glow", type=float, default=1.3,
                      help="how hot the wax self-illuminates where it sits "
                           "over the bulb; 0 leaves it lit only by the bulb")
-    out.add_argument("--heat", type=float, default=0.6,
+    out.add_argument("--glow-reach", type=float, default=0.45,
                      help="how far up the vessel that glow survives, as a "
-                          "fraction of its height. Short and the lamp has a "
-                          "hot floor and a cold column; long and every blob "
-                          "glows equally and the bulb stops being the reason "
-                          "for any of it")
+                          "fraction of its height. Deliberately not tied to "
+                          "--heat: wax carries its heat upward with it, so it "
+                          "goes on glowing well above the layer of liquid "
+                          "that is actually hot")
+    out.add_argument("--heat", type=float, default=0.08,
+                     help="decay length of the liquid's temperature, as a "
+                          "fraction of the vessel's height. This is one "
+                          "number doing two jobs, because they are the same "
+                          "job: it is the profile the blobs heat and cool "
+                          "against, and it is how far up the wax's own glow "
+                          "survives. It has to stay short — the bulk of the "
+                          "column must sit below --neutral or a blob has no "
+                          "reason to ever come back down, and the lamp "
+                          "settles into a still life")
     out.add_argument("--blend-frames", type=int, default=0,
                      help="frames crossfaded across the loop seam. Unlike the "
                           "shaker's sim this loop closes exactly, so the "
@@ -243,7 +276,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.wax_rgb = _colour(args.wax_colour, wax_c)
     args.liquid_rgb = _colour(args.liquid_colour, liquid_c)
     args.metal_rgb = _colour(args.metal_colour, metal_c)
-    args.rise = max(1, args.rise)
     if args.fill <= 0.0:
         args.fill = 0.94 if args.shape == "lamp" else 1.0
     if args.depth <= 0.0:
@@ -319,9 +351,16 @@ def jitter(index: int, salt: int) -> float:
     a dozen blobs spread across their phases instead of clumping the way a
     seeded RNG happily would. It also means `--blobs 12` always builds the
     same twelve blobs, and blob 3 is blob 3 across every render.
+
+    The salt offsets the sequence; it must not scale it. Folding the salt into
+    the multiplier instead — `(index + 1) * (golden + salt * k)` — is the
+    version that was here first, and for salt 5 that multiplier is 1.975,
+    whose fractional part is 0.975. Successive blobs then land 0.025 apart
+    instead of 0.618 apart, so all twelve came out within a quarter-cycle of
+    each other and the lamp pulsed as one mass rather than twelve blobs.
     """
     golden = 0.6180339887498949
-    return ((index + 1) * (golden + salt * 0.2714069263277927)) % 1.0
+    return ((index + 1) * golden + salt * 0.7548776662466927) % 1.0
 
 
 # --------------------------------------------------------------------------
@@ -749,113 +788,326 @@ def backdrop_material(colour, extent: float) -> bpy.types.Material:
 # --------------------------------------------------------------------------
 
 
-def blob_specs(args, low: float, high: float, unit: float) -> list[dict]:
-    """One dict per blob: where it lives, how big, how it moves.
+# The physics runs on a real lamp, not on the scene. Scene units are picked
+# for framing — a full-bleed column is nearly three metres wide — and a
+# buoyancy calculation in those units would describe a bottle the size of a
+# house, which convects nothing like one on a table. So a blob's scene radius
+# is converted into this canonical bottle, integrated here, and the resulting
+# trajectory comes back as fractions of the scene's own column.
+REAL_HEIGHT = 0.17      # m, interior height of the bottle being modelled
+REAL_RADIUS = 0.036     # m, its interior radius
+REF_RADIUS = 0.008      # m, the blob the tuning flags are quoted against
+GRAVITY = 9.81
 
-    A lamp where every blob makes the same climb looks mechanical, so the
-    spread matters more than any single value. Roughly a third of the blobs
-    never reach the top — they lift off the pool, stall in the warm lower
-    third and drop back, which is most of what a real lamp does. The rest run
-    the column. Droplets are the small fast beads that peel off a rising blob
-    and outrun it.
+# Heat transfer is faster in the pool than in flight: the blob is in contact
+# with the heated floor and with the rest of the pool, not with a thin
+# boundary layer of passing liquid.
+POOL_CONTACT = 0.30
+
+
+
+
+def env_temp(zn: float, args) -> float:
+    """Normalised liquid temperature at normalised height.
+
+    1 at the floor, falling exponentially. Everything above roughly
+    `--heat` is below `--neutral`, which is what makes wax up there sink.
+    """
+    if zn <= args.pool:
+        return 1.0
+    return math.exp(-(zn - args.pool) / max(1e-3, args.heat))
+
+
+def rise_speed(radius: float, theta: float, args) -> float:
+    """Terminal velocity in m/s; positive is up.
+
+    Stokes drag, and no inertia in the state at all. The Reynolds number here
+    is around 0.01 and the momentum relaxation time 2*rho*r^2/(9*mu) is a
+    fraction of a second against a cycle of tens of seconds, so a blob is at
+    its terminal velocity essentially always. Carrying momentum would add two
+    stiff variables to the integration and change nothing you could see.
+
+    The r^2 is why size matters so much here: double the blob and it moves
+    four times as fast.
+    """
+    excess = args.lift * (theta - args.neutral)   # kg/m3, positive = lighter
+    return (2.0 / 9.0) * excess * GRAVITY * radius * radius / args.viscosity
+
+
+def reference_speed(args) -> float:
+    return max(1e-9, rise_speed(REF_RADIUS, 1.0, args))
+
+
+def convection(rn: float, zn: float, args) -> tuple[float, float]:
+    """The liquid's own roll: up the middle, out at the top, down the walls,
+    in across the floor — as (u_r, u_z) in m/s.
+
+    Taken from a Stokes stream function rather than written down directly, so
+    the field is divergence free. A roll that did not conserve volume would
+    quietly pump blobs into one corner of the bottle over a long loop.
+    """
+    speed = args.circulation * reference_speed(args)
+    zc = min(1.0, max(0.0, zn))
+    s, c = math.sin(math.pi * zc), math.cos(math.pi * zc)
+    return (-speed * 0.5 * math.pi * rn * (1.0 - rn * rn) * c,
+            speed * (1.0 - 2.0 * rn * rn) * s)
+
+
+def blob_flow(state: tuple[float, float, float], radius: float,
+              args) -> tuple[float, float, float]:
+    """d/dt of (horizontal distance from the axis, height, temperature)."""
+    r, z, theta = state
+    zn = z / REAL_HEIGHT
+    rn = min(1.0, max(0.0, r / REAL_RADIUS))
+    u_r, u_z = convection(rn, zn, args)
+    tau = args.lag * (POOL_CONTACT if zn <= args.pool else 1.0)
+    return (u_r,
+            rise_speed(radius, theta, args) + u_z,
+            (env_temp(zn, args) - theta) / max(1e-3, tau))
+
+
+def blob_step(state, radius: float, args, dt: float):
+    """One RK4 step, with the bottle's walls as hard limits."""
+    def add(base, delta, k):
+        return tuple(b + delta * d for b, d in zip(base, k))
+
+    k1 = blob_flow(state, radius, args)
+    k2 = blob_flow(add(state, dt * 0.5, k1), radius, args)
+    k3 = blob_flow(add(state, dt * 0.5, k2), radius, args)
+    k4 = blob_flow(add(state, dt, k3), radius, args)
+    r, z, theta = (base + dt / 6.0 * (a + 2 * b + 2 * c + d)
+                   for base, a, b, c, d in zip(state, k1, k2, k3, k4))
+    return (min(REAL_RADIUS * 0.92, max(0.0, r)),
+            min(REAL_HEIGHT * 0.985, max(REAL_HEIGHT * 0.012, z)),
+            min(1.0, max(0.0, theta)))
+
+
+def limit_cycle(radius: float, args, dt: float = 0.05, settle: float = 300.0,
+                probe: float = 520.0, samples: int = 192):
+    """Integrate a blob until it forgets where it started, then record one
+    period of what it settled into.
+
+    The oscillation is a relaxation cycle and it is worth being explicit about
+    why one exists at all, because the obvious version of this model does not
+    have one. Give the liquid a gentle temperature gradient and the blob
+    spirals into the height where its density matches the medium and stops
+    there, damped, forever — which is a perfectly good simulation of a lava
+    lamp that has not been switched on. What sustains the cycle is that the
+    bulk of the column sits below the neutral temperature, so the *only* place
+    a blob can become buoyant is in contact with the pool. It charges there,
+    coasts up on stored heat, loses it, and comes back for more.
+
+    Returns (period in seconds, table) where each table row is
+    (height, distance from the axis, |vertical speed|), all normalised.
+    """
+    state = (REAL_RADIUS * 0.35, REAL_HEIGHT * 0.04, 1.0)
+    t = 0.0
+    while t < settle:
+        state = blob_step(state, radius, args, dt)
+        t += dt
+
+    trail = []
+    end = t + probe
+    while t < end:
+        state = blob_step(state, radius, args, dt)
+        t += dt
+        trail.append((t, state))
+
+    heights = [s[1] for _, s in trail]
+    low, high = min(heights), max(heights)
+    if (high - low) / REAL_HEIGHT < 0.03:
+        return None, [(low / REAL_HEIGHT, trail[-1][1][0] / REAL_RADIUS, 0.0)]
+
+    # A Poincare section at the blob's own mid-height rather than at a fixed
+    # one: blobs that only ever bob around the pool never cross a section
+    # placed where the travellers cross it, and would look like they had no
+    # cycle when they have a perfectly good small one.
+    section = (low + high) * 0.5
+    crossings = [i for i in range(1, len(trail))
+                 if heights[i - 1] < section <= heights[i]]
+    if len(crossings) < 2:
+        return None, [(sum(heights) / len(heights) / REAL_HEIGHT,
+                       trail[-1][1][0] / REAL_RADIUS, 0.0)]
+
+    first, last = crossings[0], crossings[-1]
+    period = (trail[last][0] - trail[first][0]) / (len(crossings) - 1)
+    window = trail[crossings[-2]:last + 1]
+
+    table = []
+    for i in range(samples):
+        k = i * (len(window) - 1) / samples
+        j = int(k)
+        f = k - j
+        (_, a), (_, b) = window[j], window[min(j + 1, len(window) - 1)]
+        z = (a[1] + (b[1] - a[1]) * f) / REAL_HEIGHT
+        r = (a[0] + (b[0] - a[0]) * f) / REAL_RADIUS
+        speed = abs(blob_flow((a[0], a[1], a[2]), radius, args)[1])
+        table.append((z, r, speed))
+
+    fastest = max(row[2] for row in table) or 1.0
+    return period, [(z, r, v / fastest) for z, r, v in table]
+
+
+def sample_cycle(table, phase: float) -> tuple[float, float, float]:
+    """Read the cycle table at a fractional phase, wrapping at the ends."""
+    n = len(table)
+    if n == 1:
+        return table[0]
+    x = (phase % 1.0) * n
+    i = int(x)
+    f = x - i
+    a, b = table[i % n], table[(i + 1) % n]
+    return (a[0] + (b[0] - a[0]) * f,
+            a[1] + (b[1] - a[1]) * f,
+            a[2] + (b[2] - a[2]) * f)
+
+
+def blob_specs(args, unit: float) -> list[dict]:
+    """One dict per blob: how big it is, and the cycle the physics gives it.
+
+    Sizes are kept in a narrow band on purpose. Velocity goes as r^2, so a
+    population spanning a factor of two in radius spans a factor of four in
+    speed, and the big ones tear up the column while the small ones sit still.
+    A real lamp's blobs do differ, but not by that much, and the interesting
+    variety comes from phase and from where in the roll a blob sits rather
+    than from making some of them enormous.
+
+    The beads are the exception, and they are honest: wax below about half the
+    reference radius never gains enough buoyancy to leave the lower column, so
+    it loiters down there. That is what small wax does in a real lamp too.
     """
     specs = []
-    span = high - low
-
-    for i in range(args.blobs):
-        reach = 0.45 + 0.55 * jitter(i, 1) ** 0.6
-        # Two round trips for a few of the shorter climbs; a blob that only
-        # goes a third of the way up has time to do it twice, and a blob that
-        # runs the whole column does not.
-        cycles = args.rise * (2 if reach < 0.5 and jitter(i, 2) > 0.45 else 1)
+    for i in range(args.blobs + args.droplets):
+        bead = i >= args.blobs
+        j = i if not bead else i + 17
+        if bead:
+            scale = 0.42 + 0.16 * jitter(j, 1)
+        else:
+            scale = 0.85 + 0.35 * jitter(j, 1)
+        influence = unit * args.blob_size * scale
+        surface = influence * SURFACE_FRACTION
+        # Same fraction of the bottle it would be in the real lamp.
+        real = max(0.002, surface / max(1e-6, unit) * REAL_RADIUS)
+        period, table = limit_cycle(real, args)
         specs.append({
-            "name": f"blob_{i}",
-            "low": low + span * 0.02 * jitter(i, 3),
-            "high": low + span * reach,
-            "radius": unit * args.blob_size * (0.66 + 0.62 * jitter(i, 4)),
-            "cycles": cycles,
-            "phase": jitter(i, 5),
-            "wander": (1 if jitter(i, 6) > 0.5 else 2, jitter(i, 7),
-                       1 if jitter(i, 8) > 0.5 else 2, jitter(i, 9)),
-            "wobble": 2 if jitter(i, 10) > 0.5 else 3,
+            "name": ("bead_%d" % (i - args.blobs)) if bead else "blob_%d" % i,
+            "radius": influence,
+            "surface": surface,
+            "real": real,
+            "period": period,
+            "table": table,
+            "phase": jitter(j, 5),
+            "azimuth": 2.0 * math.pi * jitter(j, 6),
+            # Where in the bottle this blob lives, as a fraction of the
+            # interior radius. See blob_state for why it needs one.
+            "station": 0.10 + 0.66 * jitter(j, 7),
+            "drift": sum(row[1] for row in table) / len(table),
         })
-
-    for i in range(args.droplets):
-        j = i + args.blobs
-        specs.append({
-            "name": f"drop_{i}",
-            "low": low,
-            "high": high,
-            "radius": unit * args.blob_size * (0.16 + 0.14 * jitter(j, 1)),
-            "cycles": args.rise * (2 + int(jitter(j, 2) * 3.0)),
-            "phase": jitter(j, 3),
-            "wander": (2, jitter(j, 4), 3, jitter(j, 5)),
-            "wobble": 4,
-        })
-
     return specs
 
 
-def blob_state(spec: dict, t: float, args, radius_at, low: float,
-               high: float) -> tuple[Vector, Vector]:
+def fit_to_column(specs: list[dict], args) -> float:
+    """Stretch the wax's travel band to fill the vessel above the pool.
+
+    The physics runs in a bottle of its own, and how far up that bottle the
+    wax gets is an outcome, not a setting — a blob rises for exactly as long
+    as its stored heat lasts, and with a real lamp's speeds that is often only
+    half the height. Rendered as-is, the top half of a full-bleed frame would
+    be empty medium.
+
+    So the modelled bottle is rescaled to the one on screen: whatever height
+    the highest blob reached becomes the top of the rendered column. The shape
+    of every trajectory is untouched and so is the timing; only the ruler
+    changes. The pool is excluded from the stretch, so the height a blob
+    recharges at still lines up with the pool that is actually built.
+
+    Returns the fraction of the modelled bottle the wax was using.
+    """
+    tops = [max(row[0] for row in spec["table"]) for spec in specs]
+    top = max(tops) if tops else 1.0
+    pool = min(0.5, args.pool)
+    span = max(1e-3, top * 1.04 - pool)
+    for spec in specs:
+        spec["table"] = [
+            (z if z <= pool else pool + (z - pool) / span * (1.0 - pool),
+             r, v)
+            for z, r, v in spec["table"]]
+    return top
+
+
+def lock_to_loop(specs: list[dict], args) -> float:
+    """Snap every blob's period to a whole number of cycles per loop.
+
+    This is the one place the loop constraint overrides the physics, and it is
+    worth stating plainly rather than hiding: a sequence can only wrap if every
+    blob is back where it started, so each blob's natural period is stretched
+    to the nearest loop/k for integer k. The *shape* of the motion is the
+    physics untouched — the charge, the coast, the hover, the fall — and only
+    its rate is quantised. Choosing --loop 0 sets the loop to the median
+    natural period, which is what makes most of those stretches small.
+
+    Returns the worst stretch as a ratio, for reporting.
+    """
+    seconds = args.loop / float(args.fps)
+    worst = 1.0
+    for spec in specs:
+        if spec["period"] is None:
+            spec["cycles"] = 0            # parked; nothing to snap
+            continue
+        cycles = max(1, int(round(seconds / spec["period"])))
+        spec["cycles"] = cycles
+        stretch = (seconds / cycles) / spec["period"]
+        worst = max(worst, stretch, 1.0 / stretch)
+    return worst
+
+
+def blob_state(spec: dict, t: float, args, radius_at, floor_z: float,
+               ceiling_z: float) -> tuple[Vector, Vector]:
     """Where a blob is and what shape it is, at loop position `t` in [0, 1).
 
-    Height is a sine put through a power that is less than one, which flattens
-    it near the extremes: the blob loiters at the floor and at the ceiling and
-    crosses the middle briskly. That asymmetry is the whole read of a lava
-    lamp — convection is slow to start, quick in transit, slow to turn over —
-    and a plain sine gives you a bobbing ball instead.
+    Nothing is shaped by hand here. The height, the distance from the axis and
+    the speed all come out of the integrated cycle; this only maps them onto
+    the scene's column and turns speed into deformation.
 
-    Every frequency here is an integer multiple of one cycle per loop, so
-    `blob_state(spec, 0)` and `blob_state(spec, 1)` are the same value to the
-    last bit. That is what removes the crossfade the shaker needs.
+    Every blob's phase advances by a whole number of cycles across the loop, so
+    `blob_state(spec, 0)` and `blob_state(spec, 1)` read the same row of the
+    same table, to the last bit.
     """
-    mid = (spec["low"] + spec["high"]) * 0.5
-    half = (spec["high"] - spec["low"]) * 0.5
+    if spec["cycles"] == 0:
+        zn, rn, speed = spec["table"][0]
+    else:
+        zn, rn, speed = sample_cycle(
+            spec["table"], spec["cycles"] * t + spec["phase"])
 
-    def shaped(u: float) -> float:
-        s = math.sin(2 * math.pi * (spec["cycles"] * u + spec["phase"]))
-        return math.copysign(abs(s) ** args.dwell, s)
+    z = floor_z + zn * (ceiling_z - floor_z)
+    room = max(0.0, radius_at(z) - spec["surface"] * 1.2)
 
-    z = mid + half * shaped(t)
+    # The roll is modelled as a single axisymmetric cell, and a single cell
+    # has one answer for where a blob at a given height belongs — so every
+    # blob converges onto the same streamline and the lamp renders as one
+    # thick plume up the middle. A real bottle has several cells, unsteady
+    # and three-dimensional, and blobs also simply cannot occupy each other's
+    # space, which is the interaction this per-blob integration cannot see.
+    #
+    # So each blob keeps its own station in the bottle, and what the roll
+    # contributes is its *change* in radius over the cycle — inward across the
+    # floor, outward under the top — applied around that station.
+    reach = min(max(0.0, (spec["station"] + rn - spec["drift"])
+                    * radius_at(z)), room)
 
-    # Vertical speed, differenced over one frame rather than solved for. The
-    # shaping exponent has an infinite derivative at the midpoint, so the
-    # analytic velocity spikes exactly where the blob is most visible; the
-    # frame-rate difference is the speed the render actually shows.
-    dt = 1.0 / max(1, args.loop)
-    speed = abs(shaped(t + dt) - shaped(t - dt)) / (2 * dt)
-    speed = min(1.0, speed / (2.0 * math.pi * max(1, spec["cycles"])))
-
-    wx, px, wy, py = spec["wander"]
-    drift_x = math.sin(2 * math.pi * (wx * t + px))
-    drift_y = math.sin(2 * math.pi * (wy * t + py))
-
-    # A blob may only stray as far as the glass allows at the height it has
-    # reached, and the bottle narrows as it climbs — so the same drift term
-    # naturally funnels the column together toward the neck.
-    room = max(0.0, radius_at(z) - spec["radius"] * SURFACE_FRACTION * 1.3)
-    reach = room * args.wander
-    x = drift_x * reach
-    # Depth is pulled toward the camera rather than just narrowed: a blob
+    x = reach * math.cos(spec["azimuth"])
+    # Depth is squeezed toward the camera rather than merely narrowed: a blob
     # centred in a wide column sits behind half a metre of absorbing medium,
     # and the colour it loses there is the colour the wallpaper is made of.
-    y = drift_y * reach * 0.7 * args.depth - (1.0 - args.depth) * room * 0.42
+    y = (reach * math.sin(spec["azimuth"]) * args.depth
+         - (1.0 - args.depth) * room * 0.42)
 
-    # Stretch along the climb, flatten against the floor and the ceiling.
-    # Wax necking off the pool draws out into a stalk, and wax arriving at the
-    # cool top spreads against it; both are the shape telling you what the
-    # blob is doing.
-    stretch = 1.0 + args.stretch * speed
-    ends = max(0.0, 1.0 - abs(z - mid) / max(1e-6, half))
-    squash = 0.84 + 0.16 * ends if half > 1e-5 else 1.0
-    wobble = 1.0 + 0.06 * math.sin(2 * math.pi * (spec["wobble"] * t
-                                                  + spec["phase"]))
-    sz = stretch * squash * wobble
-    sxy = wobble / math.sqrt(max(1e-6, stretch * squash))
-
-    # Nothing may leave the liquid or sink through the floor.
-    z = min(max(z, low), high)
+    # Deformation from speed alone. A drop's distortion goes with the capillary
+    # number, viscosity times velocity over surface tension, and the only term
+    # in that varying over a cycle is the velocity — so --stretch is the rest
+    # of it rolled into one coefficient.
+    sz = 1.0 + args.stretch * speed
+    sxy = 1.0 / math.sqrt(sz)
     return Vector((x, y, z)), Vector((sxy, sxy, sz))
 
 
@@ -918,24 +1170,35 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
         element.stiffness = 2.0
 
     # The blob a blob-scale value should describe is the typical one, not
-    # the largest: the spread runs 0.66 to 1.28 of --blob-size.
-    typical = unit * args.blob_size * 0.97 * SURFACE_FRACTION
-    wax = wax_material(basis, height, args.wax_rgb, args.glow, args.heat,
-                       typical)
+    # the largest: the spread runs 0.85 to 1.20 of --blob-size.
+    typical = unit * args.blob_size * SURFACE_FRACTION
+    wax = wax_material(basis, height, args.wax_rgb, args.glow,
+                       args.glow_reach, typical)
     # Only the basis's material is used for the whole family; assigning to the
     # members as well would be dead data.
     basis.data.materials.append(wax)
 
-    # Blobs travel from inside the pool — so they visibly neck out of it —
-    # to just under the meniscus. The top of the run is set by the largest
-    # blob the spread can produce, so no blob breaks the surface of the
-    # medium however the size flags are turned up.
-    biggest = unit * args.blob_size * 1.28 * SURFACE_FRACTION
-    low = floor_z + depth * 0.55
+    # The modelled bottle's floor and ceiling, in scene units. A blob's
+    # normalised height maps onto this span, so the physics' own pool depth
+    # and the pool built above describe the same place.
+    biggest = unit * args.blob_size * 1.20 * SURFACE_FRACTION
+    low = floor_z
     high = max(low + 1e-3, fill_z - biggest * 1.15)
 
+    specs = blob_specs(args, unit)
+    if args.loop <= 0:
+        # No loop length given, so take it from the wax: the median blob's own
+        # period, which is the length at which most of the fleet needs no
+        # stretching at all.
+        periods = sorted(s["period"] for s in specs if s["period"])
+        median = periods[len(periods) // 2] if periods else 20.0
+        args.loop = max(2, int(round(median * args.fps)))
+    used = fit_to_column(specs, args)
+    worst = lock_to_loop(specs, args)
+    report_physics(args, specs, worst, used)
+
     members = []
-    for spec in blob_specs(args, low, high, unit):
+    for spec in specs:
         ball = bpy.data.metaballs.new("Lava")
         # Matched to the basis. Only the basis's copy of these is read, but a
         # member that ever becomes the basis — someone deletes `Lava`, or
@@ -959,7 +1222,39 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
 
     animate_wax(args, members, radius_at, low, high)
     return {"basis": basis, "blobs": [o for o, _ in members], "wax": wax,
-            "low": low, "high": high, "pool_top": pool_top}
+            "low": low, "high": high, "pool_top": pool_top, "specs": specs}
+
+
+def report_physics(args, specs: list[dict], worst: float,
+                   used: float) -> None:
+    """Print what the integrator found, because these numbers are the design.
+
+    A lamp whose blobs all had to be stretched by half to fit the loop is one
+    where the loop length is wrong, and that is invisible in the render — it
+    just looks a bit brisk. So it gets said out loud.
+    """
+    seconds = args.loop / float(args.fps)
+    travelled = [s for s in specs if s["period"] and max(
+        row[0] for row in s["table"]) > 0.5]
+    print(f"[lava] medium {args.viscosity * 1000:.1f} cP; a {REF_RADIUS * 1000:.0f}mm "
+          f"blob at full heat rises {reference_speed(args) * 1000:.1f} mm/s")
+    print(f"[lava] {len(specs)} blobs, {len(travelled)} of them reaching past "
+          f"mid-column; loop {args.loop} frames = {seconds:.1f}s at "
+          f"{args.fps}fps")
+    print(f"[lava] wax used {used:.0%} of the modelled bottle; that band is "
+          f"stretched to fill the rendered column")
+    for spec in specs[:3] + specs[-2:]:
+        if spec["period"] is None:
+            print(f"[lava]   {spec['name']:>8}  r={spec['real'] * 1000:4.1f}mm  "
+                  f"parked in the pool")
+            continue
+        top = max(row[0] for row in spec["table"])
+        print(f"[lava]   {spec['name']:>8}  r={spec['real'] * 1000:4.1f}mm  "
+              f"natural {spec['period']:5.1f}s  x{spec['cycles']} per loop  "
+              f"tops out at {top:.0%}")
+    if worst > 1.35:
+        print(f"[lava] warning: worst blob stretched {worst:.2f}x to fit the "
+              f"loop. --loop 0 picks a length that suits the physics")
 
 
 def animate_wax(args, members, radius_at, low: float, high: float) -> None:
@@ -996,7 +1291,8 @@ def build_scene(args) -> dict:
     scene = bpy.context.scene
     scene.render.fps = args.fps
     scene.frame_start = 1
-    scene.frame_end = args.loop
+    # frame_end is set after the wax is built, not here: with --loop 0 the
+    # loop length is one of the physics' outputs rather than one of its inputs.
 
     aspect = args.res_y / max(1, args.res_x)
     fullbleed = args.shape == "fullbleed"
@@ -1056,6 +1352,7 @@ def build_scene(args) -> dict:
                         args.density / across, args.haze / across))
 
     wax = build_wax(args, interior, fill_z, height)
+    scene.frame_end = args.loop
 
     metal = metal_material(args.metal_rgb)
     fittings = [] if fullbleed else build_fittings(args, height, r_max,
