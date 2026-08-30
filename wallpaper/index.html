@@ -105,9 +105,16 @@ let W = 0, H = 0, DPR = 1;
 let CX = 0, CY = 0, RX = 0, RY = 0;   // container centre and half-extents
 
 function resize() {
+  const nextW = Math.floor(window.innerWidth);
+  const nextH = Math.floor(window.innerHeight);
+  // A WebView can execute the document before its host view is attached. In
+  // that state both dimensions are zero; building the gravity basis then
+  // produces a zero span, and the first simulation step permanently poisons
+  // the height field with NaN values. Wait for a real surface instead.
+  if (nextW < 2 || nextH < 2) return false;
   DPR = Math.min(window.devicePixelRatio || 1, 2);
-  W = Math.floor(window.innerWidth);
-  H = Math.floor(window.innerHeight);
+  W = nextW;
+  H = nextH;
   canvas.width = Math.floor(W * DPR);
   canvas.height = Math.floor(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -126,6 +133,7 @@ function resize() {
   buildOutline();
   buildLayers();
   buildFluid();
+  return true;
 }
 
 /* ---------------------------------------------------------------- geometry */
@@ -271,6 +279,8 @@ let swirlInput = 0;               // twist about the viewing axis
 let haveAccelGravity = false;
 
 function setGravityVector(x, y) {
+  // Bad sensor samples must not enter the long-lived basis or fluid state.
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
   grav.x = x; grav.y = y;
   gMag = Math.min(1, Math.hypot(x, y));
   // Flat on a table there is no meaningful in-plane direction; keep the last
@@ -280,7 +290,7 @@ function setGravityVector(x, y) {
 
 function onMotion(e) {
   const a = e.accelerationIncludingGravity;
-  if (!a || a.x === null) return;
+  if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) return;
   hint.classList.add("hide");
   haveAccelGravity = true;
 
@@ -3189,7 +3199,10 @@ function frame(now) {
 }
 
 function start() {
-  resize();
+  if (!resize()) {
+    requestAnimationFrame(start);
+    return;
+  }
   updateBasis();
   // `level` is the surface's signed height along `up`, so a fill above half
   // is a positive offset from centre. Inverting this drains the container.
@@ -3201,7 +3214,9 @@ function start() {
   if (!raf) raf = requestAnimationFrame(frame);
 }
 
-window.addEventListener("resize", () => { resize(); targetArea = 0; });
+window.addEventListener("resize", () => {
+  if (resize()) targetArea = 0;
+});
 // A live wallpaper is hidden whenever the launcher is not showing; stopping
 // the loop there is the difference between a wallpaper and a battery leak.
 document.addEventListener("visibilitychange", () => {
