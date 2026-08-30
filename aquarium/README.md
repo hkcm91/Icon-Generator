@@ -86,6 +86,24 @@ things turn that from sliding into swimming:
   a bent body genuinely is shorter end to end. Sampling the spine coarsely and
   interpolating is also cheaper than the `atan`/`cos`/`sin` per point it
   replaced.
+- **The wave is in the horizontal plane, not the screen plane.** A fish sweeps
+  its tail side to side; bending the body in the screen plane — the standard 2D
+  cheat — gives every one of them a dolphin's fluke flapping up and down. The
+  spine curve is now the yaw plane: `facing` is cos(yaw), so the along-axis
+  coordinate foreshortens by it while the lateral one projects by sin(yaw), and
+  the dorsal-ventral offset is untouched by the wave. The tail swings fore and
+  aft and its fin narrows as it sweeps away. Measured: 0.32–0.46 body lengths
+  of lateral sweep, projecting to ~0.18 BL on screen for a fish holding course.
+  A fish exactly side-on would show no sweep at all — correct, and dull — so
+  `present` keeps each one a little off square to the glass, and a touch of
+  perspective makes a tail swell as it sweeps toward the viewer, which is most
+  of how a side-on tail beat reads at all.
+- **The caudal fin lags the peduncle.** Past the tail root the wave phase keeps
+  running back, so the fin is still finishing a stroke the body has begun to
+  reverse. A tail in lockstep with its own peduncle reads as a rigid paddle.
+- **The head recoils.** Thrust has to push against something, so the nose swings
+  slightly counter to the tail rather than tracking the path exactly — measured
+  at 0.04–0.08 body lengths.
 - **A fish is not a rope.** `stiff` sets where bending begins and the amplitude
   grows toward the tail from there — near the nose for the eel, a third of the
   way back for everything else, with `waves` giving each species its own number

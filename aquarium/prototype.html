@@ -168,6 +168,7 @@ const SPECIES = [
     stripes: 3, colours: [0, 1, 2], accent: 4,
     len: [112, 168], swim: [0.85, 1.20], stride: 0.75,
     amp: 0.075, waves: 0.60, stiff: 0.32,   // carangiform: bends behind the gills
+    recoil: 0.020, tailLag: 1.5,
   },
   {
     name: 'ribbon',                        // eel-like, long dorsal, small tail
@@ -177,6 +178,7 @@ const SPECIES = [
     stripes: 6, colours: [5, 0, 1], accent: 7,
     len: [155, 225], swim: [0.62, 0.90], stride: 0.50,
     amp: 0.042, waves: 1.15, stiff: 0.06,   // anguilliform: bends the whole length
+    recoil: 0.010, tailLag: 0.6,           // its tail is continuous with the body
   },
   {
     /* Tamed from its first draft. A tall body plus tall fins made an almost
@@ -190,6 +192,7 @@ const SPECIES = [
     stripes: 4, colours: [2, 3, 1], accent: 7,
     len: [104, 150], swim: [0.68, 1.00], stride: 0.70,
     amp: 0.065, waves: 0.55, stiff: 0.38,   // stiff-bodied; works its fins more
+    recoil: 0.016, tailLag: 1.7,
   },
   {
     name: 'darter',                        // small, quick, shoals
@@ -198,7 +201,7 @@ const SPECIES = [
     dorsal: 0.10, anal: 0.07, pectoral: 0.07,
     stripes: 2, colours: [4, 6, 3], accent: 7,
     len: [62, 96], swim: [1.30, 2.00], stride: 0.80,
-    amp: 0.065, waves: 0.70, stiff: 0.30,
+    amp: 0.065, waves: 0.70, stiff: 0.30, recoil: 0.024, tailLag: 1.4,
   },
 ];
 
@@ -388,7 +391,7 @@ function swim(f, dt, depth) {
 
   // Which way to face. The deadband keeps a fish whose goal is directly above
   // it from flickering between left and right.
-  if (Math.abs(dx) > f.len * 0.9) f.facingTo = dx > 0 ? 1 : -1;
+  if (Math.abs(dx) > f.len * 0.9) f.facingTo = (dx > 0 ? 1 : -1) * f.present;
 
   /* Turning has to start and stop rather than switch on. The rate is a state
    * eased toward the demand, so a reversal is an S-curve; driving `facing` at
@@ -397,7 +400,7 @@ function swim(f, dt, depth) {
   const demand = f.facingTo - f.facing;
   const rate = Math.sign(demand) * Math.min(1, Math.abs(demand) * 1.8) * (1.0 + 0.4 * f.bl);
   f.turnRate += (rate - f.turnRate) * Math.min(1, dt * 3);
-  f.facing = Math.max(-1, Math.min(1, f.facing + f.turnRate * dt));
+  f.facing = Math.max(-f.present, Math.min(f.present, f.facing + f.turnRate * dt));
   // A little tilt into the turn.
   f.bank += (f.turnRate * 0.10 - f.bank) * Math.min(1, dt * 3);
 
@@ -417,7 +420,7 @@ function swim(f, dt, depth) {
   f.hoverGoal *= Math.exp(-dt / 1.4);
   f.hover += (f.hoverGoal - f.hover) * Math.min(1, dt * 2);
 
-  const drive = (0.12 + 0.88 * Math.abs(f.facing)) * (1 + f.dash * 0.85) * (1 - f.hover * 0.78);
+  const drive = (0.12 + 0.88 * Math.abs(f.facing) / f.present) * (1 + f.dash * 0.85) * (1 - f.hover * 0.78);
   f.speed += (f.cruise * drive - f.speed) * Math.min(1, dt * 2.4);
 
   /* Personal space. Twelve fish in a phone-sized tank will cheerfully occupy
@@ -509,8 +512,8 @@ function spawnFish() {
        * rotates through edge-on, so `facing` animates between -1 and 1 and the
        * body foreshortens on the way through. Rotating by 180 instead — what
        * this did first — swims the fish upside down, dorsal fin underneath. */
-      facing: CONFIG.pose ? 1 : (rngTop() < 0.5 ? -1 : 1),
-      facingTo: CONFIG.pose ? 1 : (rngTop() < 0.5 ? -1 : 1),
+      facing: CONFIG.pose ? 0.9 : (rngTop() < 0.5 ? -0.9 : 0.9),
+      facingTo: CONFIG.pose ? 0.9 : (rngTop() < 0.5 ? -0.9 : 0.9),
       head: 0,
       len,
       bl,
@@ -529,6 +532,10 @@ function spawnFish() {
       wobF: 0.25 + rngTop() * 0.35,
       bandWidth: 0.10 + rngTop() * 0.24,       // how far it strays from its layer
       turnRate: 0, bank: 0, effort: 1, wave: rngTop() * 6.283,
+      // How square to the glass it swims: cos of its resting yaw, so 0.80 is a
+      // fish angled about 37 degrees away and 0.97 one nearly side-on.
+      present: 0.74 + rngTop() * 0.20,
+      turnSide: rngTop() < 0.5 ? -1 : 1,     // which way its nose swings round
       beat: bl / sp.stride,
       phase: rngTop() * 6.283,
       pulse: rngTop() * 6.283,
@@ -619,7 +626,9 @@ function buildSpine(f) {
   const k = 2 * Math.PI * sp.waves;
   const du = uMax / SPINE_N;
   const swing = Math.min(1.6, 1 + f.burst * 0.6 + f.dash * 0.5 + Math.abs(f.turnRate) * 0.35);
-  let x = 0, y = 0;
+  /* Head recoil. Thrust has to push against something, so the nose swings
+   * slightly counter to the tail rather than tracking the path exactly. */
+  let x = 0, y = sp.recoil * swing * Math.sin(f.wave + f.phase);
   for (let i = 0; i <= SPINE_N; i++) {
     const u = i * du;
     /* Where the body bends. A fish is not a rope: the head is nearly rigid and
@@ -629,7 +638,12 @@ function buildSpine(f) {
     const e = Math.min(1.3, Math.max(0, (u - sp.stiff) / (1 - sp.stiff)));
     const a = sp.amp * swing * (0.035 + e * e);
     // Lateral slope of the wave. Capped below 1 so the tangent stays real.
-    let dy = -a * k * Math.cos(f.wave - u * k + f.phase);
+    /* The caudal fin trails the peduncle. Past u = 1 the phase keeps running
+     * back, so the fin is still finishing a stroke the body has already begun
+     * to reverse — a tail that moves in lockstep with its own peduncle reads
+     * as a rigid paddle. */
+    const lag = Math.max(0, u - 1) * sp.tailLag;
+    let dy = -a * k * Math.cos(f.wave - u * k - lag + f.phase);
     if (dy > 0.85) dy = 0.85; else if (dy < -0.85) dy = -0.85;
     const dx = Math.sqrt(1 - dy * dy);
     spineX[i] = x; spineY[i] = y; spineC[i] = dx; spineS[i] = dy;
@@ -719,7 +733,7 @@ function frame() {
 
     // Steering: wander, plus the flow, plus a soft push away from the edges.
     // Pose mode holds position and heading so the body can be judged.
-    if (CONFIG.pose) { f.head = 0; f.facing = 1; } else swim(f, dt, depth);
+    if (CONFIG.pose) { f.head = 0; f.facing = 0.88; } else swim(f, dt, depth);
 
     f.burst *= Math.exp(-dt / 0.5);
     if (f.burst < 0.004) f.burst = 0;
@@ -742,6 +756,10 @@ function frame() {
     const py = f.y;
     const glow = 0.78 + 0.22 * Math.sin(t * 0.8 + f.pulse);
     buildSpine(f);
+    /* sin(yaw) from cos(yaw), signed by the way this fish turns. A fish held
+     * exactly side-on would show no tail sweep at all — correct, and dull — so
+     * `present` keeps every one of them a little off square to the glass. */
+    const sinPsi = f.turnSide * Math.sqrt(Math.max(0, 1 - f.facing * f.facing));
 
     /* Pectorals scull, at their own faster rate and hardest when the fish is
      * barely moving — which is when a real one rows with them instead of its
@@ -759,18 +777,24 @@ function frame() {
       const by = spineY[i0] + (spineY[i0 + 1] - spineY[i0]) * fr;
       const cs = spineC[i0] + (spineC[i0 + 1] - spineC[i0]) * fr;
       const sn = spineS[i0] + (spineS[i0 + 1] - spineS[i0]) * fr;
+      /* The spine curve is in the HORIZONTAL plane — a fish sweeps its tail
+       * side to side, not up and down, and bending it in the screen plane gave
+       * every one of them a dolphin's fluke. So (bx, by) is along-axis and
+       * lateral, `p.z` is the body's own thickness about that curve, and the
+       * dorsal-ventral offset `p.y` is untouched by the wave. */
+      const hx = bx - p.z * sn;              // along the fish's own axis
+      const hb = by + p.z * cs;              // lateral, in the yaw plane
       const pY = p.y + p.fin * pecSwing;
 
-      /* Negated, because the body is built nose at x = 0 running back to the
-       * tail at x > 1, and travel is toward +x. Without the flip the tail led
-       * and every fish swam backwards — true since the first version, and
-       * invisible until they moved far enough for anyone to tell. */
-      let lx = -(bx - pY * sn) * f.facing;
-      /* Canvas y grows downward while the body is modelled with +y up, so the
-       * perpendicular offset is negated too. Without this the dorsal fin
-       * renders beneath the fish, the anal fin above it and the eye low on the
-       * head: every fish was swimming belly-up. */
-      let ly = -(by + pY * cs);
+      /* Project the yaw plane onto the screen. `facing` is cos(yaw), so the
+       * along-axis coordinate foreshortens by it and the lateral one appears
+       * scaled by sin(yaw): the tail swings fore and aft and its fin narrows
+       * as it sweeps away, which is what a tail beat actually looks like from
+       * the side. Negated because the body runs nose-at-zero back to the tail
+       * while travel is toward +x. */
+      let lx = -(hx * f.facing - hb * sinPsi);
+      // Canvas y grows downward while the body is modelled with +y up.
+      let ly = -pY;
 
       if (f.burst > 0) {
         lx += p.bx * f.burst * 1.5;
@@ -783,10 +807,17 @@ function frame() {
 
       // Depth shading across the flank, and a per-point shimmer so the cloud
       // is alive when the fish is coasting.
-      const flank = 0.82 + 0.18 * p.z * 6;
+      /* Depth now means something: the far end of an angled fish really is
+       * further away. It shades the flank and, through a little perspective,
+       * scales the point — so a tail sweeping toward the glass swells and one
+       * sweeping away shrinks, which is most of how a side-on tail beat reads
+       * at all. */
+      const dz = hx * sinPsi + hb * f.facing;
+      const flank = 0.86 + 0.14 * Math.max(-1, Math.min(1, dz * 1.5));
+      const persp = 1 + Math.max(-0.5, Math.min(0.5, dz)) * 0.30;
       const shimmer = 0.86 + 0.14 * Math.sin(t * 2.6 + p.tw);
       const a = p.a * depth * glow * flank * shimmer * (1 - f.burst * 0.25);
-      if (a > 0.02) drawPoint(sprites[p.c], sx, sy, p.r * size * 2.05, Math.min(1, a));
+      if (a > 0.02) drawPoint(sprites[p.c], sx, sy, p.r * size * 2.05 * persp, Math.min(1, a));
     }
 
     // The fish is a light source: a wide dim halo is what makes the water
