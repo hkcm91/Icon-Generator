@@ -39,10 +39,20 @@ const SIZES = [1024, 512, 192];
  * a screen, which on a square reads far too square for a tile. */
 const CORNER = Math.round(MASTER * 0.22);
 
-/* Settling time. The buoyant glitter has to rise, gather under the surface
- * and stop moving; below about eight seconds the flakes are still visibly
- * climbing and the set looks inconsistent from one colourway to the next. */
-const SETTLE_S = 12;
+/* The icon is captured mid-swirl, not at rest.
+ *
+ * The glitter is buoyant, so left alone it rises, gathers in a band under
+ * the surface and stays there — which empties the lower two thirds of the
+ * tile and wastes most of the area. A shaker is only itself while it is
+ * settling, so the vessel is held still long enough for gravity to converge,
+ * shaken, and then photographed part-way through the float-back, with the
+ * flakes still spread through the body of the liquid.
+ *
+ * RELAX_S is the composition dial: shorter is busier and more chaotic,
+ * longer drifts back towards the empty settled state. */
+const HOLD_S = 2;
+const SHAKE_S = 1.2;
+const RELAX_S = 2.2;
 const DT_MS = 1000 / 60;
 
 /* Held at a tilt rather than upright. A level waterline cuts the tile in half
@@ -140,27 +150,48 @@ for (const [i, way] of COLOURWAYS.entries()) {
     mode: 'full',
     corner: String(CORNER),
     ramp: way.ramp.join(','),
-    // Fizz is seeded by vorticity and there is none in a vessel being held
-    // still, so it would cost frames to simulate nothing.
+    /* Fizz is seeded by vorticity, so the shake does raise some — but it is
+     * the fastest thing in the vessel and has cleared by the time the shot is
+     * taken. Simulating it would only cost frames. */
     fizz: '0',
     ...SUSPENSION,
   });
   await page.goto(`${origin}/?${q}`, { waitUntil: 'load' });
 
-  const frames = Math.round((SETTLE_S * 1000) / DT_MS);
   await page.evaluate(
-    ({ ax, ay, frames, dt }) => {
+    ({ ax, ay, dt, hold, shake, relax }) => {
       window.__shaker.drive();
-      for (let f = 0; f < frames; f++) {
-        // Reported every frame, as a real sensor would: the page low-passes
-        // the reading to separate gravity from hand motion, and a single
-        // sample never converges.
-        window.__shaker.motion(ax, ay, 0, 0);
-        window.__vt += dt;
-        window.__shaker.tick();
-      }
+
+      /* Reported every frame, as a real sensor would. The page low-passes the
+       * reading to split gravity from hand motion, so a single sample never
+       * converges and the vessel would never learn which way is down. */
+      const run = (seconds, at) => {
+        const n = Math.round((seconds * 1000) / dt);
+        for (let f = 0; f < n; f++) {
+          at(f / n, f);
+          window.__vt += dt;
+          window.__shaker.tick();
+        }
+      };
+
+      run(hold, () => window.__shaker.motion(ax, ay, 0, 0));
+
+      /* A shake is hand motion on top of gravity, not a change in which way
+       * down is: two axes at different rates so the path does not close on
+       * itself, which is what makes a real shake stir rather than rock. */
+      run(shake, (u) => {
+        const t = u * shake * Math.PI * 2;
+        window.__shaker.motion(
+          ax + 15 * Math.sin(t * 5.5),
+          ay + 12 * Math.sin(t * 3.7 + 1.1),
+          0,
+          260 * Math.sin(t * 2.3),
+        );
+      });
+
+      run(relax, () => window.__shaker.motion(ax, ay, 0, 0));
     },
-    { ax: AX, ay: AY, frames, dt: DT_MS },
+    { ax: AX, ay: AY, dt: DT_MS, hold: HOLD_S, shake: SHAKE_S, relax: RELAX_S },
   );
 
   for (const size of SIZES) {
