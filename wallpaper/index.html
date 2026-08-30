@@ -71,9 +71,11 @@ const CONFIG = {
    * the surface can sit in the corner arc — or press against the ceiling —
    * and still terminate correctly, so the container can be properly full. */
   fill: num("fill", 0.965),
-  stars: num("stars", 1120),
-  micro: num("micro", 2780),
-  bubbles: num("bubbles", 108),
+  // Exactly twice v1.8's population. Most of the increase stays in the
+  // batched micro layer so the denser fill does not double draw-call cost.
+  stars: num("stars", 1250),
+  micro: num("micro", 6550),
+  bubbles: num("bubbles", 156),
   fizz: num("fizz", 420),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
@@ -1489,7 +1491,7 @@ function seed() {
        * same convection on the same terms, and what settles out is a
        * gradient instead: concentrated under the waterline, thinning down
        * through the body, holding that shape indefinitely. */
-      terminal: (24 + (r / unit) * 7.2) * unit,
+      terminal: (32 + (r / unit) * 9.2) * unit,
       /* Nominally identical film still falls at visibly different rates.
        * Larger cuts hold their edge-on attitude longer and slip faster,
        * while fine cuts spend more of the fall broadside. Keep that spread
@@ -1499,7 +1501,7 @@ function seed() {
                    Math.random() * 0.14,
       // Most commercial PET glitter sinks, a few pieces are near-neutral,
       // and a tiny fraction can be carried upward by the viscous flow.
-      density: Math.random() < 0.88 ? 1 : (Math.random() < 0.75 ? 0.16 : -0.34),
+      density: Math.random() < 0.94 ? 1 : (Math.random() < 0.75 ? 0.16 : -0.34),
       // Flakes rock from side to side as they sink rather than dropping
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
@@ -1530,10 +1532,10 @@ function seed() {
       r: (0.55 + Math.random() * 1.25) * unit,
       hueIdx: (Math.random() * FLAKE_COLOURS.length) | 0,
       phase: Math.random() * Math.PI * 2,
-      terminal: (5 + Math.random() * 10) * unit,
+      terminal: (7 + Math.random() * 14) * unit,
       // Dust-size flecks remain suspended behind the heavier cut foil.
       settleScale: 0.52 + Math.random() * 0.30,
-      density: Math.random() < 0.90 ? 1 : (Math.random() < 0.78 ? 0.10 : -0.26),
+      density: Math.random() < 0.96 ? 1 : (Math.random() < 0.84 ? 0.10 : -0.26),
       z, zHome: z, zv: 0,
     };
     settleSpawn(p, Math.max(1, p.r), 1.0);
@@ -2245,8 +2247,9 @@ function updateDisplayBasis() {
     let d = basisAngle - displayAngle;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
-    // About 0.7 s of additional visual settling at 60 Hz.
-    displayAngle += d * 0.024;
+    // About 0.5 s of additional visual settling at 60 Hz: enough mass to
+    // suppress sensor twitch, but quick enough to follow a deliberate tilt.
+    displayAngle += d * 0.032;
   }
   displayUp.x = Math.cos(displayAngle);
   displayUp.y = Math.sin(displayAngle);
@@ -2453,7 +2456,7 @@ function displayLiquidPolygon() {
     displayLevelReady = true;
   } else {
     // Sensor quantisation must not become a trembling waterline.
-    displayLevel += (displaySolved - displayLevel) * 0.16;
+    displayLevel += (displaySolved - displayLevel) * 0.20;
   }
   return lensLiquidPolygon(displayLevel);
 }
@@ -2742,18 +2745,30 @@ function drawParticles(s0, s1, b0, b1, time) {
 /* Thousands of tiny flecks become seven colour paths and seven fills. The
  * batched squares are small enough to read as foil flashes, while the hero
  * layer above supplies the recognisable stars, diamonds and hex cuts. */
-function drawMicro(front, time) {
-  const paths = FLAKE_COLOURS.map(() => new Path2D());
+let microPathsBack = [], microPathsFront = [];
+
+/* Build both depth passes in one walk. With 6,550 flecks, traversing the
+ * entire population once for the rear and again for the front cost more than
+ * the actual seven batched fills. The split still renders on opposite sides
+ * of the liquid tint; only the bookkeeping is shared. */
+function buildMicroPaths() {
+  microPathsBack = FLAKE_COLOURS.map(() => new Path2D());
+  microPathsFront = FLAKE_COLOURS.map(() => new Path2D());
   for (const p of microGlitter) {
-    if ((p.z >= 0) !== front || depthOf(p.x, p.y) > 0) continue;
+    if (depthOf(p.x, p.y) > 0) continue;
     const zScale = 0.72 + (p.z + 1) * 0.22;
     // Position supplies a deterministic foil angle: it changes as the fleck
     // moves through the liquid and becomes perfectly still when the fleck is.
     const flash = 0.76 + 0.24 * Math.sin(p.phase + p.x * 0.015 + p.y * 0.011);
     const r = Math.max(0.42, p.r * zScale * flash);
     const x = p.x + parallaxX(p.z), y = p.y + parallaxY(p.z);
-    paths[p.hueIdx].rect(x - r, y - r, r * 2, r * 2);
+    (p.z >= 0 ? microPathsFront : microPathsBack)[p.hueIdx]
+      .rect(x - r, y - r, r * 2, r * 2);
   }
+}
+
+function drawMicro(front) {
+  const paths = front ? microPathsFront : microPathsBack;
   ctx.save();
   ctx.globalCompositeOperation = "screen";
   ctx.globalAlpha = front ? 0.82 : 0.38;
@@ -2863,6 +2878,7 @@ function drawBezel() {
  * which is what a real meniscus does anyway. */
 function render(time) {
   const poly = displayLiquidPolygon();
+  buildMicroPaths();
 
   /* Liquid body, graded along the gravity axis so the deep blue always sits
    * at the top of the pour no matter how the phone is held. Filled across
@@ -2912,7 +2928,7 @@ function render(time) {
   // Behind the mid-plane: seen through the full thickness of the liquid, so
   // out of focus and washed toward the liquid's own colour.
   farField = true;
-  drawMicro(false, time);
+  drawMicro(false);
   drawParticles(0, starSplit, 0, bubbleSplit, time);
   farField = false;
 
@@ -3004,7 +3020,7 @@ function render(time) {
   ctx.fillRect(0, 0, W, H);
 
   // Depth pass two: everything in front of the mid-plane, over the tint.
-  drawMicro(true, time);
+  drawMicro(true);
   drawParticles(starSplit, stars.length, bubbleSplit, bubbles.length, time);
   // Fizz last: it is the brightest, smallest thing in the liquid and it
   // belongs on top of the glitter it is swirling around.
@@ -3180,13 +3196,33 @@ function fixedStep(dt, time) {
    * tangential component lets flakes slide along the glass; the old blanket
    * 65% velocity cut plus a nudge toward the centre killed all energy at the
    * wall and welded settled flakes into a hard line along the rim. */
-  const hitWall = (p, ox, oy) => {
-    const dx = p.x - ox, dy = p.y - oy;
+  const hitWall = (p, attemptedX, attemptedY) => {
+    /* `clampInside` has already moved the attempted point back into the
+     * chamber, so this correction is the actual local inward wall normal.
+     * Using the previous frame's point here mistook downward travel along a
+     * side wall for the normal, cancelled it, and made glitter cling. */
+    const dx = p.x - attemptedX, dy = p.y - attemptedY;
     const len = Math.hypot(dx, dy);
     if (len < 1e-6) return;
     const nx = dx / len, ny = dy / len;           // points back inside
     const vn = p.vx * nx + p.vy * ny;
     if (vn < 0) { p.vx -= vn * nx * 1.15; p.vy -= vn * ny * 1.15; }
+
+    /* Low-Re oblate particles near a wall exhibit glancing and sliding
+     * trajectories rather than becoming glued to it. Preserve the component
+     * of gravity tangent to a lateral wall and add a small lubrication-like
+     * separation. At the downhill floor `side` is zero, so a real bed can
+     * still form instead of bouncing forever. */
+    const gn = gDir.x * nx + gDir.y * ny;
+    const side = Math.max(0, 1 - Math.abs(gn) / 0.72);
+    if (side > 0 && p.density > 0) {
+      const slide = p.terminal * p.settleScale * p.density * gMag * settleRate;
+      const gx = gDir.x - nx * gn, gy = gDir.y - ny * gn;
+      p.vx += (gx * 0.42 + nx * 0.14) * slide * side;
+      p.vy += (gy * 0.42 + ny * 0.14) * slide * side;
+      const release = Math.min(1.5, Math.max(0.35, p.r * 0.12)) * side;
+      p.x += nx * release; p.y += ny * release;
+    }
   };
 
   /* Which way is up, for the bubbles' refracted interiors. Gravity, not the
@@ -3198,7 +3234,10 @@ function fixedStep(dt, time) {
   // shake opens the coupling immediately, then it closes over a few seconds
   // as the viscous carrier settles.
   const particleFlow = 0.015 + 0.985 * motionActivity;
-  const settleRate = 0.07 + 0.93 * cascadeActivity;
+  // Even a quiet toy keeps sedimenting smoothly. The old 7% floor looked
+  // frozen once the post-shake tail ended; 12% remains viscous without
+  // turning sensor noise back into visible jitter.
+  const settleRate = 0.12 + 0.88 * cascadeActivity;
 
   for (const p of stars) {
     sampleFlow(p.x, p.y, flow);
@@ -3240,7 +3279,8 @@ function fixedStep(dt, time) {
     /* Hindered rise. A flake climbing through a crowd of other flakes has to
      * drag the liquid they displace down past itself, so a dense suspension
      * moves far slower than a dilute one — Richardson and Zaki's (1 - phi)
-     * to the 4.65. It is why a separating suspension forms a sharp front,
+     * to roughly 4.5 for non-Brownian low-Re particles. It is why a
+     * separating suspension forms a sharp front,
      * with clearing liquid behind it and a packing drift ahead, rather than
      * thinning out evenly everywhere. It is also self-limiting, which is
      * what stops the drift under the waterline collapsing into a single
@@ -3256,7 +3296,7 @@ function fixedStep(dt, time) {
      * 0.336. Hindrance is what the *other* particles do to you. */
     const own = Math.PI * p.r * p.r / (cell * cell);
     const hind = Math.pow(
-      Math.max(0, 1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX), 4.65);
+      Math.max(0, 1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX), 4.5);
     const drift = p.terminal * p.settleScale * p.density * gMag * settleRate *
                   (1.573 / (1 + 0.9 * broad)) * hind;
     /* Dispersion is a perturbation on the drift, not a transport in its own
@@ -3278,9 +3318,9 @@ function fixedStep(dt, time) {
      * bed on the downhill wall, but the tangent edges get a soft carrier
      * return toward the body so glitter cannot remain pasted to both sides. */
     const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
-    const sideDepth = Math.max(0, Math.abs(along) - span * 0.68);
+    const sideDepth = Math.max(0, Math.abs(along) - span * 0.70);
     if (sideDepth > 0) {
-      const wallReturn = Math.sign(along) * sideDepth * 1.35;
+      const wallReturn = Math.sign(along) * sideDepth * 1.85;
       tx -= tan.x * wallReturn;
       ty -= tan.y * wallReturn;
     }
@@ -3305,31 +3345,31 @@ function fixedStep(dt, time) {
                            (flow.y - p.vy) * p.mass * COUPLE);
     depositConc(p.x, p.y, p.r * p.r * Math.PI);
 
-    const ox = p.x, oy = p.y;
     p.x += p.vx * dt; p.y += p.vy * dt;
+    const attemptedX = p.x, attemptedY = p.y;
     // Half the local vorticity is the rotation rate of a fluid element,
     // and a small suspended particle simply goes with it.
     p.spin += (0.5 * sampleCurl(p.x, p.y) * particleFlow +
                p.spinRate * 6 * flutterDrive) * dt;
-    if (clampInside(p, pad)) hitWall(p, ox, oy);
+    if (clampInside(p, pad)) hitWall(p, attemptedX, attemptedY);
     stepDepth(p, dt, 0.82);
   }
 
-  /* The micro layer runs at 30 Hz. Its grains are sub-pixel flecks with short
-   * response times, so interpolation by the display hides the half-rate step;
-   * sampling the full fluid field 1,380 fewer times every second does not. */
+  /* The micro layer runs at 20 Hz. Its grains are sub-pixel flecks with short
+   * response times, so display interpolation hides the third-rate step. That
+   * makes room for twice the visible glitter without doubling fluid samples. */
   microTick++;
-  if ((microTick & 1) === 0) {
-    const mdt = dt * 2;
+  if (microTick % 3 === 0) {
+    const mdt = dt * 3;
     for (const p of microGlitter) {
       sampleFlow(p.x, p.y, flow);
       const drift = p.terminal * p.settleScale * p.density * gMag * settleRate;
       let tx = flow.x * particleFlow + gDir.x * drift;
       let ty = flow.y * particleFlow + gDir.y * drift;
       const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
-      const sideDepth = Math.max(0, Math.abs(along) - span * 0.64);
+      const sideDepth = Math.max(0, Math.abs(along) - span * 0.68);
       if (sideDepth > 0) {
-        const wallReturn = Math.sign(along) * sideDepth * 1.15;
+        const wallReturn = Math.sign(along) * sideDepth * 1.55;
         tx -= tan.x * wallReturn;
         ty -= tan.y * wallReturn;
       }
@@ -3341,9 +3381,9 @@ function fixedStep(dt, time) {
       const k = 1 - Math.exp(-mdt / 0.055);
       p.vx += (tx - p.vx) * k;
       p.vy += (ty - p.vy) * k;
-      const ox = p.x, oy = p.y;
       p.x += p.vx * mdt; p.y += p.vy * mdt;
-      if (clampInside(p, pad)) hitWall(p, ox, oy);
+      const attemptedX = p.x, attemptedY = p.y;
+      if (clampInside(p, pad)) hitWall(p, attemptedX, attemptedY);
       stepDepth(p, mdt, 0.55);
     }
   }

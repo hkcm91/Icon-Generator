@@ -476,11 +476,12 @@ catches nothing, and face-on it flares. Verified by rendering the same flake
 at eight rotations — the bright band held its screen orientation while the
 star turned underneath it.
 
-**Particles with Stokes drag** — response time and terminal velocity both
-scale with radius squared, so fine glitter traces the flow almost exactly
-while big flakes lag, overshoot on a turn and climb faster. That spread is
-what makes the drift look like a real suspension rather than one moving
-sheet. Flakes flutter as they travel; bubbles rise against drag.
+**Particles with viscous drag** — response time scales strongly with size, so
+fine glitter traces the flow almost exactly while big flakes lag and overshoot
+on a turn. Terminal speed is approximately linear in radius for constant-film-
+thickness flakes, rather than the spherical Stokes-law square. That spread is
+what makes the drift look like a real suspension rather than one moving sheet.
+Flakes flutter as they travel; bubbles rise against drag.
 
 **Flakes tumble because the water turns them.** Each flake used to spin at a
 fixed rate assigned at birth, which meant a flake in dead-still water spun
@@ -503,10 +504,18 @@ unchanged, so this adds spread rather than emptying the body faster:
 measured mean factor 1.035, with an edge-on flake moving 1.8x faster than a
 face-on one.
 
+**The wall redirects; it does not glue.** Low-Re oblate bodies near a plane
+wall can glance, reverse, tumble and slide (Mitchell & Spagnolie, JFM 772,
+2015, DOI 10.1017/jfm.2015.222). Collision response therefore uses the actual
+inward correction from the attempted point, preserves gravity tangent to a
+lateral wall, and adds a small separation like a lubrication layer. The
+downhill wall gets none of that lift, so it can still collect a settled bed.
+
 **The glitter is a mixed-density sedimenting suspension.** Most commercial
 PET foil is denser than a water/glycerol carrier, so it cascades downhill
-after a flip instead of floating to the waterline. The model uses 82–86%
-settling flakes, a near-neutral minority, and a very small buoyant minority.
+after a flip instead of floating to the waterline. The model uses 94% settling
+cut flakes and 96% settling microglitter, with a near-neutral minority and a
+very small buoyant minority.
 That mixture makes a satisfying resting bed without making the body above it
 look mechanically empty.
 
@@ -568,8 +577,9 @@ seconds: 319/136/86/79 by quarter becomes 63/115/221/221.
 **A drift has to end somewhere.** A flake climbing through a crowd of other
 flakes has to drag the liquid they displace down past itself, so a dense
 suspension moves far slower than a dilute one — Richardson and Zaki's
-(1 - phi) to the 4.65. That is the reason a separating suspension forms a
-sharp front, with clearing liquid behind it and a packing drift ahead,
+(1 - phi) to about 4.5 for non-Brownian low-Re particles. That is the reason a
+separating suspension forms a sharp front, with clearing liquid behind it and
+a packing drift ahead,
 instead of thinning out evenly everywhere. Without it there is nowhere the
 glitter is going: measured from a well-mixed start, its centre of mass sat
 at 0.49 of the container and was still at 0.53 a hundred seconds later, with
@@ -655,9 +665,9 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `fill` | `0.965` | Fraction of the sealed chamber holding liquid. The remaining air forms one stable, viscously lagged lens |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `1120` | Medium and hero glitter count |
-| `micro` | `2780` | Batched microglitter count |
-| `bubbles` | `108` | Persistent air-bubble count; shake-generated fizz is separate |
+| `stars` | `1250` | Medium and hero glitter count |
+| `micro` | `6550` | Batched microglitter count; with `stars`, exactly twice v1.8's total |
+| `bubbles` | `156` | Persistent air-bubble count; shake-generated fizz is separate |
 | `fizz` | `420` | Ceiling on the fine fizz, which is spawned by the flow rather than seeded |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
