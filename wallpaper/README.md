@@ -614,6 +614,15 @@ pull as hard as an 85-degree one. It comes from a low-pass of the
 accelerometer; the residual is the shake, which is a measured quantity
 rather than a jerk heuristic.
 
+**A 180-degree flip has no sideways projection.** The surface rotation uses
+`sin(angle)` rather than the small-angle `angle` approximation, so an exact
+inversion cannot inject a diagonal ramp. Through-screen motion arms a brief
+inversion guard before the filtered gravity reverses: cross-gravity fluid
+momentum is dissipated, tiny near-flat direction samples are ignored, and the
+lateral boundary layer widens temporarily. Three alternating sensor-driven
+flips held the glitter's mean lateral spread at 68–73px rather than walking it
+outward on every inversion.
+
 The residual also passes through a 0.045g radial dead zone before it reaches
 the solver. That is above the stationary noise floor of the phone sensor but
 well below deliberate hand motion. Its attack is eased to give the liquid
