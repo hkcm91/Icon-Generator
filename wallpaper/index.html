@@ -73,7 +73,7 @@ const CONFIG = {
   fill: num("fill", 0.96),
   stars: num("stars", 980),
   micro: num("micro", 2320),
-  bubbles: num("bubbles", 72),
+  bubbles: num("bubbles", 108),
   fizz: num("fizz", 420),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
@@ -282,6 +282,9 @@ const gravRaw = { x: 0, y: 1, z: 0 }; // running low-pass of the raw reading
 let gravZ = 0;                         // gravity through the screen plane
 let swirlInput = 0;               // twist about the viewing axis
 let haveAccelGravity = false;
+let motionActivity = 0;           // 0 settled, 1 actively moved; slow release
+let cascadeActivity = 0;          // longer tail for post-shake settling speed
+let basisKick = 0;                 // angular motion between gravity bases
 
 /* MEMS accelerometers never become perfectly quiet. On the S24, feeding the
  * residual straight into the solver made a phone resting on a desk look as
@@ -1413,7 +1416,7 @@ function floatSpawn(out, pad, cluster) {
  * gentle bias toward that resting bed, rather than staging every piece under
  * the waterline as though it were buoyant foam. */
 function settleSpawn(out, pad, cluster) {
-  const s = (Math.random() * 2 - 1) * span * 0.92;
+  const s = (Math.random() * 2 - 1) * span * 0.72;
   const f = Math.max(0, Math.min(N - 1,
     Math.round((s + span) / (2 * span) * (N - 1))));
   const floor = surfaceFloor[f] + pad;
@@ -1493,6 +1496,7 @@ function seed() {
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
       flutterPhase: Math.random() * Math.PI * 2,
+      flutterClock: Math.random() * Math.PI * 2,
       flutterAmp: (10 + Math.random() * 20) * unit,
       // Mass proxy for the reaction it exerts back on the liquid.
       mass: (r / unit) * (r / unit),
@@ -2272,6 +2276,7 @@ function updateBasis() {
   while (d > Math.PI) d -= Math.PI * 2;
   while (d < -Math.PI) d += Math.PI * 2;
   if (basisReady && d !== 0) {
+    basisKick = Math.max(basisKick, Math.min(1, Math.abs(d) * 18));
     for (let i = 0; i < N; i++) {
       h[i] -= d * (-span + 2 * span * (i / (N - 1)));
     }
@@ -2616,7 +2621,9 @@ function drawStar(p, time) {
   }
 
   // Full-face flash when it turns square to the source.
-  const flash = Math.sin(time * p.flashRate + p.flashPhase);
+  // A still flake holds one highlight. Tying this to simulation time made the
+  // whole wallpaper sparkle and dim even while the phone sat untouched.
+  const flash = Math.sin(p.spin * 2.3 + p.flashPhase);
   if (flash > 0.86) {
     ctx.globalAlpha = (flash - 0.86) / 0.14;
     ctx.drawImage(flashSprites[p.shape], -rr, -rr, s, s);
@@ -2699,7 +2706,9 @@ function drawMicro(front, time) {
   for (const p of microGlitter) {
     if ((p.z >= 0) !== front || depthOf(p.x, p.y) > 0) continue;
     const zScale = 0.72 + (p.z + 1) * 0.22;
-    const flash = 0.72 + 0.28 * Math.sin(time * 1.7 + p.phase);
+    // Position supplies a deterministic foil angle: it changes as the fleck
+    // moves through the liquid and becomes perfectly still when the fleck is.
+    const flash = 0.76 + 0.24 * Math.sin(p.phase + p.x * 0.015 + p.y * 0.011);
     const r = Math.max(0.42, p.r * zScale * flash);
     const x = p.x + parallaxX(p.z), y = p.y + parallaxY(p.z);
     paths[p.hueIdx].rect(x - r, y - r, r * 2, r * 2);
@@ -2906,7 +2915,8 @@ function render(time) {
    * to where the light has faded out. Blitting the full container instead
    * meant a whole-screen additive composite every frame, and in software
    * rasterisation that alone is most of the frame budget. */
-  const bandTop = -(level + upExtent * 0.18);
+  const lightLevel = displayLevel + (level - displayLevel) * motionActivity;
+  const bandTop = -(lightLevel + upExtent * 0.18);
   const bandH = upExtent * 1.33;
   const reach = upExtent * 1.15;
   const pitch = 2 * span / (N - 1);
@@ -2919,13 +2929,17 @@ function render(time) {
      * per-shaft width give the uneven spacing real caustics have. */
     const seed = Math.sin(i * 12.9898) * 43758.5453;
     const jitter = seed - Math.floor(seed);
-    const amb = 0.05 + 0.032 * Math.sin(time * 0.41 + i * 0.29)
-                     + 0.022 * Math.sin(time * 0.23 - i * 0.73);
-    const a = Math.max(0, Math.min(0.24, amb + curv * 0.010));
+    const shimmer = 0.032 * Math.sin(time * 0.41 + i * 0.29)
+                  + 0.022 * Math.sin(time * 0.23 - i * 0.73);
+    const amb = 0.052 + shimmer * motionActivity;
+    const a = Math.max(0, Math.min(0.24,
+      amb + curv * 0.010 * motionActivity));
     if (a < 0.012) continue;
     const w = pitch * (5 + jitter * 7);
     const sx = -span + 2 * span * (i / (N - 1)) + (jitter - 0.5) * pitch * 4;
-    const sy = -(level + h[i]);
+    const surfaceLift = displayLevel +
+      (level + h[i] - displayLevel) * motionActivity;
+    const sy = -surfaceLift;
     cg.globalAlpha = a;
     cg.drawImage(shaftSprite, toX(sx - w / 2), toY(sy),
                  w / (2 * span) * CAUSTIC_W, reach / bandH * CAUSTIC_H);
@@ -3071,6 +3085,16 @@ function step(dt) {
 
 function fixedStep(dt, time) {
   updateBasis();
+  const inputActivity = Math.min(1,
+    Math.hypot(accel.x, accel.y, accel.z) * 0.72 +
+    Math.abs(swirlInput) * 0.45 + basisKick);
+  const activityEase = inputActivity > motionActivity ? 0.20 : 0.012;
+  motionActivity += (inputActivity - motionActivity) * activityEase;
+  if (motionActivity < 0.004) motionActivity = 0;
+  const cascadeEase = inputActivity > cascadeActivity ? 0.16 : 0.0032;
+  cascadeActivity += (inputActivity - cascadeActivity) * cascadeEase;
+  if (cascadeActivity < 0.004) cascadeActivity = 0;
+  basisKick *= 0.74;
   fluidStep(dt);
   stepWaves(dt);
 
@@ -3129,6 +3153,11 @@ function fixedStep(dt, time) {
    * gradient, and that is anchored to gravity. */
   riseAngle = Math.atan2(gDir.y, gDir.x) + Math.PI * 1.5;
   const gAng = Math.atan2(gDir.y, gDir.x);
+  // Internal convection must not keep a resting toy in perpetual motion. A
+  // shake opens the coupling immediately, then it closes over a few seconds
+  // as the viscous carrier settles.
+  const particleFlow = 0.015 + 0.985 * motionActivity;
+  const settleRate = 0.07 + 0.93 * cascadeActivity;
 
   for (const p of stars) {
     sampleFlow(p.x, p.y, flow);
@@ -3149,11 +3178,13 @@ function fixedStep(dt, time) {
      * sideways, which tips it back — so the sideways force follows the
      * flake's own angle to gravity, and stops when the flake stops turning. */
     /* A falling foil plate alternately stalls broadside and slips edge-on.
-     * Couple that rocking to its orientation, but let the oscillation advance
-     * in time so a quiet flow produces a slow side-to-side cascade instead of
-     * one permanent sideways bias. */
-    const flut = Math.sin(time * p.flutterRate + p.flutterPhase +
-                          2 * (p.spin - gAng)) * p.flutterAmp * gMag;
+     * Advance its flutter clock from actual travel, not wall time: a falling
+     * flake rocks, while a flake that has reached the glass becomes still. */
+    const speed = Math.hypot(p.vx, p.vy);
+    const flutterDrive = Math.min(1, speed / (p.terminal * 0.55 + 5));
+    p.flutterClock += p.flutterRate * flutterDrive * dt;
+    const flut = Math.sin(p.flutterClock + p.flutterPhase +
+                          2 * (p.spin - gAng)) * p.flutterAmp * gMag * flutterDrive;
     sampleDisperse(p.x, p.y, disperse);
     /* A flake is a plate, not a sphere. Broadside to its travel it presents
      * its whole area to the liquid and creeps; edge-on it presents almost
@@ -3185,7 +3216,7 @@ function fixedStep(dt, time) {
     const own = Math.PI * p.r * p.r / (cell * cell);
     const hind = Math.pow(
       Math.max(0, 1 - Math.max(0, sampleConc(p.x, p.y) - own) / PHI_MAX), 4.65);
-    const drift = p.terminal * p.density * gMag *
+    const drift = p.terminal * p.density * gMag * settleRate *
                   (1.573 / (1 + 0.9 * broad)) * hind;
     /* Dispersion is a perturbation on the drift, not a transport in its own
      * right, and left unbounded it does not stay one. A stronger climb
@@ -3197,8 +3228,21 @@ function fixedStep(dt, time) {
     let dx = disperse.x * DISPERSE, dy = disperse.y * DISPERSE;
     const dm = Math.hypot(dx, dy), cap = DISPERSE_CAP;
     if (dm > cap) { const q = cap / dm; dx *= q; dy *= q; }
-    let tx = flow.x + gDir.x * drift - gDir.y * flut + dx;
-    let ty = flow.y + gDir.y * drift + gDir.x * flut + dy;
+    const disperseFlow = 0.05 + 0.95 * motionActivity;
+    dx *= disperseFlow; dy *= disperseFlow;
+    let tx = flow.x * particleFlow + gDir.x * drift - gDir.y * flut + dx;
+    let ty = flow.y * particleFlow + gDir.y * drift + gDir.x * flut + dy;
+
+    /* Release the lateral glass boundary layer. Gravity is allowed to build a
+     * bed on the downhill wall, but the tangent edges get a soft carrier
+     * return toward the body so glitter cannot remain pasted to both sides. */
+    const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
+    const sideDepth = Math.max(0, Math.abs(along) - span * 0.68);
+    if (sideDepth > 0) {
+      const wallReturn = Math.sign(along) * sideDepth * 1.35;
+      tx -= tan.x * wallReturn;
+      ty -= tan.y * wallReturn;
+    }
 
     /* The surface is a ceiling. Buoyancy would otherwise carry the glitter
      * straight through the waterline and into the headspace, where there is
@@ -3224,7 +3268,8 @@ function fixedStep(dt, time) {
     p.x += p.vx * dt; p.y += p.vy * dt;
     // Half the local vorticity is the rotation rate of a fluid element,
     // and a small suspended particle simply goes with it.
-    p.spin += (0.5 * sampleCurl(p.x, p.y) + p.spinRate * 6) * dt;
+    p.spin += (0.5 * sampleCurl(p.x, p.y) * particleFlow +
+               p.spinRate * 6 * flutterDrive) * dt;
     if (clampInside(p, pad)) hitWall(p, ox, oy);
     stepDepth(p, dt, 0.82);
   }
@@ -3237,9 +3282,16 @@ function fixedStep(dt, time) {
     const mdt = dt * 2;
     for (const p of microGlitter) {
       sampleFlow(p.x, p.y, flow);
-      const drift = p.terminal * p.density * gMag;
-      let tx = flow.x + gDir.x * drift;
-      let ty = flow.y + gDir.y * drift;
+      const drift = p.terminal * p.density * gMag * settleRate;
+      let tx = flow.x * particleFlow + gDir.x * drift;
+      let ty = flow.y * particleFlow + gDir.y * drift;
+      const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
+      const sideDepth = Math.max(0, Math.abs(along) - span * 0.64);
+      if (sideDepth > 0) {
+        const wallReturn = Math.sign(along) * sideDepth * 1.15;
+        tx -= tan.x * wallReturn;
+        ty -= tan.y * wallReturn;
+      }
       const depth = depthOf(p.x, p.y);
       if (depth > -p.r) {
         const into = tx * up.x + ty * up.y;

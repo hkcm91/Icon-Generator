@@ -657,7 +657,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `980` | Medium and hero glitter count |
 | `micro` | `2320` | Batched microglitter count |
-| `bubbles` | `72` | Persistent bubble count; shake-generated fizz is separate |
+| `bubbles` | `108` | Persistent air-bubble count; shake-generated fizz is separate |
 | `fizz` | `420` | Ceiling on the fine fizz, which is spawned by the flow rather than seeded |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
