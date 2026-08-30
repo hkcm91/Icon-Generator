@@ -37,6 +37,13 @@ things turn that from sliding into swimming:
   through edge-on, so `facing` animates between -1 and 1 and the body
   foreshortens on the way through. The first version rotated by 180 instead,
   which swam every leftward fish upside down — dorsal fin underneath.
+- **Speed is in body lengths per second, not pixels.** `swim: [0.85, 1.20]`
+  and `stride` (body lengths per tail beat, which sets the beat rate) are the
+  units the animal is described in, so resizing a fish rescales its swimming
+  and its beat automatically. Pixels per second is what this had first, and
+  enlarging the fish left the speeds behind: the big species ended up at
+  0.1–0.2 BL/s, beating hard and going nowhere — swimming in place. A cruising
+  fish does roughly 0.5–2.
 - **Burst and coast.** Fish flick their tails and glide rather than travelling
   at a constant rate, and the tail beat follows effort, so a coasting fish
   beats slowly and a dashing one beats hard. A constant beat is most of what
@@ -46,8 +53,22 @@ things turn that from sliding into swimming:
   was also cut by half, because `flowX` depends only on depth and was sliding
   the whole school the same way at once.
 
+`swim` is the rate through the fish's own water; what it covers on screen comes
+out about a third lower, deliberately — distant fish are scaled down by depth,
+and a fish slows through a turn because there is little to push against
+edge-on. Measured across the four species that is 0.46–1.22 BL/s, or five to
+eight seconds to cross a 540px frame.
+
 The simulation draws on a seeded generator rather than `Math.random`, so with
 the clock hook driving a fixed timestep a recording reproduces frame for frame.
+`window.__aquarium.fish` exposes the school, so those numbers can be measured
+rather than asserted:
+
+```js
+// per fish, over a fixed-step run — key by identity, the school is
+// re-sorted by depth every frame
+for (const f of window.__aquarium.fish) travelled.get(f)  // ... / f.len
+```
 
 ### What it settled
 

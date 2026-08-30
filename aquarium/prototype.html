@@ -145,7 +145,20 @@ const shaftSprite = (() => {
 
 /* ── Species ──────────────────────────────────────────────────────────────
  * Everything a bought model would decide — proportion, fin size, colour — is
- * a number here, which is the whole argument for generating them. */
+ * a number here, which is the whole argument for generating them.
+ *
+ * `swim` is body lengths per second, not pixels per second, and `stride` is
+ * body lengths covered per tail beat. Both are the units the animal is
+ * actually described in, so a fish that is resized swims and beats correctly
+ * without anyone remembering to retune it. Pixels per second is what this had
+ * first, and enlarging the fish left the speeds behind: the big species ended
+ * up at 0.1–0.2 BL/s, beating hard and travelling nowhere. A cruising fish
+ * does roughly 0.5–2.
+ *
+ * `swim` is the fish's rate through its own water. What it covers on screen
+ * comes out about a third lower, and deliberately so: distant fish are scaled
+ * down by depth, and a fish slows through a turn because there is little to
+ * push against edge-on. */
 const SPECIES = [
   {
     name: 'lantern',                       // deep body, big fan tail
@@ -153,7 +166,7 @@ const SPECIES = [
     tailLen: 0.36, tailH: 0.34, fork: 0.34,
     dorsal: 0.15, anal: 0.10, pectoral: 0.09,
     stripes: 3, colours: [0, 1, 2], accent: 4,
-    len: [112, 168], speed: [22, 38], beat: [1.5, 2.1], amp: 0.075,
+    len: [112, 168], swim: [0.85, 1.20], stride: 0.75, amp: 0.075,
   },
   {
     name: 'ribbon',                        // eel-like, long dorsal, small tail
@@ -161,7 +174,7 @@ const SPECIES = [
     tailLen: 0.26, tailH: 0.15, fork: 0.10,
     dorsal: 0.13, anal: 0.09, pectoral: 0.05,
     stripes: 6, colours: [5, 0, 1], accent: 7,
-    len: [155, 225], speed: [16, 28], beat: [0.9, 1.4], amp: 0.150,
+    len: [155, 225], swim: [0.62, 0.90], stride: 0.50, amp: 0.150,
   },
   {
     /* Tamed from its first draft. A tall body plus tall fins made an almost
@@ -173,7 +186,7 @@ const SPECIES = [
     tailLen: 0.38, tailH: 0.28, fork: 0.40,
     dorsal: 0.25, anal: 0.19, pectoral: 0.10,
     stripes: 4, colours: [2, 3, 1], accent: 7,
-    len: [104, 150], speed: [15, 26], beat: [1.1, 1.6], amp: 0.065,
+    len: [104, 150], swim: [0.68, 1.00], stride: 0.70, amp: 0.065,
   },
   {
     name: 'darter',                        // small, quick, shoals
@@ -181,7 +194,7 @@ const SPECIES = [
     tailLen: 0.32, tailH: 0.26, fork: 0.38,
     dorsal: 0.10, anal: 0.07, pectoral: 0.07,
     stripes: 2, colours: [4, 6, 3], accent: 7,
-    len: [62, 96], speed: [40, 64], beat: [2.4, 3.4], amp: 0.085,
+    len: [62, 96], swim: [1.30, 2.00], stride: 0.80, amp: 0.085,
   },
 ];
 
@@ -342,7 +355,7 @@ function swim(f, dt, depth) {
   // Which way to face. The deadband keeps a fish whose goal is directly above
   // it from flickering between left and right.
   if (Math.abs(dx) > f.len * 0.9) f.facingTo = dx > 0 ? 1 : -1;
-  const swing = dt * 1.8;
+  const swing = dt * (1.3 + 0.6 * f.bl);
   f.facing += Math.max(-swing, Math.min(swing, f.facingTo - f.facing));
 
   // Burst and coast. Fish accelerate in flicks and glide between them, and a
@@ -357,6 +370,7 @@ function swim(f, dt, depth) {
    * the same pixels, and overlapping bodies read as one confused blob rather
    * than as a school. Sixty-odd pairs a frame costs nothing at this count. */
   let px = 0, py = 0;
+  const crowd = 0.35;                        // ceiling, as a fraction of cruise
   for (const o of fish) {
     if (o === f) continue;
     const ox = f.x - o.x, oy = f.y - o.y;
@@ -369,13 +383,19 @@ function swim(f, dt, depth) {
     }
   }
 
+  /* Clamped so that crowding can never out-push swimming. The shove is a
+   * fraction of cruise and accumulates per neighbour, so without this a fish
+   * boxed in by three others is carried faster than it can swim. */
+  const pm = Math.hypot(px, py);
+  if (pm > 1) { px /= pm; py /= pm; }
+
   /* The flow used to carry a third of the fish's own speed, which made the
    * whole school slide the same way at once — flowX depends only on y, so
    * neighbours got identical pushes. Fish swim; they are not plankton. */
   f.x += (Math.cos(f.head) * f.speed * f.facing + flowX(f.x, f.y, t) * 0.16
-          + px * f.cruise * 0.7) * depth * dt;
+          + px * f.cruise * crowd) * depth * dt;
   f.y += (Math.sin(f.head) * f.speed * (0.5 + 0.5 * Math.abs(f.facing))
-          + flowY(f.x, f.y, t) * 0.16 + py * f.cruise * 0.7) * depth * dt;
+          + flowY(f.x, f.y, t) * 0.16 + py * f.cruise * crowd) * depth * dt;
 
   // The tank has walls. A fish that runs out of room takes a new goal behind
   // it and turns, which looks like a decision; bouncing looks like a bug.
@@ -413,6 +433,9 @@ function spawnFish() {
      * With a flat 80 the big fish spread their points until the body read as
      * a scatter of orbs rather than as one animal. */
     const n = Math.max(24, Math.min(220, Math.round(CONFIG.points * (len / (112 * scale * DPR)))));
+    // Body lengths per second. `len` already carries the screen scale, so
+    // cruise comes out in pixels and tracks the fish's size by construction.
+    const bl = sp.swim[0] + rng() * (sp.swim[1] - sp.swim[0]);
     fish.push({
       sp, pts: buildFish(sp, rng, n), n,
       x: CONFIG.pose ? W * 0.5 - (sp.len[1] * 0.55) * scale * DPR : rngTop() * W,
@@ -426,11 +449,12 @@ function spawnFish() {
       facingTo: CONFIG.pose ? 1 : (rngTop() < 0.5 ? -1 : 1),
       head: 0,
       len,
-      cruise: CONFIG.pose ? 0 : (sp.speed[0] + rng() * (sp.speed[1] - sp.speed[0])) * scale * DPR * CONFIG.speed,
+      bl,
+      cruise: CONFIG.pose ? 0 : bl * len * CONFIG.speed,
       speed: 0,
       goalX: 0, goalY: 0, goalT: 0,
       dash: 0, dashIn: 1 + rngTop() * 6,
-      beat: sp.beat[0] + rng() * (sp.beat[1] - sp.beat[0]),
+      beat: bl / sp.stride,
       phase: rngTop() * 6.283,
       pulse: rngTop() * 6.283,
       burst: 0,
@@ -507,6 +531,9 @@ function buildBackdrop() {
  *   window.__aquarium.now = () => fixedMilliseconds;
  */
 const clock = { now: () => performance.now() };
+// `fish` is attached below, once the school exists: a host or a capture tool
+// can then measure what the scene is actually doing rather than trusting a
+// comment about it. Swim speeds drifted badly out of scale once already.
 window.__aquarium = clock;
 
 let last = clock.now(), t = 0, fps = 60, draws = 0;
@@ -674,6 +701,7 @@ window.addEventListener('keydown', (e) => {
 resize();
 spawnMotes();
 spawnFish();
+clock.fish = fish;
 setTimeout(() => { const h = document.getElementById('hint'); if (h) h.style.opacity = '0'; }, 6000);
 requestAnimationFrame(frame);
 </script>
