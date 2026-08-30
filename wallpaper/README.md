@@ -778,3 +778,17 @@ the two-blit path, but between them they cover about a tenth of a
 full-screen fill and each blit goes through a rotation. A combined sprite
 for the middle of the size range would save a twentieth of that, which is
 not worth the branch.
+
+## Third-party assets
+
+The marks the container can suspend — `?glyph=heart|bolt|chat|music|camera|gear`
+— are [Material Design Icons](https://github.com/google/material-design-icons),
+filled weight, embedded verbatim as SVG path data in `index.html`. They are
+used under the Apache License 2.0; a copy is at
+<https://www.apache.org/licenses/LICENSE-2.0>. Nothing else in this page is
+third-party: the liquid, the glitter, the bubbles, the bezel and the porcelain
+material the marks are rendered in are all drawn here.
+
+`@material-design-icons/svg` is a devDependency only, so the page has no
+runtime dependency on it. It is the provenance of those six paths and the
+means of extracting more, not something `index.html` loads.

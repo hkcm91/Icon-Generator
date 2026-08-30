@@ -80,6 +80,10 @@ const SUSPENSION = {
   // Icons are small objects seen whole, so the front face is a surface
   // that curves. A wallpaper has no edge to curve over and leaves this off.
   dome: '1',
+  /* The mark takes well over half the tile. The page's own default is sized
+   * for a charm floating in a wallpaper; used for a tile it reads as an
+   * emblem lost in the middle of a large empty container. */
+  glyphScale: '1.25',
   /* The mark takes about half the tile. The page's own default is sized for
    * a charm floating in a wallpaper, which in a launcher grid reads as an
    * emblem lost in the middle of a large empty container. */
