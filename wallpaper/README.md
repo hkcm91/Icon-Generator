@@ -169,8 +169,8 @@ That is why a propeller trails a line of bubbles, and why fizz in a shaken
 vessel shows up in the curls rather than evenly through the volume. So it is
 seeded by vorticity: sample eight points, take the one sitting in the
 strongest swirl, and only while there is agitation to produce it. Measured:
-none at all when the shaker is still, 300 while it is being shaken, and back
-to a handful within three seconds of stopping.
+none at all when the shaker is still, roughly 415–420 during a sustained
+shake, and back to a handful within four seconds of stopping.
 
 It is emitted in puffs rather than one particle at a time, because
 cavitation follows a vortex line and the gas comes out along it — spawning
@@ -622,6 +622,14 @@ pull as hard as an 85-degree one. It comes from a low-pass of the
 accelerometer; the residual is the shake, which is a measured quantity
 rather than a jerk heuristic.
 
+The residual also passes through a 0.045g radial dead zone before it reaches
+the solver. That is above the stationary noise floor of the phone sensor but
+well below deliberate hand motion. Its attack is eased to give the liquid
+mass, while its release is quicker so the wallpaper actually becomes still.
+The fluid drive and surface forcing are deliberately lower than the original
+water-like values, with nearly twice the bulk damping and stronger wall drag;
+the result behaves as a viscous glitter gel rather than a cup of water.
+
 The container is sealed, so it absorbs whatever net force its contents
 exert and the total momentum stays zero. Both the particle reaction and the
 buoyancy of the dense phase have their mean subtracted before they are
@@ -665,9 +673,9 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `fill` | `0.965` | Fraction of the container holding liquid. The ullage is what sloshes — at `1` nothing moves |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `620` | Glitter flake count |
+| `stars` | `760` | Glitter flake count |
 | `bubbles` | `110` | Bubble count |
-| `fizz` | `300` | Ceiling on the fine fizz, which is spawned by the flow rather than seeded |
+| `fizz` | `420` | Ceiling on the fine fizz, which is spawned by the flow rather than seeded |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
