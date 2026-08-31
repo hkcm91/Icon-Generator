@@ -55,6 +55,31 @@ PALETTES = {
     "toxic": ((0.63, 0.98, 0.13), (0.05, 0.14, 0.06), (0.72, 0.74, 0.76)),
     # Cool room, hot lamp: magenta wax in indigo.
     "midnight": ((0.92, 0.16, 0.72), (0.05, 0.04, 0.26), (0.55, 0.57, 0.66)),
+    # Not a lamp at all: luminous pink bubbles in a violet ground. The medium
+    # passes magenta rather than blue, so the whole frame carries the wax's
+    # own hue instead of contrasting with it.
+    "bubblegum": ((1.00, 0.20, 0.62), (0.30, 0.07, 0.38), (0.78, 0.74, 0.84)),
+}
+
+# A look is a set of defaults, not a mode: every flag it sets can still be
+# overridden on the command line, because argparse defaults lose to arguments.
+#
+# `bubbles` is the same pipeline pointed somewhere else entirely. There is no
+# bulb, so nothing is a lamp; the wax glows uniformly instead of over a heater;
+# it is small enough that the convection roll carries it rather than buoyancy,
+# so it never returns to the floor and the band gets mapped onto the whole
+# column; and the population is four times denser and half the size, which is
+# what stops it merging into masses.
+LOOKS = {
+    "lamp": {},
+    "bubbles": {
+        "palette": "bubblegum", "no_pool": True,
+        "blobs": 46, "droplets": 28, "blob_size": 0.10, "size_spread": 1.1,
+        "threshold": 1.0, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
+        "glow": 1.35, "glow_reach": 1.0, "bulb": 0.0, "crown": 700.0,
+        "env": 0.15, "haze": 0.8, "density": 1.6,
+        "view_transform": "Standard",
+    },
 }
 
 
@@ -79,6 +104,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             argv = sys.argv[1:]
 
     p = argparse.ArgumentParser(prog="lava_lamp", description=__doc__)
+    p.add_argument("--look", choices=sorted(LOOKS), default="lamp",
+                   help="a named set of defaults. lamp: a lava lamp. "
+                        "bubbles: a dense field of luminous bubbles with no "
+                        "lamp around it. Every flag a look sets can still be "
+                        "overridden by passing it")
 
     shape = p.add_argument_group("vessel")
     shape.add_argument("--shape", choices=["fullbleed", "lamp"],
@@ -136,6 +166,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     wax = p.add_argument_group("wax")
     wax.add_argument("--blobs", type=int, default=12,
                      help="climbing blobs")
+    wax.add_argument("--size-spread", type=float, default=0.35,
+                     help="how much blob radii vary, as a fraction above the "
+                          "smallest. Kept narrow by default because velocity "
+                          "goes as r-squared, so a population spanning a "
+                          "factor of two in radius spans a factor of four in "
+                          "speed; widen it for a field of bubbles, where the "
+                          "variety matters more than the pace agreeing")
     wax.add_argument("--blob-size", type=float, default=0.28,
                      help="blob influence radius as a fraction of the "
                           "interior radius; the rendered blob is a little "
@@ -144,7 +181,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                      help="small fast beads that run the full column")
     wax.add_argument("--pool", type=float, default=0.10,
                      help="depth of the wax pool on the floor as a fraction "
-                          "of interior height")
+                          "of interior height. It is also the height the "
+                          "physics treats as in contact with the heater, so "
+                          "it is never zero")
+    wax.add_argument("--no-pool", action="store_true",
+                     help="do not build the visible pool. The blobs still "
+                          "recharge in the same layer — the wax film on the "
+                          "floor is simply taken to be too thin to read, "
+                          "which is what a bubble field wants and what a lava "
+                          "lamp does not")
     wax.add_argument("--threshold", type=float, default=0.6,
                      help="metaball field threshold; lower fattens every blob "
                           "and makes them reach for each other sooner")
@@ -231,13 +276,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                             "within")
     out.add_argument("--bulb", type=float, default=140.0,
                      help="wattage of the bulb under the wax")
-    out.add_argument("--crown", type=float, default=14.0,
-                     help="fullbleed only: the light above the column, as a "
-                          "multiple of --bulb. It is the only source the top "
-                          "of the frame has — the bulb is metres away by "
-                          "then and falling off with the square of it — so "
-                          "this is what decides whether the upper column "
-                          "reads as liquid or as black")
+    out.add_argument("--crown", type=float, default=1960.0,
+                     help="fullbleed only: wattage of the light above the "
+                          "column. It is the only source the top of the frame "
+                          "has — the bulb is metres away by then and falling "
+                          "off with the square of it — so this is what "
+                          "decides whether the upper column reads as liquid "
+                          "or as black. In watts rather than as a multiple of "
+                          "--bulb, so that turning the bulb off for a look "
+                          "with no lamp in it does not take the ceiling light "
+                          "down with it")
     out.add_argument("--glow", type=float, default=1.3,
                      help="how hot the wax self-illuminates where it sits "
                           "over the bulb; 0 leaves it lit only by the bulb")
@@ -246,7 +294,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                           "fraction of its height. Deliberately not tied to "
                           "--heat: wax carries its heat upward with it, so it "
                           "goes on glowing well above the layer of liquid "
-                          "that is actually hot")
+                          "that is actually hot. 1.0 or more removes the "
+                          "falloff entirely and lights every blob equally, "
+                          "which is what a bubble field wants and what a lamp "
+                          "with a bulb in the bottom of it does not")
     out.add_argument("--heat", type=float, default=0.08,
                      help="decay length of the liquid's temperature, as a "
                           "fraction of the vessel's height. This is one "
@@ -277,6 +328,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                               "Filmic"])
     out.add_argument("--exposure", type=float, default=0.0)
 
+    # Read --look first, fold its defaults in, then parse for real so that
+    # anything given explicitly still wins.
+    known, _ = p.parse_known_args(argv)
+    p.set_defaults(**LOOKS[known.look])
     args = p.parse_args(argv)
 
     wax_c, liquid_c, metal_c = PALETTES[args.palette]
@@ -342,32 +397,61 @@ def scaled(colour, factor: float):
     return tuple(min(1.0, c * factor) for c in colour)
 
 
-# A metaball element's `radius` is the radius of its *influence*, and the
-# surface lands well inside it: Blender's falloff is stiffness*(1-d²/r²)³, so
-# an isolated ball at the default stiffness 2 and threshold 0.6 renders at
-# sqrt(1 - (0.6/2)^(1/3)) = 0.575 of its radius. Everything that has to touch
-# a wall — the pool ring, a blob's clearance from the glass — measures with
-# this, not with the influence radius.
-SURFACE_FRACTION = 0.575
+# The stiffness every element here is given. Blender's default.
+STIFFNESS = 2.0
+
+
+def surface_fraction(threshold: float, stiffness: float = STIFFNESS) -> float:
+    """How much of an element's influence radius actually renders.
+
+    A metaball element's `radius` is the radius of its *influence*, and the
+    surface lands well inside it: the falloff is `stiffness·(1 − d²/r²)³`, so
+    an isolated ball meets the threshold at `sqrt(1 − (T/s)^(1/3))` of its
+    radius — 0.575 at the defaults. Everything that has to touch a wall (the
+    pool ring, a blob's clearance from the glass) and everything that has to
+    know a blob's true size (the physics, which is all in real millimetres)
+    measures with this rather than with the influence radius.
+
+    It is computed rather than written down because `--threshold` moves it:
+    at 0.9 a blob renders at 0.484 of its influence, not 0.575, and a constant
+    would silently misplace the pool and mis-scale every blob's physics the
+    moment anyone touched that flag.
+    """
+    ratio = min(0.999, max(0.0, threshold / max(1e-6, stiffness)))
+    return math.sqrt(max(1e-4, 1.0 - ratio ** (1.0 / 3.0)))
 
 
 def jitter(index: int, salt: int) -> float:
-    """A deterministic 0-1 value per blob.
+    """A deterministic 0-1 value per blob, independent across salts.
 
-    Low-discrepancy rather than random: successive indices land far apart, so
-    a dozen blobs spread across their phases instead of clumping the way a
-    seeded RNG happily would. It also means `--blobs 12` always builds the
-    same twelve blobs, and blob 3 is blob 3 across every render.
+    This wants two properties that pull against each other, and getting only
+    the first is what the two previous versions of this function did.
 
-    The salt offsets the sequence; it must not scale it. Folding the salt into
-    the multiplier instead — `(index + 1) * (golden + salt * k)` — is the
-    version that was here first, and for salt 5 that multiplier is 1.975,
-    whose fractional part is 0.975. Successive blobs then land 0.025 apart
-    instead of 0.618 apart, so all twelve came out within a quarter-cycle of
-    each other and the lamp pulsed as one mass rather than twelve blobs.
+    It must be *reproducible*: `--blobs 12` always builds the same twelve
+    blobs, and blob 3 is blob 3 across every render. An RNG would do that with
+    a seed.
+
+    It must also be *independent between salts*. Every attribute of a blob —
+    size, phase, station, azimuth — is drawn from this, and if two salts give
+    sequences that are shifts of one another, then blobs that are close in one
+    attribute are close in all of them. That is exactly what happened: with
+    `frac((i+1)·golden + salt·k)`, salt only offsets the sequence, so a blob's
+    station and its azimuth and its phase were the same number plus a
+    constant. Blobs adjacent in the sequence came out the same size, at the
+    same radius, at the same angle, a hair apart in phase — and rendered as
+    beads threaded on a wire, which is not a thing lamps do.
+
+    So: an integer mixer, which decorrelates the salts properly. The even
+    spread that the low-discrepancy sequence was there for is now got where it
+    actually matters — the phases — by stratifying them in blob_specs instead.
     """
-    golden = 0.6180339887498949
-    return ((index + 1) * golden + salt * 0.7548776662466927) % 1.0
+    x = (index * 0x9E3779B1 + salt * 0x85EBCA77 + 0x165667B1) & 0xFFFFFFFF
+    x ^= x >> 16
+    x = (x * 0x7FEB352D) & 0xFFFFFFFF
+    x ^= x >> 15
+    x = (x * 0x846CA68B) & 0xFFFFFFFF
+    x ^= x >> 16
+    return x / 4294967296.0
 
 
 # --------------------------------------------------------------------------
@@ -679,6 +763,17 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     if glow <= 0.0:
         return mat
 
+    if heat >= 1.0:
+        # No falloff at all: every blob is equally luminous wherever it is.
+        # Wrong for a lamp, which needs a bulb at the bottom to be the reason
+        # for anything, and right for a field of bubbles, which has no bulb
+        # and no bottom.
+        emission = socket(bsdf, ("Emission Color", "Emission"))
+        if emission is not None:
+            emission.default_value = rgba(scaled(colour, 1.15))
+        put(bsdf, ("Emission Strength",), glow)
+        return mat
+
     coord = tree.nodes.new("ShaderNodeTexCoord")
     coord.location = (-800, -200)
     coord.object = reference
@@ -706,7 +801,11 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     tint.color_ramp.elements[0].position = 0.0
     tint.color_ramp.elements[0].color = rgba(colour)
     tint.color_ramp.elements[1].position = 1.0
-    tint.color_ramp.elements[1].color = rgba(scaled(colour, 1.8))
+    # A gentle boost. `scaled` clamps per channel, so a large multiplier on a
+    # saturated colour pins its strong channels at 1 and lifts only the weak
+    # one — which is desaturation dressed up as brightness. At 1.8 a hot pink
+    # went to (1, 0.76, 1), and the wax rendered white-lilac.
+    tint.color_ramp.elements[1].color = rgba(scaled(colour, 1.25))
 
     strength = tree.nodes.new("ShaderNodeMath")
     strength.location = (0, -200)
@@ -989,13 +1088,14 @@ def blob_specs(args, unit: float) -> list[dict]:
     specs = []
     for i in range(args.blobs + args.droplets):
         bead = i >= args.blobs
+        count = max(1, args.droplets if bead else args.blobs)
         j = i if not bead else i + 17
         if bead:
             scale = 0.42 + 0.16 * jitter(j, 1)
         else:
-            scale = 0.85 + 0.35 * jitter(j, 1)
+            scale = 0.85 + args.size_spread * jitter(j, 1)
         influence = unit * args.blob_size * scale
-        surface = influence * SURFACE_FRACTION
+        surface = influence * surface_fraction(args.threshold)
         # Same fraction of the bottle it would be in the real lamp.
         real = max(0.002, surface / max(1e-6, unit) * REAL_RADIUS)
         period, table = limit_cycle(real, args)
@@ -1006,7 +1106,12 @@ def blob_specs(args, unit: float) -> list[dict]:
             "real": real,
             "period": period,
             "table": table,
-            "phase": jitter(j, 5),
+            # Phase is stratified rather than drawn: blob i gets slot i of
+            # `count`, jittered within it. Drawn independently, a few dozen
+            # phases leave gaps and pile-ups by chance, and a pile-up is a
+            # clump of blobs moving together.
+            "phase": ((i - args.blobs if bead else i)
+                      + jitter(j, 5)) / float(count),
             "azimuth": 2.0 * math.pi * jitter(j, 6),
             # Where in the bottle this blob lives, as a fraction of the
             # interior radius. See blob_state for why it needs one.
@@ -1017,32 +1122,51 @@ def blob_specs(args, unit: float) -> list[dict]:
 
 
 def fit_to_column(specs: list[dict], args) -> float:
-    """Stretch the wax's travel band to fill the vessel above the pool.
+    """Stretch the wax's travel band to fill the vessel.
 
-    The physics runs in a bottle of its own, and how far up that bottle the
-    wax gets is an outcome, not a setting — a blob rises for exactly as long
-    as its stored heat lasts, and with a real lamp's speeds that is often only
-    half the height. Rendered as-is, the top half of a full-bleed frame would
-    be empty medium.
+    The physics runs in a bottle of its own, and which part of that bottle the
+    wax uses is an outcome, not a setting. Rendered as-is, whatever the wax
+    left unused is empty medium on screen.
 
-    So the modelled bottle is rescaled to the one on screen: whatever height
-    the highest blob reached becomes the top of the rendered column. The shape
-    of every trajectory is untouched and so is the timing; only the ruler
-    changes. The pool is excluded from the stretch, so the height a blob
-    recharges at still lines up with the pool that is actually built.
+    There are two cases, and they need different anchoring:
+
+    Wax that reaches the pool is anchored there. Its floor is a real place —
+    the heated layer it recharges against, and the pool that is actually built
+    and rendered — so the band below the pool passes through untouched and
+    only the part above it is stretched. Rescaling that end too would lift the
+    blobs out of the pool they are supposed to be necking off.
+
+    Wax that never reaches the pool has no such anchor. Small blobs ride the
+    convection roll around a circuit that closes well above the floor: with a
+    field of bubbles nothing came below 40% of the column, and stretching only
+    the top left the bottom of the frame permanently empty. There the whole
+    band is mapped onto the whole column.
+
+    Either way the shape of every trajectory and all of the timing are
+    untouched; only the ruler changes.
 
     Returns the fraction of the modelled bottle the wax was using.
     """
+    lows = [min(row[0] for row in spec["table"]) for spec in specs]
     tops = [max(row[0] for row in spec["table"]) for spec in specs]
+    low = min(lows) if lows else 0.0
     top = max(tops) if tops else 1.0
     pool = min(0.5, args.pool)
-    span = max(1e-3, top * 1.04 - pool)
+
+    if low < pool:
+        floor = pool                      # anchored to the pool it returns to
+    else:
+        floor = 0.02                      # free-floating; use the whole column
+
+    span = max(1e-3, top * 1.04 - (pool if low < pool else low))
+    origin = pool if low < pool else low
     for spec in specs:
         spec["table"] = [
-            (z if z <= pool else pool + (z - pool) / span * (1.0 - pool),
+            (z if (low < pool and z <= pool)
+             else floor + (z - origin) / span * (1.0 - floor),
              r, v)
             for z, r, v in spec["table"]]
-    return top
+    return top - low
 
 
 def lock_to_loop(specs: list[dict], args) -> float:
@@ -1155,11 +1279,11 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
     # slightly uneven top, which is what settled wax looks like.
     #
     # The ring has to be placed off the *rendered* radius, not the influence
-    # radius — see SURFACE_FRACTION. Place it off the influence radius and the
+    # radius — see surface_fraction. Place it off the influence radius and the
     # outer lumps hang through the glass wall.
     depth = max(1e-3, pool_top - floor_z)
     influence = depth * 1.15
-    surface = influence * SURFACE_FRACTION
+    surface = influence * surface_fraction(args.threshold)
     edge = max(surface, radius_at(pool_top) - surface * 1.25)
 
     # Bigger and higher at the centre, smaller and lower at the wall, so the
@@ -1173,15 +1297,17 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
         a = 2 * math.pi * i / 10 + 0.31
         lumps.append((math.cos(a) * edge, math.sin(a) * edge,
                       0.7 + 0.16 * jitter(i, 12), 0.22))
+    if args.no_pool:
+        lumps = []
     for x, y, k, lift in lumps:
         element = data.elements.new(type="BALL")
         element.co = (x, y, floor_z + depth * lift)
         element.radius = influence * k
-        element.stiffness = 2.0
+        element.stiffness = STIFFNESS
 
     # The blob a blob-scale value should describe is the typical one, not
     # the largest: the spread runs 0.85 to 1.20 of --blob-size.
-    typical = unit * args.blob_size * SURFACE_FRACTION
+    typical = unit * args.blob_size * surface_fraction(args.threshold)
     wax = wax_material(basis, height, args.wax_rgb, args.glow,
                        args.glow_reach, typical)
     # Only the basis's material is used for the whole family; assigning to the
@@ -1191,7 +1317,8 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
     # The modelled bottle's floor and ceiling, in scene units. A blob's
     # normalised height maps onto this span, so the physics' own pool depth
     # and the pool built above describe the same place.
-    biggest = unit * args.blob_size * 1.20 * SURFACE_FRACTION
+    biggest = (unit * args.blob_size * 1.20
+               * surface_fraction(args.threshold))
     low = floor_z
     high = max(low + 1e-3, fill_z - biggest * 1.15)
 
@@ -1219,7 +1346,7 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
         element = ball.elements.new(type="BALL")
         element.co = (0.0, 0.0, 0.0)
         element.radius = spec["radius"]
-        element.stiffness = 2.0
+        element.stiffness = STIFFNESS
 
         obj = link(bpy.data.objects.new("Lava", ball))
         # bpy.data.objects.new suffixes a clashing name, which is exactly the
@@ -1489,7 +1616,7 @@ def build_lighting(args, height: float, r_max: float, centre: float,
         # heat gradient has run out, and being directly overhead it lights the
         # top of a blob the way daylight lights the top of a cloud.
         crown = area("Crown", (0.0, 0.0, height * 1.06), (0.0, 0.0, 0.0),
-                     ortho * 0.5, args.bulb * args.crown, (0.86, 0.89, 1.0))
+                     ortho * 0.5, args.crown, (0.86, 0.89, 1.0))
         hide_from_glossy(crown)
     else:
         # Key: low and camera-left, cool against the bulb's warmth.

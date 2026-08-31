@@ -48,6 +48,22 @@ the camera. What that frame shows is what the sequence renders.
 whole convection cycle evenly, so it is a storyboard of the motion for the cost
 of eight stills.
 
+### Looks
+
+`--look` is a named set of defaults, and every flag it sets can still be
+overridden by passing it.
+
+| Look | What it is |
+| --- | --- |
+| `lamp` (default) | A lava lamp: a bulb, a pool, a dozen blobs turning over. |
+| `bubbles` | A dense field of luminous pink bubbles on violet, with no lamp around it. |
+
+`bubbles` is the same pipeline pointed somewhere else. There is no bulb, so
+nothing in frame is a lamp; the wax glows uniformly rather than over a heater;
+and it is small enough that the convection roll carries it instead of buoyancy,
+so it never returns to the floor. Four times the population at half the size is
+what keeps it as a field of bubbles rather than a few merged masses.
+
 ### Presets
 
 | Goal | Flags |
