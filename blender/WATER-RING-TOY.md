@@ -237,12 +237,22 @@ out of. A shallow toy has short pegs whatever else you set.
 **`--fill`** is the water level. The air gap at the top is where the jet
 breaks the surface, so 1.0 gives you a beautiful still and no splash.
 
-**`--density`** is the water's absorption, and it is a tint rather than the
-colour of the toy. The blue you see is mostly the backing plate: a real one of
-these holds about a centimetre of water, which tints almost nothing, and the
+**`--density`** is the water's absorption, and it is a faint tint rather than
+the colour of the toy. The blue you see is mostly the backing plate: a real one
+of these holds about a centimetre of water, which tints almost nothing, and the
 field the rings are seen against is a sheet of coloured plastic at the back.
-Crank the density and every ring becomes a silhouette, because the light that
-reaches one has crossed the volume twice.
+The default is low for that reason — enough that the bottom of the chamber
+reads deeper than the top, and no more. Crank it and every ring becomes a
+silhouette, because the light that reaches one has crossed the volume twice;
+take it to zero and the water stops having a body at all and the chamber
+flattens into one even field of cyan.
+
+The emission on the rings and the pegs is tied to this. It exists only to hold
+them against the absorption, so it comes down as the density does — otherwise
+clearing the water leaves everything in it looking lit from inside. What does
+*not* come down is `--plate`: the plate is the light the whole field is seen
+by, not something compensating for the water, and dimming it alongside the
+density just makes a clear chamber look dull.
 
 **`--plate`** glows the backing plate slightly. It is lit from the front
 through the water, so without it it arrives dimmer than the rings in front of

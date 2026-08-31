@@ -183,7 +183,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                        help="water level as a fraction of chamber height. "
                             "The air gap at the top is where the jet breaks "
                             "the surface, so 1.0 costs the splash")
-    water.add_argument("--density", type=float, default=2.5,
+    water.add_argument("--density", type=float, default=1.1,
                        help="water absorption density. It is a tint, not the "
                             "colour of the toy: crank it and the rings go to "
                             "silhouettes, because every photon that reaches "
@@ -827,7 +827,7 @@ def ring_material(strength: float, args_cycles: float
     # A little emission, to hold the pearl against the plate behind. Any
     # more and the rings stop looking like objects in water and start
     # looking like they are lit from inside.
-    put(bsdf, ("Emission Strength",), 0.38)
+    put(bsdf, ("Emission Strength",), 0.28)
 
     tree.links.new(tinted_out, bsdf.inputs["Base Color"])
     emission = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
@@ -1190,7 +1190,7 @@ def build_hooks(args, built: dict, fill_z: float) -> list[bpy.types.Object]:
     base_r = hook_base(args)
     # The pegs sit against the back wall, which is the deepest water in
     # the chamber; a plain white plastic reads as charcoal from there.
-    material = simple_material("ringtoy_hook", HOOK_COLOUR, 0.22, 0.35)
+    material = simple_material("ringtoy_hook", HOOK_COLOUR, 0.22, 0.25)
 
     back = hook_mount(args, inner)
     # Leaning the post up means -Y rotates toward +Z, so a ring that slides
