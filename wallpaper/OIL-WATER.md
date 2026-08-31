@@ -10,10 +10,12 @@ the sealed-container line, after the [liquid shaker](./README.md) and the
 [bubble wrap](./BUBBLE-WRAP.md), sharing their sensor model, their `ramp`
 parameter and their `window.__shaker` host interface.
 
-![Oil torn by a shake, with two bodies pinched off from the main mass](../docs/screenshots/oil-water.png)
+![Oil wound into a vortex a second after a shake, both liquids showing flow sheen](../docs/screenshots/oil-water.png)
 
-Above: a second after a two-and-a-half second shake. Two separate bodies have
-pinched off from the main mass and are rounding up on their way back to it.
+Above: a second after a two-and-a-half second shake. The oil has been wound
+around an eddy and is rounding itself off again; the light and dark bands
+lying across both liquids are their surfaces being carried by the same
+velocity field, which is where most of the "this is liquid" comes from.
 
 ## Try it
 
@@ -195,6 +197,87 @@ checking itself against the solver — the contour is a separate representation
 of the same field, so a case-table error shows up as the two disagreeing
 rather than as something subtle found later on a phone.
 
+## Making it look like a liquid, which took three goes
+
+The crisp silhouette was necessary and nowhere near sufficient. The first
+version filled the contour with a gradient running down the *screen* and drew
+a hairline around it, and the verdict on it was blunt and correct: it did not
+look like liquid at all. It looked like cut paper — which is exactly what was
+drawn. A flat colour field bounded by an outline is what a paper cutout *is*.
+Nothing in the picture varied with the shape of the thing it was painting, so
+nothing in it could say "body of liquid" rather than "region".
+
+The second version went the other way and stacked six translucent washes —
+inner shadows for thickness, a light flank, a dark flank, a caustic halo — and
+turned the oil brown. Six semi-transparent layers each carrying a different
+idea average to mud, and the additive halo read as a sticker glow.
+
+What was actually missing was not inside the blob at all. Three things were,
+and two of them were bugs rather than matters of taste.
+
+**Every highlight on the page was sub-pixel.** The strokes were specified as
+fractions of a cell, and a cell is about seven CSS pixels — so `cell * 0.055`
+is four tenths of a pixel. The meniscus, the wet line, the rim: all of them
+were being drawn at widths that cannot appear. There was no bright mark
+anywhere in the frame, and **a picture of a liquid with no specular in it is a
+picture of a piece of paper.** Fixing that alone did more than every wash in
+the second version put together.
+
+**The velocity field was not being drawn.** The page had a full fluid solver
+and the only evidence of it on screen was that the silhouette changed shape.
+A still liquid is a mirror; a moving liquid is a mirror being bent, and the
+bright and dark bands sliding across it are the single most recognisable thing
+about the material.
+
+So the surface got a height field of its own: a noise texture that is
+**advected by the same flow that carries the oil**, shaded by dotting its
+gradient into the light. Stir the cell and the ripples wind into the eddies,
+because they are being carried by the velocity field, not drawn on top of one.
+It is pulled slowly back toward a standing pattern as it goes, because
+advection is dissipative and a long shake would otherwise leave a dead mirror
+behind.
+
+Four things about that took measurement rather than judgement:
+
+- **A sum of sine products is a crosshatch.** The first standing pattern was
+  two sinusoids multiplied, which tiles the plane in a regular diamond grid.
+  It read as woven fabric laid over the liquid. Value noise on a lattice,
+  three octaves, fixed it.
+- **Nothing finer than about four cells.** The field is stretched sevenfold on
+  the way to the screen, so an octave near the grid's Nyquist limit does not
+  become fine detail — it becomes visible cell-sized blocks.
+- **The gain cannot be a constant.** Measured, the 90th percentile of the
+  relief signal is 0.11 in a resting cell, 49 while it is being shaken, 2.8
+  two seconds later and 0.4 after ten. Four orders of magnitude. Both fixed
+  values tried were wrong at one end: too high and everything clipped to the
+  rails, leaving only the one-cell transition between them, which upscaled
+  into a staircase and read as a contour map; too low and the surface went
+  flat again. It is normalised against a slow running average of its own
+  magnitude instead, and saturated smoothly rather than clipped, because a
+  hard clamp puts a crease everywhere the field crosses the rail.
+- **Contrast and amplitude are different questions.** Normalising to a
+  constant contrast gave a resting cell the same heavy mottling as a churning
+  one, and a resting cell then read as sponged plaster — because still liquid
+  is not textured at all. The field supplies the shape; the amount of motion
+  in the cell supplies the amplitude. At rest that leaves a whisper of sheen.
+
+On top of the relief there is a **glint** pass: the slope raised to a high
+power, so only the steepest few per cent survive, added rather than blended so
+it can go brighter than anything else in the frame. A lighten-and-darken pass
+is symmetric and a real surface is not — the crests that happen to face the
+lamp send it straight back at you and everything else does not, which is why
+water reads as a scatter of small very bright marks rather than an even
+modulation.
+
+That pass also found a real bug in the solver's boundary handling. `bounds()`
+carried the velocity and the phase field across the wall ring but not the
+ripple, and since advection only writes the interior, the ring kept its seeded
+values while the inside evolved away from them. The relief saw a cliff one
+cell wide all the way round the cell, and the glint, being a high power of the
+slope, turned that cliff into a blown-out white border. Anything defined on
+the grid has to come across the boundary, not just the parts that obviously
+move.
+
 ## Options
 
 Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
@@ -223,23 +306,34 @@ reproducible from the first tick.
 | --- | --- |
 | Frame-rate independence (same impulse at 20 / 60 / 144fps) | identical oil fraction, perimeter, blob count and RMS |
 | Determinism from `seed` | identical run twice; a different seed differs |
-| Mass drift, 75s over 6 shake-and-settle cycles | 3.6 × 10⁻¹⁰; `phi` stays inside [-1, 1] |
+| Mass drift, 75s over 6 shake-and-settle cycles | 8.2 × 10⁻¹⁰; `phi` stays inside [-1, 1] |
 | Rest state | 4px/s RMS (was 126 before the two projection fixes) |
 | A 2.5s shake at 2.5Hz | interface length 220 → ~1000 crossings, up to 26 separate bodies |
 | Settling after that shake | back to one layer in about 20 seconds |
 | Mobility set to zero | interface smears to 96% of the cell and never separates — i.e. it becomes the shaker's dye |
 
-Cost against resolution, on a software rasteriser with no GPU. Unlike the
-other two pages this is mostly **solver** work rather than drawing, so a phone
-will not do dramatically better — which is why the default is 56 and not more:
+Cost against resolution, on a software rasteriser with no GPU:
 
 | `grid` | cells | fps |
 | --- | --- | --- |
-| 40 | 3,480 | 60 |
-| 56 (default) | 6,776 | 45 |
-| 72 | 11,232 | 31 |
-| 88 | 16,808 | 28 |
-| 104 | 23,400 | 19 |
+| 40 | 3,480 | 27 |
+| 56 (default) | 6,776 | 22 |
+| 72 | 11,232 | 19 |
+| 88 | 16,808 | 15 |
+
+Read that table sideways: doubling the cell count costs about a third of the
+frame rate, which means **most of the cost is not the solver**. It is the
+full-screen composite that draws the relief, and a full-screen blend costs the
+same whether the grid under it has forty cells or ninety. Drawing the relief
+and the glint as two separate blended passes halved the frame rate on its own
+— 13fps against 22 — which is why they now ride in one map.
+
+That also means this number understates a phone by more than the other pages'
+do. Blending one full-screen layer is the single thing a GPU is best at and
+the single thing a software rasteriser is worst at; the solver, which is plain
+JavaScript arithmetic either way, is the part that transfers honestly. The
+flat first version of the renderer ran at 45fps here and looked like cut
+paper, which is the trade being made.
 
 That resolution is also the honest limit on what this can be. At 56 cells the
 smallest droplet is five or six cells across, which is a centimetre-scale blob
