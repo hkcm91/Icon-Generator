@@ -231,10 +231,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                             "within")
     out.add_argument("--bulb", type=float, default=140.0,
                      help="wattage of the bulb under the wax")
+    out.add_argument("--crown", type=float, default=14.0,
+                     help="fullbleed only: the light above the column, as a "
+                          "multiple of --bulb. It is the only source the top "
+                          "of the frame has — the bulb is metres away by "
+                          "then and falling off with the square of it — so "
+                          "this is what decides whether the upper column "
+                          "reads as liquid or as black")
     out.add_argument("--glow", type=float, default=1.3,
                      help="how hot the wax self-illuminates where it sits "
                           "over the bulb; 0 leaves it lit only by the bulb")
-    out.add_argument("--glow-reach", type=float, default=0.45,
+    out.add_argument("--glow-reach", type=float, default=0.7,
                      help="how far up the vessel that glow survives, as a "
                           "fraction of its height. Deliberately not tied to "
                           "--heat: wax carries its heat upward with it, so it "
@@ -557,8 +564,11 @@ def liquid_material(reference: bpy.types.Object, height: float,
     slightly out of focus when it is at the back of the vessel and sharp when
     it is against the front wall, without any of it being drawn.
 
-    The density gradient is small and deliberate — the medium sits a little
-    heavier at the floor, where the bulb would otherwise blow it out.
+    The gradient runs the other way from the obvious one. Absorption colour is
+    what the volume *transmits*, so a darker colour higher up means the top of
+    the column absorbs more — and the top is already the part of the frame
+    with the least light reaching it, being furthest from the bulb. Tinting it
+    down as well drove it to near-black. It clears with height instead.
     """
     mat, tree = new_material("lava_medium")
     out = tree.nodes.new("ShaderNodeOutputMaterial")
@@ -586,9 +596,9 @@ def liquid_material(reference: bpy.types.Object, height: float,
     ramp = tree.nodes.new("ShaderNodeValToRGB")
     ramp.location = (0, -200)
     ramp.color_ramp.elements[0].position = 0.0
-    ramp.color_ramp.elements[0].color = rgba(scaled(colour, 1.35))
+    ramp.color_ramp.elements[0].color = rgba(scaled(colour, 0.9))
     ramp.color_ramp.elements[1].position = 1.0
-    ramp.color_ramp.elements[1].color = rgba(scaled(colour, 0.75))
+    ramp.color_ramp.elements[1].color = rgba(scaled(colour, 1.6))
 
     absorb = tree.nodes.new("ShaderNodeVolumeAbsorption")
     absorb.location = (300, -200)
@@ -1479,7 +1489,7 @@ def build_lighting(args, height: float, r_max: float, centre: float,
         # heat gradient has run out, and being directly overhead it lights the
         # top of a blob the way daylight lights the top of a cloud.
         crown = area("Crown", (0.0, 0.0, height * 1.06), (0.0, 0.0, 0.0),
-                     ortho * 0.5, args.bulb * 2.2, (0.86, 0.89, 1.0))
+                     ortho * 0.5, args.bulb * args.crown, (0.86, 0.89, 1.0))
         hide_from_glossy(crown)
     else:
         # Key: low and camera-left, cool against the bulb's warmth.

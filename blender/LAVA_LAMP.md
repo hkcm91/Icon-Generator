@@ -255,6 +255,29 @@ retime the lamp without reshaping it. `--circulation` should stay well under
 become passive tracers, and the buoyancy cycle stops being what you are
 looking at.
 
+## Why the top of the frame goes black
+
+The upper column has almost nothing lighting it. The bulb is metres away by
+then and falling off with the square of that distance; the wax's own glow has
+run out; and the medium absorbs. Three things were compounding it, and only
+one was obvious:
+
+- **The absorption gradient ran the wrong way.** A volume absorption node's
+  colour is what it *transmits*, so tinting it darker toward the top means the
+  top absorbs more — applied to the part of the frame that already had the
+  least light. It clears with height now instead.
+- **`--glow-reach` was short**, so blobs above 45% of the column had no
+  self-illumination at all and went to dark maroon.
+- **`--crown` was far too low.** In full-bleed this light, above the column
+  and pointing down it, is the *only* source the top of the frame has. It is
+  the single biggest lever on that half of the picture, and it now defaults to
+  14× the bulb rather than 2.2×.
+
+Measured on the same frame, mean luminance over the top 30% of the frame went
+from 0.098 to 0.179. Turning `--crown` off entirely gives 0.054, which is what
+the top of the frame looks like with nothing lighting it at all; `--crown 25`
+gives 0.195 and starts to flatten the lamp's gradient.
+
 ## Two lights, and nothing in front of the glass
 
 The lamp lights itself: a warm point source under the pool, and everything else
