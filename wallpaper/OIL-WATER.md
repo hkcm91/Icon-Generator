@@ -10,12 +10,14 @@ the sealed-container line, after the [liquid shaker](./README.md) and the
 [bubble wrap](./BUBBLE-WRAP.md), sharing their sensor model, their `ramp`
 parameter and their `window.__shaker` host interface.
 
-![Oil wound into a vortex a second after a shake, both liquids showing flow sheen](../docs/screenshots/oil-water.png)
+![Rounded interpenetrating lobes of oil and water a second after a shake](../docs/screenshots/oil-water.png)
 
-Above: a second after a two-and-a-half second shake. The oil has been wound
-around an eddy and is rounding itself off again; the light and dark bands
-lying across both liquids are their surfaces being carried by the same
-velocity field, which is where most of the "this is liquid" comes from.
+Above: a second after a two-and-a-half second shake. Every boundary is curved
+and rounding itself off, with a bead of oil already pinched free into the
+water — which is interfacial tension doing the only thing it does, minimising
+perimeter. Before the sign of that force was fixed, the same moment came out
+as spikes and spears. The light and dark bands lying across both liquids are
+their surfaces being carried by the same velocity field.
 
 ## Try it
 
@@ -79,6 +81,56 @@ the field advects but never relaxes, and the page becomes the shaker's dye
 again — measured, the interface smears across 96% of the cell and never
 separates. The relaxation is the immiscibility, and nothing else is.
 
+### The sign of that force was wrong, and it was the whole problem
+
+The Korteweg force is `+mu * grad(phi)` — equal to `-phi * grad(mu)` up to a
+gradient the pressure projection absorbs. This shipped with the minus, which
+is an *anti*-surface tension: a force that pays to make interface rather than
+to remove it.
+
+Check it on a droplet. Oil is `phi = +1` inside, so `phi` falls outward and
+`grad(phi)` points inward. At the rim `mu` is about `-eps² * phi_r / r`, and
+`phi_r` is negative, so `mu` is positive. Positive times inward is inward —
+the Laplace pressure squeezing the drop into the smallest boundary that will
+hold it. With the minus it points outward, and every bump on the interface is
+a bump the force makes bigger.
+
+Everything about how this looked followed from that one character. Blobs had
+corners and spikes and long thin spears, because nothing was pulling them
+round. Filaments never beaded. And the harder the coefficient was driven the
+worse it got — which is why it had been tuned *down* from 900 to 300 over
+several passes, each one reducing a bug rather than a parameter.
+
+The measurement that settles it is one line: **plant a square in still liquid
+and ask whether it becomes a circle.** The isoperimetric quotient `4πA/P²` is
+1.0 for a circle and 0.79 for a square, so this is a number, not an opinion:
+
+| | t=0 | 0.5s | 1s | 2s | 4s | 8s | 16s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| square, wrong sign | 0.81 | 0.82 | 0.81 | 0.76 | 0.65 | 0.51 | **0.47** |
+| square, wrong sign, ×8 coefficient | 0.81 | 0.73 | 0.55 | 0.34 | 0.38 | 0.21 | **0.17** |
+| square, fixed | 0.81 | 0.86 | 0.94 | **0.99** | 1.00 | 1.00 | 1.00 |
+| plus-sign, fixed | 0.69 | 0.78 | 0.93 | **1.00** | 1.00 | 1.00 | 1.00 |
+
+(With gravity switched off, so the only thing acting is the tension. Left on,
+a planted square also rises and deforms, which is a different question.)
+
+It hid for a long time, and the way it hid is the interesting part.
+Allen–Cahn relaxation *is* mean-curvature flow, so the phase field rounds
+shapes on its own, independently of the hydrodynamics. At the mobility this
+originally shipped with, that relaxation was outrunning the bad force and the
+interfaces looked plausible. Lowering the mobility while chasing fragmentation
+took the cover away. So the bug was introduced on the first day and only
+became visible three commits later — long after the code that contained it had
+stopped being what anyone was looking at.
+
+Two things follow that are worth keeping. First, `stats().roundness` is now a
+first-class diagnostic and `__shaker.plant()` is a permanent fixture, because
+the one-line statement of what interfacial tension is *for* is "it minimises
+perimeter", and nothing in the page could ask that question. Second, every
+constant tuned before the fix was tuned against it: the tension coefficient
+has gone back up to 600, and the measurements below were all retaken.
+
 **Mass has to be conserved and Allen–Cahn does not conserve it.** Left alone
 the oil quietly evaporates, smallest droplets first, which on a wallpaper
 means the thing empties itself over an afternoon. The fix is a Lagrange
@@ -88,7 +140,7 @@ fluid, so the correction nudges boundaries instead of tinting whole regions.
 Measured over seventy-five seconds and six full shake-and-settle cycles, the
 conserved mean drifts by 3.6 × 10⁻¹⁰.
 
-## Three things that were wrong
+## Three more things that were wrong
 
 All three presented as the same symptom — the cell never came to rest — and
 none of them were what that symptom looked like.
@@ -143,12 +195,19 @@ the only forcing is the effective gravity acting differentially on the two
 phases, and with the real density difference of oil and water, about a tenth,
 that forcing is weaker than the buoyancy already holding the layer together.
 
-Measured, at a realistic gain a two-and-a-half second shake at 2.5Hz moved the
-interface length by twelve per cent. Dropping the interfacial tension by a
-factor of ten did not change that, which is the useful part of the result: the
-drive was nowhere near the instability threshold, so lowering the threshold
-was not the answer, and no amount of tuning the other constants was going to
-be either.
+Measured again after the sign fix, since the first figure was taken against a
+broken force and could not be trusted: at a realistic gain a two-and-a-half
+second shake at 2.5Hz moves the interface length by four per cent — 228
+crossings against a resting 220 — and leaves the oil in one piece at a
+roundness of 0.79, unchanged. At the shipped gain the same shake takes it to
+1182 crossings, nineteen separate bodies and a roundness of 0.04.
+
+| effective gain | peak perimeter | peak bodies | lowest roundness |
+| --- | --- | --- | --- |
+| 4.5 (realistic) | 228 | 1 | 0.79 |
+| 20 | 256 | 1 | 0.73 |
+| 60 | 562 | 8 | 0.17 |
+| 180 (shipped) | 1182 | 19 | 0.04 |
 
 So the gain is dialled far above life, deliberately. What it buys is the thing
 the product is for. What it costs is a claim nobody should read as a
@@ -189,6 +248,15 @@ Two details that make it robust rather than nearly-working:
   off two edges and never closes, and an open path cannot be filled. With it,
   every loop closes off-screen and the visible area is still covered edge to
   edge.
+
+The extracted polygons then get two passes of **Taubin smoothing**. The field
+is smooth; the polygon is not — marching squares puts a vertex on every grid
+edge the isoline crosses and joins them with straight segments, so the outline
+picks up angular detail at the cell scale that is an artefact of the sampling
+and is not in the field being sampled. Taubin rather than plain Laplacian: a
+shrink pass followed by a slightly larger unshrink pass, because plain
+smoothing would quietly eat the oil and this page has spent enough effort
+conserving its mass not to want the renderer losing it again.
 
 The segments are directed so oil is always on the left of travel, which makes
 the winding consistent, which makes a hole in a blob fill as a hole under the
@@ -304,12 +372,14 @@ reproducible from the first tick.
 
 | Property | Result |
 | --- | --- |
-| Frame-rate independence (same impulse at 20 / 60 / 144fps) | identical oil fraction, perimeter, blob count and RMS |
+| A planted square, no gravity | isoperimetric quotient 0.81 → 0.99 in 2s, 1.00 by 4s |
+| A planted plus-sign, no gravity | 0.69 → 1.00 in 2s |
+| Frame-rate independence (same impulse at 20 / 60 / 144fps) | identical oil fraction, perimeter, blob count and roundness |
 | Determinism from `seed` | identical run twice; a different seed differs |
-| Mass drift, 75s over 6 shake-and-settle cycles | 8.2 × 10⁻¹⁰; `phi` stays inside [-1, 1] |
+| Mass drift, 75s over 6 shake-and-settle cycles | 1.1 × 10⁻⁹; `phi` stays inside [-1, 1] |
 | Rest state | 4px/s RMS (was 126 before the two projection fixes) |
-| A 2.5s shake at 2.5Hz | interface length 220 → ~1000 crossings, up to 26 separate bodies |
-| Settling after that shake | back to one layer in about 20 seconds |
+| A 2.5s shake at 2.5Hz | perimeter 220 → 1182 crossings, 19 separate bodies, roundness to 0.04 |
+| Settling after that shake | roundness back to 0.79 — one layer — in about 15 seconds |
 | Mobility set to zero | interface smears to 96% of the cell and never separates — i.e. it becomes the shaker's dye |
 
 Cost against resolution, on a software rasteriser with no GPU:

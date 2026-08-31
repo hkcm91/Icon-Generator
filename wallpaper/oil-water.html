@@ -520,7 +520,13 @@ const PROJECT_ITERS = 18;
  */
 const EPS = 1.2, EPS2 = EPS * EPS;
 const MOBILITY = 0.4;
-const TENSION = 300 * CONFIG.tension;
+/* Doubled once the force was pointing the right way. Everything about this
+ * number was tuned against a sign error — it had been dropped from 900 to
+ * 300 because raising it made the interface *worse*, which is what an
+ * anti-surface-tension does. With the sign fixed, more of it is better: it
+ * rounds a planted square into a circle in about two seconds instead of
+ * four, and a shake still tears the layer into twenty-odd bodies. */
+const TENSION = 600 * CONFIG.tension;
 const RIPPLE_RESET = 0.55;   // 1/s, how fast the surface re-roughens
 
 function idx(i, j) { return j * GW + i; }
@@ -809,15 +815,43 @@ function fixedStep(dt) {
     }
   }
 
-  // Interfacial tension, from the potential rather than from a curvature.
+  /* Interfacial tension, from the potential rather than from a curvature.
+   *
+   * The sign here is the whole of it, and it was wrong. The Korteweg force
+   * is +mu*grad(phi) — equal to -phi*grad(mu) up to a gradient the pressure
+   * projection absorbs — and this had the minus, which is an *anti*-surface
+   * tension: a force that pays to make interface instead of to remove it.
+   *
+   * Check it on a droplet. Oil is phi = +1 inside, so phi falls outward and
+   * grad(phi) points inward. At the rim mu is about -eps^2 * phi_r / r, and
+   * phi_r is negative, so mu is positive. Positive times inward is inward,
+   * which is the Laplace pressure squeezing the drop into the smallest
+   * boundary that will hold it. With the minus it points outward, and every
+   * bump on the interface is a bump the force makes bigger.
+   *
+   * Everything about how this looked follows from that one character. Blobs
+   * had corners and spikes and long thin spears, because nothing was pulling
+   * them round; filaments never beaded; and the harder the coefficient was
+   * driven the worse it got. Measured on a planted square, with no gravity
+   * and nothing else acting: it went from an isoperimetric quotient of 0.81
+   * to 0.47 over sixteen seconds instead of rising toward a circle's 1.0,
+   * and at a coefficient of eight it reached 0.17.
+   *
+   * It was masked at first. Allen-Cahn relaxation is mean-curvature flow, so
+   * it rounds shapes on its own, and at the mobility this shipped with
+   * originally it was outrunning the bad force. Lowering the mobility while
+   * chasing fragmentation took that cover away — so the bug was introduced
+   * on day one and only became visible three commits later, which is why the
+   * "fluid isn't round" reading was pointing at the physics and not at the
+   * shading it looked like it was pointing at. */
   chemicalPotential();
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
       const gxp = (phi[k + 1] - phi[k - 1]) * 0.5;
       const gyp = (phi[k + GW] - phi[k - GW]) * 0.5;
-      u[k] -= TENSION * mu[k] * gxp * dt;
-      v[k] -= TENSION * mu[k] * gyp * dt;
+      u[k] += TENSION * mu[k] * gxp * dt;
+      v[k] += TENSION * mu[k] * gyp * dt;
     }
   }
 
@@ -1088,6 +1122,49 @@ function contour() {
     else loopLen = start;
   }
   loopStart[loopCount] = loopLen;
+  smoothLoops();
+}
+
+/* Taubin smoothing on the extracted polygons.
+ *
+ * The field is smooth; the polygon is not. Marching squares puts a vertex on
+ * every grid edge the isoline crosses and joins them with straight segments,
+ * so the outline picks up angular detail at the cell scale that is an
+ * artefact of the sampling and is not in the field being sampled. On a
+ * fifty-six cell grid stretched across a phone that reads as facets on
+ * something that should not have any.
+ *
+ * Taubin rather than plain Laplacian: a shrink pass followed by a slightly
+ * larger unshrink pass, which removes the high-frequency wiggle without
+ * pulling the whole contour inward. Plain smoothing would quietly eat the
+ * oil, and this page has spent enough effort conserving its mass to not want
+ * the renderer losing it again.
+ */
+const SMOOTH_L = 0.55, SMOOTH_M = -0.58, SMOOTH_PASSES = 2;
+let smoothBuf = null;
+
+function smoothLoops() {
+  if (!smoothBuf || smoothBuf.length < loopLen * 2) smoothBuf = new Float32Array(loopLen * 2 + 64);
+  for (let pass = 0; pass < SMOOTH_PASSES * 2; pass++) {
+    const k = (pass & 1) ? SMOOTH_M : SMOOTH_L;
+    for (let L = 0; L < loopCount; L++) {
+      const st = loopStart[L], en = loopStart[L + 1], m = en - st;
+      if (m < 5) continue;
+      for (let n = 0; n < m; n++) {
+        const c = st + n;
+        const a = st + (n + m - 1) % m, b = st + (n + 1) % m;
+        smoothBuf[c * 2] = loopXY[c * 2] +
+          k * ((loopXY[a * 2] + loopXY[b * 2]) * 0.5 - loopXY[c * 2]);
+        smoothBuf[c * 2 + 1] = loopXY[c * 2 + 1] +
+          k * ((loopXY[a * 2 + 1] + loopXY[b * 2 + 1]) * 0.5 - loopXY[c * 2 + 1]);
+      }
+      for (let n = 0; n < m; n++) {
+        const c = st + n;
+        loopXY[c * 2] = smoothBuf[c * 2];
+        loopXY[c * 2 + 1] = smoothBuf[c * 2 + 1];
+      }
+    }
+  }
 }
 
 /** The extracted loops as one path, smoothed. The polygon's vertices sit on
@@ -1594,6 +1671,28 @@ window.__shaker = {
   diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; diagJs = 0; },
   icon(size) { return installIcon(size); },
 
+  /** Plant a known shape — "square", "cross" or "disc" — in still liquid.
+   *
+   *  This is a test fixture and it is here on purpose. Interfacial tension
+   *  exists to minimise perimeter, so the one-line statement of whether it
+   *  works is "does a square become a circle", and there is no way to ask
+   *  that of a cell full of whatever the last shake left behind. The sign
+   *  error this page shipped with survived three rounds of tuning and two
+   *  renderer rewrites precisely because nothing could ask it. */
+  plant(kind) {
+    for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+      const x = (i - GW / 2) / (GW * 0.5), y = (j - GH / 2) / (GW * 0.5);
+      let d;
+      if (kind === "square") d = 0.42 - Math.max(Math.abs(x), Math.abs(y));
+      else if (kind === "cross") d = 0.42 - Math.min(Math.max(Math.abs(x), Math.abs(y) - 0.3),
+                                                     Math.max(Math.abs(x) - 0.3, Math.abs(y)));
+      else d = 0.42 - Math.hypot(x, y);
+      phi[j * GW + i] = Math.tanh(d * GW * 0.5 / 1.4);
+    }
+    u.fill(0); v.fill(0); p.fill(0);
+    targetMean = meanPhi();
+  },
+
   /** Shake it without shaking it. */
   shake: emulsify,
 
@@ -1621,6 +1720,32 @@ window.__shaker = {
        * and is the honest measure of "has it separated". */
       interfaceCells: interface_ / cells,
       blobs: loopCount, drawnArea: drawnArea(),
+      /* Roundness, as the isoperimetric quotient 4*pi*A / P^2 of the whole
+       * oil phase. One for a circle, 0.79 for a square, and tending to zero
+       * for anything long and thin or spiky.
+       *
+       * This is the number that says whether the thing on screen is behaving
+       * like a liquid, and it was missing. Interfacial tension exists to
+       * minimise perimeter for a given area, so a page that renders a fluid
+       * correctly *cannot* sit at a low value for long — every sharp corner
+       * is a curvature singularity that the force is supposed to eat. Not
+       * measuring it is how the interfacial tension got tuned down to a
+       * third of its original strength while chasing fragmentation, without
+       * anyone noticing that the oil had stopped being round. */
+      roundness: (() => {
+        const A = Math.abs(drawnArea()) * W * H;
+        let P = 0;
+        for (let L = 0; L < loopCount; L++) {
+          const st = loopStart[L], en = loopStart[L + 1], m = en - st;
+          if (m < 3) continue;
+          for (let n = 0; n < m; n++) {
+            const i0 = st + n, i1 = st + (n + 1) % m;
+            P += Math.hypot(loopXY[i1 * 2] - loopXY[i0 * 2],
+                            loopXY[i1 * 2 + 1] - loopXY[i0 * 2 + 1]);
+          }
+        }
+        return P > 0 ? 4 * Math.PI * A / (P * P) : 0;
+      })(),
       /* Total interface length, in grid crossings. The honest measure of
        * "is it still mixed": one crossing per cell the boundary passes
        * through, so it is the perimeter and nothing else. `interfaceCells`
