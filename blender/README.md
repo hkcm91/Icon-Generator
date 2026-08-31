@@ -12,6 +12,12 @@ flags, so a change is a flag rather than a trip through the UI.
 The interactive counterpart lives in [`../wallpaper`](../wallpaper). A baked
 loop cannot react to being shaken; that one can. Use both.
 
+That folder now holds two pages: the shaker's, and
+[`bubble-wrap.html`](../wallpaper/BUBBLE-WRAP.md), which is the same line
+answering a press rather than a shake. It has no baked counterpart here —
+a sheet of wrap has nothing to bake, since every frame of it is a response to
+where a finger was.
+
 ## Sibling scene
 
 [`water_ring_toy.py`](./water_ring_toy.py) uses this file as its template —
