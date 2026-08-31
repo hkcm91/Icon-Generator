@@ -30,7 +30,7 @@ public class LauncherActivity extends Activity {
     }
 
     private void openWallpaperPreview() {
-        ComponentName service = new ComponentName(this, ShakerWallpaperService.class);
+        ComponentName service = new ComponentName(this, getWallpaperService());
         Intent direct = new Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER);
         direct.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, service);
 
@@ -47,9 +47,17 @@ public class LauncherActivity extends Activity {
                     new Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER),
                     REQUEST_SET_WALLPAPER);
         } catch (ActivityNotFoundException chooserMissing) {
-            Toast.makeText(this, R.string.wallpaper_picker_missing, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, getPickerMissingMessage(), Toast.LENGTH_LONG).show();
             finish();
         }
+    }
+
+    protected Class<? extends android.service.wallpaper.WallpaperService> getWallpaperService() {
+        return ShakerWallpaperService.class;
+    }
+
+    protected int getPickerMissingMessage() {
+        return R.string.wallpaper_picker_missing;
     }
 
     @Override

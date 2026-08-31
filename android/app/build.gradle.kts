@@ -11,6 +11,12 @@ val copyWallpaperPage by tasks.registering(Copy::class) {
     into(layout.buildDirectory.dir("generated/wallpaperAssets"))
 }
 
+val copyWaterToyPage by tasks.registering(Copy::class) {
+    from(rootProject.file("../water-toy/index.html"))
+    rename { "water_toy.html" }
+    into(layout.buildDirectory.dir("generated/wallpaperAssets"))
+}
+
 android {
     namespace = "com.hkcm.liquidshaker"
     compileSdk = 34
@@ -19,8 +25,8 @@ android {
         applicationId = "com.hkcm.liquidshaker"
         minSdk = 21
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.16"
+        versionCode = 31
+        versionName = "1.30"
     }
 
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/wallpaperAssets"))
@@ -34,7 +40,7 @@ android {
     }
 }
 
-tasks.named("preBuild") { dependsOn(copyWallpaperPage) }
+tasks.named("preBuild") { dependsOn(copyWallpaperPage, copyWaterToyPage) }
 
 /* No dependencies. Nothing here needs AndroidX: the service is a
  * WallpaperService, a WebView and a SensorManager, all of them platform. That
