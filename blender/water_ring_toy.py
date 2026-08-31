@@ -92,14 +92,29 @@ CASE_COLOUR = (0.898, 0.286, 0.278)
 # that already renders at the top of the range has nowhere to light up to.
 BUTTON_COLOUR = (0.847, 0.565, 0.086)
 
-# Ring plastic. Object Info → Random picks one per ring.
+# Ring plastic — pearl, not flat colour. Object Info → Random picks one
+# base tint per ring, and the nacre sweep below runs over whichever it got.
+# They are all pale and low-saturation on purpose: a pearl is mostly white
+# with a colour cast, and the hue you actually read comes off the sheen.
 RING_HUES = [
-    (0.98, 0.42, 0.62),   # candy pink
-    (0.99, 0.83, 0.33),   # butter yellow
-    (0.46, 0.93, 0.66),   # mint
-    (0.99, 0.58, 0.26),   # tangerine
-    (0.66, 0.62, 0.98),   # lilac
-    (0.96, 0.98, 0.99),   # milky white
+    (0.96, 0.60, 0.72),   # rose pearl
+    (0.70, 0.60, 0.96),   # lilac pearl
+    (0.52, 0.92, 0.80),   # mint pearl
+    (0.98, 0.80, 0.50),   # champagne pearl
+    (0.52, 0.76, 0.97),   # ice-blue pearl
+]
+
+# The sheen. A nacre surface is a stack of thin layers, and what comes back
+# off it is an interference colour that walks through the spectrum as the
+# angle changes — so this is a sweep, not a tint, and it is what makes the
+# ring read as pearl rather than as shiny plastic.
+NACRE_SWEEP = [
+    (1.00, 0.63, 0.78),   # blush
+    (0.78, 0.62, 0.99),   # lilac
+    (0.55, 0.76, 1.00),   # periwinkle
+    (0.62, 0.99, 0.86),   # sea mint
+    (1.00, 0.93, 0.60),   # butter
+    (1.00, 0.72, 0.62),   # peach
 ]
 
 HOOK_COLOUR = (0.96, 0.96, 0.94)
@@ -228,6 +243,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     play.add_argument("--hook-bob", type=float, default=0.022,
                       help="how far the pegs drift on their stalks, in "
                            "metres; 0 bolts them down")
+    play.add_argument("--pearl", type=float, default=0.5,
+                      help="how strongly the nacre sheen shows over a ring's "
+                           "base tint, 0 to 1. At 0 the rings are flat pearl "
+                           "colours; at 1 the sheen swamps the tint and "
+                           "every ring cycles the same rainbow")
+    play.add_argument("--pearl-cycles", type=float, default=2.1,
+                      help="how many times the sheen runs through the "
+                           "spectrum across a ring. One pass gives three fat "
+                           "bands and reads as a gradient; nacre cycles, "
+                           "because the layer stack is many wavelengths "
+                           "thick")
     play.add_argument("--seed", type=int, default=7,
                       help="seed for ring placement and peg layout")
 
@@ -653,50 +679,160 @@ def water_material(reference: bpy.types.Object, size: Vector,
     return mat
 
 
-def ring_material() -> bpy.types.Material:
-    """Translucent injection-moulded plastic, one hue per ring.
+def mix_colour(tree, factor, colour_a, colour_b, blend: str = "MIX"):
+    """Mix two colour sockets, across the node rename in Blender 4.
 
-    The hue is picked by Object Info → Random, which is per-object, so every
-    ring is a different colour from one material — and a ring keeps its
-    colour for the whole loop instead of strobing.
+    `ShaderNodeMix` carries three sets of A/B sockets — float, vector and
+    colour — all sharing the same names, so looking them up by name gets you
+    whichever comes first rather than the one you meant. They are addressed
+    by index here for that reason.
+    """
+    node = tree.nodes.new("ShaderNodeMix")
+    node.data_type = "RGBA"
+    node.blend_type = blend
+    node.clamp_result = True
+    if isinstance(factor, float):
+        node.inputs[0].default_value = factor
+    else:
+        tree.links.new(factor, node.inputs[0])
+    tree.links.new(colour_a, node.inputs[6])
+    tree.links.new(colour_b, node.inputs[7])
+    return node, node.outputs[2]
+
+
+def ring_material(strength: float, args_cycles: float
+                  ) -> bpy.types.Material:
+    """Pearl. A pale base tint per ring, under a nacre sheen.
+
+    Two things make a pearl look like a pearl, and neither is its colour.
+
+    The first is that the hue moves with the angle. A nacre surface is a
+    stack of thin layers and what comes back off it is an interference
+    colour, so the sweep is driven by two angular terms at once: how much
+    the surface faces the camera, which varies across the ring's stock, and
+    where the normal points, which varies around its circumference. One term
+    alone gives a flat band; together they give the shimmer that runs both
+    ways round a ring.
+
+    The second is that it is a *pale* thing with a colour cast, not a
+    coloured thing. The base tints are all near-white, and the hue you read
+    comes off the sheen — which is also what lets five pearls stay
+    distinguishable while all reading as the same material.
+
+    The base tint is picked by Object Info → Random, which is per-object, so
+    every ring is a different pearl from one material and keeps it for the
+    whole loop instead of strobing.
     """
     mat, tree = new_material("ringtoy_ring")
     out = tree.nodes.new("ShaderNodeOutputMaterial")
-    out.location = (500, 0)
+    out.location = (900, 0)
 
     info = tree.nodes.new("ShaderNodeObjectInfo")
-    info.location = (-300, 0)
+    info.location = (-800, 200)
 
-    ramp = tree.nodes.new("ShaderNodeValToRGB")
-    ramp.location = (-100, 0)
-    ramp.color_ramp.interpolation = "CONSTANT"
-    elements = ramp.color_ramp.elements
+    base = tree.nodes.new("ShaderNodeValToRGB")
+    base.location = (-600, 200)
+    base.color_ramp.interpolation = "CONSTANT"
+    elements = base.color_ramp.elements
     while len(elements) > 1:
         elements.remove(elements[-1])
     elements[0].position = 0.0
     elements[0].color = rgba(lin(RING_HUES[0]))
     for i, hue in enumerate(RING_HUES[1:], start=1):
         elements.new(i / len(RING_HUES)).color = rgba(lin(hue))
+    tree.links.new(info.outputs["Random"], base.inputs["Fac"])
+
+    # Angular term one: across the stock. Facing is 1 head-on and 0 at the
+    # silhouette, so this sweeps the hue over the tube's cross-section.
+    weight = tree.nodes.new("ShaderNodeLayerWeight")
+    weight.location = (-800, -140)
+    weight.inputs["Blend"].default_value = 0.42
+
+    # Angular term two: around the ring. The rings stand in the screen
+    # plane, so the stock's normal turns through the whole of XZ as you go
+    # round one, and its Z runs the sweep around the circumference.
+    geometry = tree.nodes.new("ShaderNodeNewGeometry")
+    geometry.location = (-800, -360)
+    split = tree.nodes.new("ShaderNodeSeparateXYZ")
+    split.location = (-620, -360)
+    tree.links.new(geometry.outputs["Normal"], split.inputs["Vector"])
+
+    around = tree.nodes.new("ShaderNodeMapRange")
+    around.location = (-440, -360)
+    around.inputs["From Min"].default_value = -1.0
+    around.inputs["From Max"].default_value = 1.0
+    tree.links.new(split.outputs["Z"], around.inputs["Value"])
+
+    blend = tree.nodes.new("ShaderNodeMath")
+    blend.location = (-260, -240)
+    blend.operation = "MULTIPLY_ADD"
+    blend.inputs[1].default_value = 0.62      # weight of the facing term
+    tree.links.new(weight.outputs["Facing"], blend.inputs[0])
+
+    scaled = tree.nodes.new("ShaderNodeMath")
+    scaled.location = (-260, -420)
+    scaled.operation = "MULTIPLY"
+    scaled.inputs[1].default_value = 0.75     # weight of the normal term
+    tree.links.new(around.outputs["Result"], scaled.inputs[0])
+    tree.links.new(scaled.outputs["Value"], blend.inputs[2])
+
+    # Run the sweep through the spectrum more than once. A single pass over
+    # the whole surface gives three fat bands and reads as a gradient; real
+    # nacre cycles, because the layer stack is many wavelengths thick. Ping
+    # pong rather than wrap, so the spectrum reverses at each turn instead
+    # of cutting back to the start and leaving a seam round the ring.
+    cycles = tree.nodes.new("ShaderNodeMath")
+    cycles.location = (-80, -140)
+    cycles.operation = "MULTIPLY"
+    cycles.inputs[1].default_value = max(0.25, args_cycles)
+    tree.links.new(blend.outputs["Value"], cycles.inputs[0])
+
+    fold = tree.nodes.new("ShaderNodeMath")
+    fold.location = (80, -140)
+    fold.operation = "PINGPONG"
+    fold.inputs[1].default_value = 1.0
+    tree.links.new(cycles.outputs["Value"], fold.inputs[0])
+
+    sweep = tree.nodes.new("ShaderNodeValToRGB")
+    sweep.location = (-80, -300)
+    sweep.color_ramp.interpolation = "EASE"
+    stops = sweep.color_ramp.elements
+    while len(stops) > 1:
+        stops.remove(stops[-1])
+    stops[0].position = 0.0
+    stops[0].color = rgba(lin(NACRE_SWEEP[0]))
+    for i, hue in enumerate(NACRE_SWEEP[1:], start=1):
+        stops.new(i / (len(NACRE_SWEEP) - 1)).color = rgba(lin(hue))
+    tree.links.new(fold.outputs["Value"], sweep.inputs["Fac"])
+
+    # The sheen sits over the tint rather than replacing it, so a rose pearl
+    # stays rose through the sweep instead of every ring cycling the same
+    # rainbow and becoming indistinguishable.
+    tinted, tinted_out = mix_colour(tree, strength, base.outputs["Color"],
+                                    sweep.outputs["Color"], "MIX")
+    tinted.location = (240, 0)
 
     bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.location = (200, 0)
-    put(bsdf, ("Roughness",), 0.16)
-    put(bsdf, ("IOR",), 1.5)
-    # Part-transmissive: a solid ring goes flat and dark once it is behind a
-    # metre of absorbing water, and a fully clear one disappears into it.
-    put(bsdf, ("Transmission Weight", "Transmission"), 0.32)
-    put(bsdf, ("Coat Weight", "Clearcoat"), 0.8)
-    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.06)
-    # A little emission, to hold the hue against the plate behind. Any
-    # more and the rings stop looking like plastic and start looking like
-    # they are lit from inside.
-    put(bsdf, ("Emission Strength",), 0.28)
+    bsdf.location = (560, 0)
+    # Metallic enough to have a pearl's depth, short of a mirror: fully
+    # metallic and it stops carrying a colour of its own and just reflects
+    # the water it is in.
+    put(bsdf, ("Metallic",), 0.25)
+    put(bsdf, ("Roughness",), 0.06)
+    put(bsdf, ("IOR",), 1.55)
+    # The lacquer over the nacre, and most of the reason it reads as glossy
+    # rather than merely bright.
+    put(bsdf, ("Coat Weight", "Clearcoat"), 1.0)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.03)
+    # A little emission, to hold the pearl against the plate behind. Any
+    # more and the rings stop looking like objects in water and start
+    # looking like they are lit from inside.
+    put(bsdf, ("Emission Strength",), 0.38)
 
-    tree.links.new(info.outputs["Random"], ramp.inputs["Fac"])
-    tree.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
+    tree.links.new(tinted_out, bsdf.inputs["Base Color"])
     emission = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
     if emission is not None:
-        tree.links.new(ramp.outputs["Color"], emission)
+        tree.links.new(tinted_out, emission)
     tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return mat
 
@@ -1082,7 +1218,7 @@ def build_rings(args, built: dict, fill_z: float,
     """
     rng = random.Random(args.seed + 1)
     inner = built["interior"]
-    material = ring_material()
+    material = ring_material(args.pearl, args.pearl_cycles)
     radius = args.ring_radius
     tube = args.ring_tube
 

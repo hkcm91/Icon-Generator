@@ -14,12 +14,10 @@ materials, the ring motion, the button presses, the jet, the bubbles, the
 lighting and the camera — from CLI flags, so a change is a flag rather than a
 trip through the UI.
 
-![A frame from the loop, ten frames after a press](../docs/screenshots/water-ring-toy.png)
+![The opening pose, with pearl rings on the pegs](../docs/screenshots/water-ring-toy.png)
 
-Above: ten frames into a press of the left button. The rings are streaming up
-the chamber and the first two have reached the surface; the pegs they came off
-are empty, and they will land back on them as they sink over the rest of the
-loop.
+Above: the opening pose. Each ring is a pearl — a pale base tint under a nacre
+sheen that walks through the spectrum as the surface turns away from you.
 
 It is built on [`liquid_shaker.py`](./liquid_shaker.py) and imports its plan
 curve, pillow loft, fill-line boolean and render plumbing directly rather than
@@ -152,6 +150,29 @@ keyframer and the solver cannot disagree about where a peg is.
 face-on to a leaning peg starts the sim intersecting it — and nothing needs it
 now. On a peg leaning 62° a square ring is seen almost edge-on, and gravity
 would hang it much closer to flat anyway.
+
+**The rings are pearl, not flat colour.** Two things make a pearl look like a
+pearl and neither is its colour. The first is that the hue moves with the
+angle: a nacre surface is a stack of thin layers, and what comes back off it
+is an interference colour. So the sheen is driven by two angular terms at
+once — how much the surface faces the camera, which varies across a ring's
+stock, and where its normal points, which varies around the circumference. One
+term alone gives a flat band; together they give the shimmer that runs both
+ways round a ring. It is then run through the spectrum `--pearl-cycles` times
+and folded with a ping-pong rather than wrapped, so the sweep reverses at each
+turn instead of cutting back to the start and leaving a seam round the ring.
+
+The second is that a pearl is a pale thing with a colour cast, not a coloured
+thing. The five base tints are low-saturation, the hue you read comes mostly
+off the sheen, and `--pearl` sets how far the sheen covers the tint — at 0 the
+rings are flat pearl colours, at 1 the sheen swamps the tint and every ring
+cycles the same rainbow and stops being distinguishable.
+
+It is only part metallic. Fully metallic, a ring stops carrying a colour of
+its own and just mirrors the water it is in; the depth comes from a hard coat
+over a low roughness instead. There is a little emission for the same reason
+the shaker's confetti has some: anything in this chamber is seen through
+absorbing water, and without it a pearl arrives grey.
 
 **A peg is a slim, gently tapering shaft with a rounded end.** The taper is
 what holds a ring: one dropped over the end slides down until the shaft is as
