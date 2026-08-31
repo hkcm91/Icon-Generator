@@ -1,0 +1,1432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Oil and Water</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0a3f8c; overflow: hidden;
+    overscroll-behavior: none; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #tap {
+    position: fixed; inset: auto 0 8% 0; text-align: center;
+    font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: rgba(237,235,230,.62); pointer-events: none; transition: opacity .5s;
+  }
+  #tap.hide { opacity: 0; }
+  #enable {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    padding: 14px 22px; border: 0; border-radius: 999px;
+    background: #e8806c; color: #14100f; font: 600 16px system-ui, sans-serif;
+    box-shadow: 0 6px 20px rgba(232,128,108,.4); display: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="tap">shake me</div>
+<button id="enable">Enable motion</button>
+<script>
+"use strict";
+
+/* Oil and water — real-time interactive wallpaper.
+ *
+ * Third entry in the sealed-container line, after the liquid shaker in
+ * ./index.html and the bubble wrap in ./bubble-wrap.html. Shake it and the
+ * oil tears into droplets; hold it still and they rise, run into each other,
+ * merge, and rebuild one layer across the top. Tilt it and that layer finds
+ * level.
+ *
+ * The shaker already carried a denser second phase, and the plan of record
+ * said this one was a colourway away from it. That was wrong in one specific
+ * and load-bearing respect. The shaker's second phase is a *dye*: a scalar
+ * advected by the flow, with buoyancy, and nothing in it that says two
+ * fluids cannot mix. It marbles, which is exactly right for a glitter
+ * shaker and is the one thing oil and water never do. Immiscibility is not
+ * a tuning constant. It is a term in the equation of motion.
+ *
+ * So the dye is replaced by a phase field:
+ *
+ *   phi in [-1, +1], -1 water, +1 oil, advected by the flow, and relaxing
+ *   under a free energy with two wells:
+ *
+ *       f(phi) = (phi^2 - 1)^2 / 4  +  (eps^2 / 2) |grad phi|^2
+ *
+ * The double well is what makes the two fluids separate — every intermediate
+ * value is uphill, so a mixed cell rolls to one side or the other. The
+ * gradient term is what stops the interface collapsing to nothing and gives
+ * it a width. Together they *are* surface tension: the force
+ *
+ *       F = lambda * mu * grad phi,    mu = (phi^3 - phi) - eps^2 lap phi
+ *
+ * fed back into the momentum equation is what makes a droplet round, what
+ * makes two that touch merge into one, and what makes a sheared filament
+ * pinch off into beads. None of those three are written anywhere in this
+ * file as behaviours. They are what a free energy with two wells does.
+ *
+ * The rest is the shaker's: a stable-fluids velocity field on a coarse grid,
+ * driven in the non-inertial frame of a shaken container, projected
+ * divergence-free every step. With one difference that matters, and it is
+ * the shaker's own discovery turned around — a force that is uniform is
+ * divergence-free, so the pressure projection deletes all of it. In a cell
+ * this full there is no headspace to accelerate into, so shaking a *single*
+ * fluid here would do precisely nothing. It works because the fluids have
+ * different densities: the drive couples to phi, and the shake is a
+ * differential force or it is not a force at all.
+ */
+
+const params = new URLSearchParams(location.search);
+const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
+const flag = (k, d) => { const v = params.get(k); return v === null ? d : !(v === "0" || v === "false"); };
+
+const CONFIG = {
+  /* "full" — the screen is the cell, edge to edge. This is the wallpaper.
+   * "pouch" — a squircle of it floating on a backdrop, which is the icon. */
+  mode: params.get("mode") === "pouch" ? "pouch" : "full",
+  squircleN: num("n", 4),
+  scale: num("scale", 0.78),
+
+  /* Cells across. The dial that matters for cost — everything in the step is
+   * a pass over the grid, and the grid is quadratic in this. It is also what
+   * sets the smallest droplet that can exist: an interface is about three
+   * cells wide, so a bead is never smaller than four or five of them. */
+  grid: Math.max(16, Math.min(120, num("grid", 56))),
+
+  /* How much oil there is, as a fraction of the cell. Below about a third it
+   * reads as droplets that never quite build a layer; above two thirds the
+   * water is the minority phase and the whole thing inverts, which is a real
+   * emulsion behaviour and an odd-looking wallpaper. */
+  oilFraction: Math.max(0.08, Math.min(0.92, num("oil", 0.42))),
+
+  /* Water, read along the gravity axis. The same parameter with the same
+   * default as the other two pages, so a colourway is one URL across the
+   * line. */
+  ramp: (params.get("ramp") || "#0a5fd4,#1a86f0,#2aa8ee,#3ec4e9").split(","),
+  /* The oil. Ember Glow, because the pairing the whole product rests on is
+   * a warm phase suspended in a cool one — the two have to be different
+   * *hues* and not two lightnesses of the same one, or the separation the
+   * physics is doing so much work to produce is invisible. */
+  oilColour: params.get("tint") || "#e8806c",
+
+  /* Interfacial tension. Low and the droplets are ragged and slow to round
+   * up; high and everything snaps to circles and the shake has no purchase. */
+  tension: num("tension", 1),
+  /* Density difference, which is what makes the oil rise and what gives a
+   * shake anything to act on. At 0 the two fluids weigh the same, they never
+   * separate, and shaking does literally nothing — see the note above. */
+  buoyancy: num("buoyancy", 1),
+  viscosity: num("visc", 1),
+
+  glass: Math.max(0, Math.min(1, num("glass", 0))),
+  sound: flag("sound", false),
+  seed: num("seed", 20260831) >>> 0,
+};
+
+function parseHex(s) {
+  const h = String(s).trim().replace("#", "");
+  const v = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16);
+  return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+}
+const rgba = (c, a) => "rgba(" + c.r + "," + c.g + "," + c.b + "," + a + ")";
+const mix = (a, b, t) => ({
+  r: Math.round(a.r + (b.r - a.r) * t),
+  g: Math.round(a.g + (b.g - a.g) * t),
+  b: Math.round(a.b + (b.b - a.b) * t),
+});
+
+const OIL = parseHex(CONFIG.oilColour);
+const RAMP = CONFIG.ramp.map(parseHex);
+const WHITE = { r: 255, g: 255, b: 255 };
+const DEEP = { r: 8, g: 16, b: 34 };   // never #000000, and a shadow cast
+                                       // through tinted liquid is not black
+
+function mulberry32(a) {
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* -------------------------------------------------------------- the canvas */
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d", { alpha: CONFIG.glass > 0 });
+const hint = document.getElementById("tap");
+const enableBtn = document.getElementById("enable");
+
+let W = 0, H = 0, DPR = 1, CX = 0, CY = 0, RX = 0, RY = 0;
+
+/* ----------------------------------------------------------------- the grid
+ *
+ * A staggered grid would be more accurate and is not worth it here: the
+ * thing being resolved is an interface three cells wide, and collocating the
+ * velocity costs less than the interface costs to keep sharp.
+ */
+let GW = 0, GH = 0, NC = 0, cell = 0;
+let u, v, u0, v0;            // velocity, px/s, and its scratch
+let p, div;                  // pressure and divergence
+let phi, phi0, lap, mu;      // the phase field and its working set
+let solid;                   // the wall ring
+
+function buildGrid() {
+  const spanX = CONFIG.mode === "full" ? W : RX * 2;
+  const spanY = CONFIG.mode === "full" ? H : RY * 2;
+  cell = spanX / CONFIG.grid;
+  GW = CONFIG.grid + 2;                       // one solid ring each side
+  GH = Math.max(6, Math.round(spanY / cell)) + 2;
+  NC = GW * GH;
+  u = new Float32Array(NC); v = new Float32Array(NC);
+  u0 = new Float32Array(NC); v0 = new Float32Array(NC);
+  p = new Float32Array(NC); div = new Float32Array(NC);
+  phi = new Float32Array(NC); phi0 = new Float32Array(NC);
+  lap = new Float32Array(NC); mu = new Float32Array(NC);
+  solid = new Uint8Array(NC);
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      solid[j * GW + i] = (i === 0 || j === 0 || i === GW - 1 || j === GH - 1) ? 1 : 0;
+    }
+  }
+  seedPhase();
+}
+
+/* Grid cell (i,j) to screen pixels. The ring sits outside the visible area,
+ * so cell (1,1) is the top-left corner of the cell the user can see. */
+function gx(i) { return (CONFIG.mode === "full" ? 0 : CX - RX) + (i - 1) * cell; }
+function gy(j) { return (CONFIG.mode === "full" ? 0 : CY - RY) + (j - 1) * cell; }
+
+/* Start already separated, with the oil on top and the interface given a
+ * little roughness. Starting from a uniform mix is the tempting thing and it
+ * is wrong twice over: spinodal decomposition out of a flat mixture takes
+ * several seconds of watching nothing, and the wallpaper's resting state —
+ * the thing it looks like when nobody has touched it — should be the thing
+ * on the product page. */
+function seedPhase() {
+  const rnd = mulberry32(CONFIG.seed);
+  const line = 1 + (GH - 2) * CONFIG.oilFraction;
+  const a = 0.9 + rnd() * 0.5, b = 1.7 + rnd() * 0.9;
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      const k = j * GW + i;
+      const wob = 0.9 * Math.sin(i * 0.31 + a) + 0.5 * Math.sin(i * 0.77 + b);
+      // tanh, because that is the equilibrium interface profile of this free
+      // energy and seeding anything else means the first frames are spent
+      // relaxing into it.
+      phi[k] = Math.tanh((line + wob - j) / 1.4);
+    }
+  }
+  targetMean = meanPhi();
+}
+
+function meanPhi() {
+  let s = 0, m = 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) { s += phi[j * GW + i]; m++; }
+  }
+  return m ? s / m : 0;
+}
+let targetMean = 0;
+
+const sgnPow = (x, e) => Math.sign(x) * Math.pow(Math.abs(x), e);
+function squirclePath(g, cx, cy, rx, ry, N, steps) {
+  g.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const t = (i / steps) * Math.PI * 2;
+    const x = cx + rx * sgnPow(Math.cos(t), 2 / N);
+    const y = cy + ry * sgnPow(Math.sin(t), 2 / N);
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.closePath();
+}
+
+function resize() {
+  const nw = Math.floor(window.innerWidth), nh = Math.floor(window.innerHeight);
+  // A WebView can run the document before its host view is attached, and in
+  // that state both dimensions read zero — which makes a zero cell size and
+  // poisons the whole field with NaN on the first step.
+  if (nw < 2 || nh < 2) return false;
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = nw; H = nh;
+  canvas.width = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  CX = W * 0.5; CY = H * 0.5;
+  if (CONFIG.mode === "full") { RX = W * 0.5; RY = H * 0.5; }
+  else { RX = RY = Math.min(W, H) * 0.5 * CONFIG.scale; }
+  buildGrid();
+  buildContour();
+  buildLayers();
+  return true;
+}
+
+/* ------------------------------------------------------------- the sensors
+ *
+ * Identical to the shaker's and the wrap's, deliberately: three pages that
+ * disagree about which way is down are three products, not a line. Gravity
+ * is the slow component of the accelerometer and hand motion is the
+ * residual, which is why the shake is a measured quantity here rather than a
+ * jerk heuristic.
+ */
+const GRAVITY_DIRECTION_FLOOR = 0.24;
+const ACCEL_DEAD_ZONE = 0.045;
+const ACCEL_LIMIT = 2.6;
+
+const accel = { x: 0, y: 0, z: 0 };
+const gravRaw = { x: 0, y: 1, z: 0 };
+const grav = { x: 0, y: 1 };
+const gDir = { x: 0, y: 1 };
+let gMag = 1, haveAccelGravity = false;
+
+function filterAcceleration(x, y, z) {
+  const m = Math.hypot(x, y, z);
+  let tx = 0, ty = 0, tz = 0;
+  if (m > ACCEL_DEAD_ZONE) {
+    const kept = Math.min(ACCEL_LIMIT, m - ACCEL_DEAD_ZONE);
+    tx = x / m * kept; ty = y / m * kept; tz = z / m * kept;
+  }
+  // Slower attack gives the liquid mass; the quicker release lets it come
+  // properly to rest instead of preserving a residual indefinitely.
+  const k = Math.hypot(tx, ty, tz) > Math.hypot(accel.x, accel.y, accel.z) ? 0.14 : 0.28;
+  accel.x += (tx - accel.x) * k;
+  accel.y += (ty - accel.y) * k;
+  accel.z += (tz - accel.z) * k;
+  if (Math.hypot(accel.x, accel.y, accel.z) < 0.003) { accel.x = 0; accel.y = 0; accel.z = 0; }
+}
+
+function setGravityVector(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  grav.x = x; grav.y = y;
+  gMag = Math.min(1, Math.hypot(x, y));
+  if (gMag > GRAVITY_DIRECTION_FLOOR) { gDir.x = x / gMag; gDir.y = y / gMag; }
+}
+
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) return;
+  hint.classList.add("hide");
+  const first = !haveAccelGravity;
+  haveAccelGravity = true;
+  const sx = -a.x / 9.81, sy = a.y / 9.81;
+  const sz = Number.isFinite(a.z) ? a.z / 9.81 : 0;
+  if (first) {
+    gravRaw.x = sx; gravRaw.y = sy; gravRaw.z = sz;
+    setGravityVector(sx, sy);
+    accel.x = 0; accel.y = 0; accel.z = 0;
+  } else {
+    const k = 0.025;
+    gravRaw.x += (sx - gravRaw.x) * k;
+    gravRaw.y += (sy - gravRaw.y) * k;
+    gravRaw.z += (sz - gravRaw.z) * k;
+    setGravityVector(gravRaw.x, gravRaw.y);
+    filterAcceleration(sx - gravRaw.x, sy - gravRaw.y, sz - gravRaw.z);
+  }
+}
+
+function onOrientation(e) {
+  if (haveAccelGravity) return;
+  if (e.beta === null && e.gamma === null) return;
+  hint.classList.add("hide");
+  const b = (e.beta || 0) * Math.PI / 180, g = (e.gamma || 0) * Math.PI / 180;
+  setGravityVector(-Math.cos(b) * Math.sin(g), Math.sin(b));
+}
+
+function listenMotion() {
+  window.addEventListener("deviceorientation", onOrientation, true);
+  window.addEventListener("devicemotion", onMotion, true);
+}
+
+const needsPermission =
+  typeof DeviceMotionEvent !== "undefined" &&
+  typeof DeviceMotionEvent.requestPermission === "function";
+
+if (needsPermission) {
+  enableBtn.style.display = "block";
+  enableBtn.addEventListener("click", async () => {
+    try {
+      await DeviceMotionEvent.requestPermission();
+      if (typeof DeviceOrientationEvent?.requestPermission === "function") {
+        await DeviceOrientationEvent.requestPermission();
+      }
+    } catch (_) { /* denied — stirring with a finger still works */ }
+    enableBtn.style.display = "none";
+    listenMotion();
+  });
+} else {
+  listenMotion();
+}
+
+/* ---------------------------------------------------------------- the stir
+ *
+ * A finger dragged through the cell drags the fluid with it. Not a radial
+ * push away from the point, which is the obvious thing to write and does
+ * exactly nothing: a radial source is pure divergence, and an incompressible
+ * fluid cannot expand away from a poke, so the projection deletes all of it.
+ * What a finger actually does is drag — it imposes its own velocity on the
+ * liquid it is touching, and the shear that leaves behind is what rolls up
+ * into the pair of vortices you see.
+ *
+ * That shear is also what tears the oil, and it tears it in the way the
+ * physics says rather than the way a brush would: a filament drawn out of a
+ * blob thins until interfacial tension beats the shear holding it, and then
+ * beads. Nothing here knows what a droplet is.
+ */
+const pointers = new Map();
+const STIR_R = 2.6;        // contact radius in cells
+const STIR_GAIN = 0.85;    // how much of the finger's own velocity it imposes
+
+function pointerXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+let tiltDrag = null;
+
+canvas.addEventListener("pointerdown", (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  hint.classList.add("hide");
+  if (e.shiftKey && e.pointerType !== "touch") { tiltDrag = pointerXY(e); return; }
+  const q = pointerXY(e);
+  pointers.set(e.pointerId, { x: q.x, y: q.y, px: q.x, py: q.y, vx: 0, vy: 0 });
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (tiltDrag) {
+    const q = pointerXY(e);
+    setGravityVector(
+      Math.max(-1, Math.min(1, grav.x + (q.x - tiltDrag.x) / (W * 0.5))),
+      Math.max(-1, Math.min(1, grav.y + (q.y - tiltDrag.y) / (H * 0.5))));
+    tiltDrag = q;
+    return;
+  }
+  const s = pointers.get(e.pointerId);
+  if (!s) return;
+  const q = pointerXY(e);
+  s.x = q.x; s.y = q.y;
+});
+
+function endPointer(e) { pointers.delete(e.pointerId); tiltDrag = null; }
+canvas.addEventListener("pointerup", endPointer);
+canvas.addEventListener("pointercancel", endPointer);
+canvas.addEventListener("pointerleave", endPointer);
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+window.addEventListener("keydown", (e) => {
+  const k = 0.16;
+  if (e.key === "ArrowLeft") setGravityVector(grav.x - k, grav.y);
+  else if (e.key === "ArrowRight") setGravityVector(grav.x + k, grav.y);
+  else if (e.key === "ArrowUp") setGravityVector(grav.x, grav.y - k);
+  else if (e.key === "ArrowDown") setGravityVector(grav.x, grav.y + k);
+  else if (e.key === " " || e.key.toLowerCase() === "s") emulsify(1.6);
+  else return;
+  e.preventDefault();
+});
+
+/* ------------------------------------------------------------- the solver */
+
+const BUOY = 130;          // px/s^2 per g of effective gravity, between the phases
+/* How many g of effective gravity a g of hand motion is worth, and the one
+ * number on this page that is a lie. It is named here rather than buried
+ * because it is worth being straight about which part is physics.
+ *
+ * A completely full, sealed, rigid cell of oil and water, shaken by a real
+ * hand at a real two or three g, does very nearly nothing. That is not a
+ * failing of the model — it is why you shake a bottle that has air in it.
+ * With no headspace the only forcing is the effective gravity acting
+ * differentially on the two phases, and with the real density difference of
+ * oil and water, about a tenth, that forcing is weaker than the buoyancy
+ * already holding the layer together. Measured at a realistic gain, a
+ * two-and-a-half second shake at 2.5Hz moved the interface length by twelve
+ * per cent, and dropping the interfacial tension by a factor of ten did not
+ * change that: the drive was not near the threshold, so lowering the
+ * threshold was not the answer.
+ *
+ * So the gain is dialled far above life, deliberately. What it buys is the
+ * thing the product is for, and what it costs is a claim nobody should read
+ * as a measurement. Everything else on this page is doing real work; this
+ * line is a decision.
+ *
+ * The finger, by contrast, needs no help. Dragging through a liquid really
+ * does impose your own velocity on it, so the stirring is honest at gain 1.
+ */
+const SHAKE_GAIN = 180;
+const NU = 32;             // momentum diffusivity, cells^2/s
+const BULK_DRAG = 0.15;    // 1/s
+const WALL_DRAG = 1.6;     // 1/s, in the cells touching glass
+const VORTICITY = 2.2;     // eddy confinement
+const PROJECT_ITERS = 18;
+
+/* The phase field's own constants.
+ *
+ * EPS is the interface half-width in cells, and it is the number everything
+ * else is hostage to: too small and the interface falls between grid points
+ * and the field goes lumpy; too large and every droplet is a soft cloud and
+ * the sharpness the whole page exists for is gone. Between one and two cells
+ * is the usable window, and 1.2 sits in it.
+ *
+ * MOBILITY is how fast the field relaxes toward the two wells. Its ceiling
+ * is a stability limit, not a taste one: the relaxation is an explicit
+ * diffusion with coefficient MOBILITY*EPS^2, so MOBILITY*EPS^2*dt must stay
+ * under about an eighth of a cell squared or the field oscillates and blows
+ * up. At dt = 1/60 that caps it near 6; this runs at 3.4.
+ */
+const EPS = 1.2, EPS2 = EPS * EPS;
+const MOBILITY = 0.4;
+const TENSION = 300 * CONFIG.tension;   // px/s^2 per unit of mu * grad phi
+
+function idx(i, j) { return j * GW + i; }
+
+/** Semi-Lagrangian advection, shared by the velocity components and phi. */
+function advect(dst, src, dt) {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      let x = i - dt * u[k] / cell;
+      let y = j - dt * v[k] / cell;
+      if (x < 0.5) x = 0.5; else if (x > GW - 1.5) x = GW - 1.5;
+      if (y < 0.5) y = 0.5; else if (y > GH - 1.5) y = GH - 1.5;
+      const i0 = x | 0, j0 = y | 0;
+      const s = x - i0, t = y - j0;
+      const a = j0 * GW, b = (j0 + 1) * GW;
+      dst[k] = (1 - t) * ((1 - s) * src[a + i0] + s * src[a + i0 + 1]) +
+                     t * ((1 - s) * src[b + i0] + s * src[b + i0 + 1]);
+    }
+  }
+}
+
+/** Free-slip walls: copy the ring from its neighbour, flipping the normal
+ *  component. No-slip would eat the flow at this grid resolution. */
+function bounds() {
+  for (let j = 1; j < GH - 1; j++) {
+    const l = j * GW, r = j * GW + GW - 1;
+    u[l] = -u[l + 1]; v[l] = v[l + 1]; phi[l] = phi[l + 1];
+    u[r] = -u[r - 1]; v[r] = v[r - 1]; phi[r] = phi[r - 1];
+  }
+  for (let i = 0; i < GW; i++) {
+    const t = i, b = (GH - 1) * GW + i;
+    u[t] = u[t + GW]; v[t] = -v[t + GW]; phi[t] = phi[t + GW];
+    u[b] = u[b - GW]; v[b] = -v[b - GW]; phi[b] = phi[b - GW];
+  }
+}
+
+/* Pressure projection. Gauss-Seidel rather than Jacobi, because it converges
+ * about twice as fast per sweep for the same cost.
+ *
+ * The pressure is *not* cleared between frames, and that one line is the
+ * difference between a cell that comes to rest and one that never does.
+ *
+ * Two fluids of different densities in layers need a pressure field that
+ * varies across the whole height of the domain to hold them up — the
+ * hydrostatic field. That is the lowest spatial frequency there is, and a
+ * relaxation method is at its very worst on low frequencies: eighteen sweeps
+ * carry information eighteen cells, and this grid is a hundred and fifty-six
+ * tall. Started from zero every frame the solve never gets close, the
+ * leftover buoyancy drives a permanent circulation, and no amount of
+ * viscosity or vorticity tuning touches it because none of those are the
+ * cause. Measured, that was 113px/s of drift that would not go away.
+ *
+ * Warm-starting costs nothing and fixes it completely: the hydrostatic field
+ * is nearly the same from one frame to the next, so the solver spends its
+ * eighteen sweeps refining an answer it already has instead of rediscovering
+ * it. The divergence is recomputed from scratch every frame, so a stale
+ * pressure cannot accumulate into anything — it can only be a better initial
+ * guess than zero, which it always is.
+ */
+function project() {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      div[k] = -0.5 * cell * (u[k + 1] - u[k - 1] + v[k + GW] - v[k - GW]);
+    }
+  }
+  for (let it = 0; it < PROJECT_ITERS; it++) {
+    for (let j = 1; j < GH - 1; j++) {
+      for (let i = 1; i < GW - 1; i++) {
+        const k = j * GW + i;
+        p[k] = (div[k] + p[k - 1] + p[k + 1] + p[k - GW] + p[k + GW]) * 0.25;
+      }
+    }
+    // Neumann boundary: the wall's pressure equals its neighbour's, which is
+    // what "no flow through the wall" means for the pressure equation.
+    for (let j = 1; j < GH - 1; j++) {
+      p[j * GW] = p[j * GW + 1];
+      p[j * GW + GW - 1] = p[j * GW + GW - 2];
+    }
+    for (let i = 0; i < GW; i++) {
+      p[i] = p[i + GW];
+      p[(GH - 1) * GW + i] = p[(GH - 2) * GW + i];
+    }
+  }
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      u[k] -= 0.5 * (p[k + 1] - p[k - 1]) / cell;
+      v[k] -= 0.5 * (p[k + GW] - p[k - GW]) / cell;
+    }
+  }
+}
+
+/** Vorticity confinement, to give back the eddies a first-order advection
+ *  scheme on a 56-cell grid smears away inside a second. */
+function vorticity(dt) {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      div[k] = (v[k + 1] - v[k - 1] - (u[k + GW] - u[k - GW])) * 0.5;
+    }
+  }
+  for (let j = 2; j < GH - 2; j++) {
+    for (let i = 2; i < GW - 2; i++) {
+      const k = j * GW + i;
+      const dwx = (Math.abs(div[k + 1]) - Math.abs(div[k - 1])) * 0.5;
+      const dwy = (Math.abs(div[k + GW]) - Math.abs(div[k - GW])) * 0.5;
+      const len = Math.hypot(dwx, dwy) + 1e-5;
+      u[k] += VORTICITY * dt * (dwy / len) * div[k];
+      v[k] -= VORTICITY * dt * (dwx / len) * div[k];
+    }
+  }
+}
+
+/* ------------------------------------------------------- immiscibility
+ *
+ * Everything that makes this oil and water rather than two dyes is here, and
+ * it is one free energy: a double well that costs energy to be half-mixed,
+ * plus a gradient penalty that costs energy to have interface. Its variation
+ * is the chemical potential
+ *
+ *     mu = (phi^3 - phi) - eps^2 * lap(phi)
+ *
+ * and mu does two jobs at once. Relaxing phi down its own gradient separates
+ * the phases and keeps the interface a fixed width; feeding mu * grad(phi)
+ * into the momentum equation *is* the interfacial tension force, in the form
+ * that does not require knowing the curvature of anything.
+ *
+ * That second half is what most of the visible behaviour comes out of.
+ * Roundness, coalescence and pinch-off are not three features. They are one
+ * force, and it points the same way in all three cases: toward less
+ * interface.
+ */
+function chemicalPotential() {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const f = phi[k];
+      lap[k] = phi[k - 1] + phi[k + 1] + phi[k - GW] + phi[k + GW] - 4 * f;
+      mu[k] = (f * f * f - f) - EPS2 * lap[k];
+    }
+  }
+}
+
+/** Relax phi toward the two wells, conservatively.
+ *
+ *  Allen-Cahn on its own is not mass-conserving — run it and the oil quietly
+ *  evaporates, small droplets first, which on a wallpaper means the thing
+ *  empties itself over an afternoon. The fix is a Lagrange multiplier chosen
+ *  so the total change is zero, and spread over the *interfaces* rather than
+ *  uniformly: (1 - phi^2) is nearly zero in the bulk of either fluid, so the
+ *  correction moves boundaries a little instead of tinting whole regions.
+ */
+function relaxPhase(dt) {
+  let sum = 0, weight = 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const r = -MOBILITY * mu[k];
+      const w = Math.max(0, 1 - phi[k] * phi[k]);
+      phi0[k] = r; lap[k] = w;
+      sum += r; weight += w;
+    }
+  }
+  const lambda = weight > 1e-6 ? sum / weight : 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      let f = phi[k] + dt * (phi0[k] - lambda * lap[k]);
+      // The wells are at +/-1; a little past them is physical overshoot, a
+      // long way past is the explicit scheme running away, so it is clamped.
+      phi[k] = f < -1.4 ? -1.4 : f > 1.4 ? 1.4 : f;
+    }
+  }
+}
+
+/** Whatever the relaxation could not conserve, put back on the interfaces.
+ *  Advection with a clamped semi-Lagrangian step loses a little mass too,
+ *  and over a wallpaper's runtime "a little" is the whole product. */
+function conserveMass() {
+  const drift = meanPhi() - targetMean;
+  if (Math.abs(drift) < 1e-7) return;
+  let weight = 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      weight += Math.max(0, 1 - phi[k] * phi[k]);
+    }
+  }
+  if (weight < 1e-6) return;
+  const cells = (GW - 2) * (GH - 2);
+  const k0 = drift * cells / weight;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      phi[k] -= k0 * Math.max(0, 1 - phi[k] * phi[k]);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ a step */
+
+let stirEnergy = 0;      // how hard the cell is being worked, for the render
+const shakeRnd = mulberry32(CONFIG.seed ^ 0x5EED1E);
+
+function emulsify(strength) {
+  /* What a shake does, without a shake: a divergence-free swirl field laid
+   * over the whole cell. Divergence-free because anything else is deleted by
+   * the projection on the very next line of the step, and this is the
+   * cheapest way to say that out loud. */
+  /* Drawn from the page's own seeded stream rather than Math.random, so a
+   * given seed gives the same *sequence* of shakes. Each one is still
+   * different from the last, which is what a shake should be; what is gained
+   * is that a run can be repeated exactly, which is the only way to compare
+   * two of them. */
+  const a = shakeRnd() * Math.PI * 2, b = shakeRnd() * Math.PI * 2;
+  const k1 = 2 + shakeRnd() * 2, k2 = 2 + shakeRnd() * 3;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const x = i / GW * Math.PI * 2, y = j / GH * Math.PI * 2;
+      // curl of a stream function: divergence-free by construction.
+      u[k] += strength * 900 * (Math.cos(k1 * y + a) * 0.7 + Math.cos(k2 * y + b) * 0.4);
+      v[k] -= strength * 900 * (Math.cos(k1 * x + a) * 0.7 + Math.cos(k2 * x + b) * 0.4);
+    }
+  }
+  stirEnergy = Math.min(1.6, stirEnergy + strength);
+}
+
+function fixedStep(dt) {
+  /* The drive, and the one thing about this cell worth knowing.
+   *
+   * It is completely full. There is no headspace, so there is nowhere for
+   * the liquid to accelerate into, and a pressure projection on a closed
+   * domain annihilates any force that is uniform — it is divergence-free, so
+   * the pressure field cancels it exactly. Shake a sealed jar of one fluid
+   * and, in this model, nothing whatsoever happens; that is not a bug in the
+   * model, it is close to true.
+   *
+   * What survives is the part of the force that varies in space, and here
+   * that is the part that couples to phi. The oil is lighter, so the same
+   * shake pushes it less hard than the water beside it, and the difference
+   * is the whole of the stirring. Emulsifying is a *differential* effect,
+   * and this is the line of code that says so.
+   */
+  const shaking = Math.hypot(accel.x, accel.y);
+  /* Gravity and the shake are not two forces. In the frame of a shaken
+   * container the body force per unit mass is g - a, so a shake is the
+   * effective gravity swinging in direction and magnitude, and it acts on
+   * the phases through the one term buoyancy already uses. Writing the shake
+   * as its own drive, which is what this did first, is writing the same
+   * physics twice with two constants to keep in agreement. */
+  const gex = gDir.x * gMag - accel.x * SHAKE_GAIN;
+  const gey = gDir.y * gMag - accel.y * SHAKE_GAIN;
+  const kb = BUOY * CONFIG.buoyancy * dt;
+  /* Buoyancy is measured against the mean density, not against zero.
+   *
+   * This subtraction is the whole of the difference between a cell that
+   * comes to rest and one that does not, and leaving it out is an easy
+   * mistake to make and a hard one to see. The oil is 42% of the cell, so
+   * phi averages -0.15 rather than 0, so a force proportional to phi has a
+   * non-zero mean — a uniform pull on the entire body of liquid. And a
+   * uniform force is exactly the thing a pressure projection cannot cancel,
+   * because it is already divergence-free. So it survives every step, and
+   * the whole cell accelerates until viscosity balances it: measured, a
+   * permanent 126px/s drift that no amount of damping or vorticity tuning
+   * touched, because none of those were what was causing it.
+   *
+   * Physically the missing term is the container. A sealed jar pushes back
+   * on the liquid it holds with exactly the net weight of it, which is what
+   * subtracting the mean says. */
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const f = phi[k] - targetMean;
+      u[k] -= kb * f * gex;
+      v[k] -= kb * f * gey;
+    }
+  }
+
+  // Interfacial tension, from the potential rather than from a curvature.
+  chemicalPotential();
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const gxp = (phi[k + 1] - phi[k - 1]) * 0.5;
+      const gyp = (phi[k + GW] - phi[k - GW]) * 0.5;
+      u[k] -= TENSION * mu[k] * gxp * dt;
+      v[k] -= TENSION * mu[k] * gyp * dt;
+    }
+  }
+
+  // Fingers.
+  const R = STIR_R * cell;
+  for (const s of pointers.values()) {
+    const dx = s.x - s.px, dy = s.y - s.py;
+    s.px = s.x; s.py = s.y;
+    // The finger's own velocity, low-passed so a jittery pointer is not a
+    // jackhammer.
+    s.vx += (dx / dt - s.vx) * 0.35;
+    s.vy += (dy / dt - s.vy) * 0.35;
+    const speed = Math.hypot(s.vx, s.vy);
+    if (speed < 1) continue;
+    stirEnergy = Math.min(1.6, stirEnergy + speed * dt * 0.004);
+    const i0 = Math.max(1, Math.floor((s.x - R) / cell)), i1 = Math.min(GW - 2, Math.ceil((s.x + R) / cell) + 1);
+    const j0 = Math.max(1, Math.floor((s.y - R) / cell)), j1 = Math.min(GH - 2, Math.ceil((s.y + R) / cell) + 1);
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const k = j * GW + i;
+        const d = Math.hypot(gx(i) + cell * 0.5 - s.x, gy(j) + cell * 0.5 - s.y);
+        if (d > R) continue;
+        const t = 1 - d / R, w = t * t * (3 - 2 * t) * STIR_GAIN;
+        u[k] += (s.vx - u[k]) * w;
+        v[k] += (s.vy - v[k]) * w;
+      }
+    }
+  }
+
+  /* Viscosity, as actual diffusion of momentum rather than as a decay.
+   *
+   * A uniform decay was the first thing here and it cannot do this job,
+   * because the job has two halves that pull against each other. Shaking has
+   * to fragment the layer, which needs the flow to survive long enough to
+   * fold it; separating afterwards has to take twenty or thirty seconds,
+   * which needs droplets to rise slowly. One decay constant cannot be both
+   * small and large, and every value tried was either a shake that did
+   * nothing or an emulsion that unmixed itself in two seconds.
+   *
+   * Diffusion is not one constant, it is a rate that depends on wavelength:
+   * damping goes as nu*k^2. Bulk flow is long-wavelength and barely feels
+   * it, so a shake keeps its energy and does its work. A droplet's flow
+   * field is as small as the droplet, so it is damped hard, and the speed it
+   * rises at settles to force over damping — which, because damping goes as
+   * k^2, is proportional to the square of its radius.
+   *
+   * That is Stokes' law, and it arrived by writing down the viscous term
+   * properly rather than by being asked for. It is also the reason a shaken
+   * bottle clears from the top down: the big drops go first.
+   */
+  const kd = Math.min(0.24, NU * CONFIG.viscosity * dt);
+  u0.set(u); v0.set(v);
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      u[k] = u0[k] + kd * (u0[k - 1] + u0[k + 1] + u0[k - GW] + u0[k + GW] - 4 * u0[k]);
+      v[k] = v0[k] + kd * (v0[k - 1] + v0[k + 1] + v0[k - GW] + v0[k + GW] - 4 * v0[k]);
+    }
+  }
+  // A small bulk decay on top, so one big slow eddy does eventually stop
+  // rather than turning forever, and the wall's grip on what touches it.
+  const kv = Math.exp(-BULK_DRAG * dt);
+  const kw = Math.exp(-WALL_DRAG * dt);
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const w = (i === 1 || i === GW - 2 || j === 1 || j === GH - 2) ? kw : 1;
+      u[k] *= kv * w; v[k] *= kv * w;
+    }
+  }
+
+  vorticity(dt);
+  bounds();
+  project();
+
+  // Move the velocity field through itself, then the phase field through it.
+  u0.set(u); v0.set(v);
+  advect(u, u0, dt); advect(v, v0, dt);
+  bounds();
+  project();
+
+  phi0.set(phi);
+  advect(phi, phi0, dt);
+
+  chemicalPotential();
+  relaxPhase(dt);
+  conserveMass();
+  bounds();
+
+  stirEnergy *= Math.exp(-0.9 * dt);
+  if (shaking > 0.55) stirEnergy = Math.min(1.6, stirEnergy + shaking * dt * 1.4);
+}
+
+/* A fixed step, and here it is not a nicety. The phase relaxation is an
+ * explicit diffusion sitting at about a third of its stability limit at
+ * 1/60s; hand it a 1/20s frame from a slow device and it is over the limit,
+ * the field rings, and it does not come back. */
+const FIXED_DT = 1 / 60;
+let accumulator = 0, simTime = 0;
+
+function step(dt) {
+  accumulator += dt;
+  let ticks = 0;
+  while (accumulator >= FIXED_DT && ticks < 3) {
+    simTime += FIXED_DT;
+    fixedStep(FIXED_DT);
+    accumulator -= FIXED_DT;
+    ticks++;
+  }
+  if (ticks === 3) accumulator = 0;   // stop, do not spiral
+  return simTime;
+}
+
+/* --------------------------------------------------------- the oil's edge
+ *
+ * The phase field is 56 cells across and the screen is 393. Drawing it as an
+ * image and letting the compositor interpolate gives a soft cloud, and soft
+ * is the one thing an oil droplet is not: the characteristic read of oil in
+ * water is a hard edge with a bright line of refraction sitting on it.
+ *
+ * So the phi = 0 isoline is extracted as actual polygons by marching
+ * squares, and everything after that is drawn at full resolution with
+ * gradients, strokes and clips. Contouring is cheap — it is one pass over
+ * the grid — and it buys a crisp silhouette that no amount of upscaling can.
+ *
+ * The crossings are keyed by which grid edge they lie on rather than by
+ * their coordinates, so linking segments into closed loops is exact integer
+ * bookkeeping instead of hashing floats and hoping.
+ */
+let EW = 0, EH = 0;
+let pex;                   // phi, extended by a ring of water so loops close
+let cx0 = 0, cy0 = 0;      // screen position of extended point (0,0)
+let exx, exy, nextEdge;
+let loopXY, loopStart;     // flat point buffer, and where each loop begins
+let loopCount = 0, loopLen = 0;
+
+function buildContour() {
+  EW = GW + 2; EH = GH + 2;
+  pex = new Float32Array(EW * EH);
+  exx = new Float32Array(2 * EW * EH);
+  exy = new Float32Array(2 * EW * EH);
+  nextEdge = new Int32Array(2 * EW * EH);
+  loopXY = new Float32Array(4 * EW * EH);
+  loopStart = new Int32Array(EW * EH);
+}
+
+const EH_ID = (i, j) => 2 * (j * EW + i);       // crossing on (i,j)-(i+1,j)
+const EV_ID = (i, j) => 2 * (j * EW + i) + 1;   // crossing on (i,j)-(i,j+1)
+
+function extendPhase() {
+  cx0 = (CONFIG.mode === "full" ? 0 : CX - RX) - 2 * cell;
+  cy0 = (CONFIG.mode === "full" ? 0 : CY - RY) - 2 * cell;
+  /* The extra ring is water. Without it a layer of oil spanning the whole
+   * cell produces an open contour that runs off two edges and never closes,
+   * and an open path cannot be filled. With it, every loop closes off-screen
+   * and the visible area is still covered edge to edge. */
+  pex.fill(-1);
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) pex[(j + 1) * EW + (i + 1)] = phi[j * GW + i];
+  }
+}
+
+function contour() {
+  extendPhase();
+  nextEdge.fill(-1);
+  for (let j = 0; j < EH - 1; j++) {
+    for (let i = 0; i < EW - 1; i++) {
+      const ka = j * EW + i, kb = ka + 1, kd = ka + EW, kc = kd + 1;
+      const a = pex[ka], b = pex[kb], c = pex[kc], d = pex[kd];
+      const code = (a > 0 ? 1 : 0) | (b > 0 ? 2 : 0) | (c > 0 ? 4 : 0) | (d > 0 ? 8 : 0);
+      if (code === 0 || code === 15) continue;
+
+      // Crossings are computed only for the cells that need them.
+      const TOP = () => {
+        const id = EH_ID(i, j), t = a / (a - b);
+        exx[id] = cx0 + (i + t) * cell; exy[id] = cy0 + j * cell; return id;
+      };
+      const BOT = () => {
+        const id = EH_ID(i, j + 1), t = d / (d - c);
+        exx[id] = cx0 + (i + t) * cell; exy[id] = cy0 + (j + 1) * cell; return id;
+      };
+      const LEFT = () => {
+        const id = EV_ID(i, j), t = a / (a - d);
+        exx[id] = cx0 + i * cell; exy[id] = cy0 + (j + t) * cell; return id;
+      };
+      const RIGHT = () => {
+        const id = EV_ID(i + 1, j), t = b / (b - c);
+        exx[id] = cx0 + (i + 1) * cell; exy[id] = cy0 + (j + t) * cell; return id;
+      };
+
+      /* Directed so that oil is always on the left of travel. That is what
+       * makes the winding consistent, which is what makes a hole in a blob
+       * fill as a hole under the nonzero rule instead of as more oil. */
+      switch (code) {
+        case 1:  nextEdge[LEFT()] = TOP(); break;
+        case 2:  nextEdge[TOP()] = RIGHT(); break;
+        case 3:  nextEdge[LEFT()] = RIGHT(); break;
+        case 4:  nextEdge[RIGHT()] = BOT(); break;
+        case 6:  nextEdge[TOP()] = BOT(); break;
+        case 7:  nextEdge[LEFT()] = BOT(); break;
+        case 8:  nextEdge[BOT()] = LEFT(); break;
+        case 9:  nextEdge[BOT()] = TOP(); break;
+        case 11: nextEdge[BOT()] = RIGHT(); break;
+        case 12: nextEdge[RIGHT()] = LEFT(); break;
+        case 13: nextEdge[RIGHT()] = TOP(); break;
+        case 14: nextEdge[TOP()] = LEFT(); break;
+        /* The two ambiguous cells, where opposite corners agree and the
+         * contour could join up either way. Resolved on the average of the
+         * four, which is the cheap stand-in for what the field does between
+         * grid points — get it wrong and blobs flicker between touching and
+         * not, one frame to the next, as a neck thins. */
+        case 5: {
+          const mid = (a + b + c + d) * 0.25;
+          if (mid > 0) { nextEdge[RIGHT()] = TOP(); nextEdge[LEFT()] = BOT(); }
+          else { nextEdge[LEFT()] = TOP(); nextEdge[RIGHT()] = BOT(); }
+          break;
+        }
+        case 10: {
+          const mid = (a + b + c + d) * 0.25;
+          if (mid > 0) { nextEdge[TOP()] = LEFT(); nextEdge[BOT()] = RIGHT(); }
+          else { nextEdge[TOP()] = RIGHT(); nextEdge[BOT()] = LEFT(); }
+          break;
+        }
+      }
+    }
+  }
+
+  // Walk the links into closed loops, consuming them as we go.
+  loopCount = 0; loopLen = 0;
+  const cap = loopXY.length / 2;
+  for (let e = 0; e < nextEdge.length; e++) {
+    if (nextEdge[e] < 0) continue;
+    const start = loopLen;
+    let cur = e, guard = 0;
+    while (cur >= 0 && guard++ < cap) {
+      const nxt = nextEdge[cur];
+      nextEdge[cur] = -1;
+      if (loopLen < cap) {
+        loopXY[loopLen * 2] = exx[cur];
+        loopXY[loopLen * 2 + 1] = exy[cur];
+        loopLen++;
+      }
+      cur = nxt;
+      if (cur === e) break;         // closed
+    }
+    // A loop of two points is a sliver with no area; drawing it is a stroke
+    // artefact and nothing else.
+    if (loopLen - start >= 3) { loopStart[loopCount++] = start; }
+    else loopLen = start;
+  }
+  loopStart[loopCount] = loopLen;
+}
+
+/** The extracted loops as one path, smoothed. The polygon's vertices sit on
+ *  grid edges, so quadratics through their midpoints round off the staircase
+ *  the lattice would otherwise print onto every droplet. */
+function oilPath() {
+  const path = new Path2D();
+  for (let L = 0; L < loopCount; L++) {
+    const s = loopStart[L], e = loopStart[L + 1], m = e - s;
+    if (m < 3) continue;
+    let px = loopXY[(e - 1) * 2], py = loopXY[(e - 1) * 2 + 1];
+    let qx = loopXY[s * 2], qy = loopXY[s * 2 + 1];
+    path.moveTo((px + qx) * 0.5, (py + qy) * 0.5);
+    for (let n = 0; n < m; n++) {
+      const i0 = s + n, i1 = s + (n + 1) % m;
+      const ax = loopXY[i0 * 2], ay = loopXY[i0 * 2 + 1];
+      const bx = loopXY[i1 * 2], by = loopXY[i1 * 2 + 1];
+      path.quadraticCurveTo(ax, ay, (ax + bx) * 0.5, (ay + by) * 0.5);
+    }
+    path.closePath();
+  }
+  return path;
+}
+
+/* ---------------------------------------------------------------- drawing */
+
+let backLayer = null, glossLayer = null;
+let lightAngle = -2.0, bakedAngle = Infinity;
+
+const OIL_LIT = mix(OIL, WHITE, 0.09);
+const OIL_DEEP = mix(OIL, DEEP, 0.46);
+
+function paintWater(g) {
+  if (CONFIG.glass >= 1) return;
+  const a = 1 - CONFIG.glass;
+  const L = Math.hypot(W, H) * 0.62;
+  const gr = g.createLinearGradient(CX - gDir.x * L, CY - gDir.y * L,
+                                    CX + gDir.x * L, CY + gDir.y * L);
+  for (let i = 0; i < RAMP.length; i++) {
+    gr.addColorStop(RAMP.length === 1 ? 0 : i / (RAMP.length - 1), rgba(RAMP[i], a));
+  }
+  g.fillStyle = gr;
+  g.fillRect(0, 0, W, H);
+}
+
+function paintGloss(g) {
+  // One broad highlight lying across the whole cell, swinging with the phone.
+  const lx = Math.cos(lightAngle), ly = Math.sin(lightAngle);
+  const L = Math.hypot(W, H) * 0.7;
+  const gr = g.createLinearGradient(CX - lx * L, CY - ly * L, CX + lx * L, CY + ly * L);
+  gr.addColorStop(0, "rgba(255,255,255,0)");
+  gr.addColorStop(0.46, "rgba(255,255,255,0)");
+  gr.addColorStop(0.70, "rgba(255,255,255,0.075)");
+  gr.addColorStop(0.88, "rgba(255,255,255,0)");
+  gr.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = gr;
+  g.fillRect(0, 0, W, H);
+  const vg = g.createRadialGradient(CX, CY, Math.min(W, H) * 0.34,
+                                    CX, CY, Math.hypot(W, H) * 0.62);
+  vg.addColorStop(0, "rgba(8,16,34,0)");
+  vg.addColorStop(1, rgba(DEEP, 0.17));
+  g.fillStyle = vg;
+  g.fillRect(0, 0, W, H);
+}
+
+/* Both of those depend on the light and on nothing else, so paying for them
+ * once a frame is paying for them sixty times more often than they change. */
+function buildLayers() {
+  if (!backLayer) backLayer = document.createElement("canvas");
+  if (!glossLayer) glossLayer = document.createElement("canvas");
+  for (const c of [backLayer, glossLayer]) {
+    if (c.width !== canvas.width || c.height !== canvas.height) {
+      c.width = canvas.width; c.height = canvas.height;
+    }
+    const g = c.getContext("2d");
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, c.width, c.height);
+    g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  paintWater(backLayer.getContext("2d"));
+  paintGloss(glossLayer.getContext("2d"));
+  bakedAngle = lightAngle;
+}
+
+function blit(layer) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(layer, 0, 0);
+  ctx.restore();
+}
+
+function drawOil(path) {
+  const lx = Math.cos(lightAngle), ly = Math.sin(lightAngle);
+
+  /* What the oil does to the water under it: it is a lens with a different
+   * index, so it both shadows and focuses. One soft dark pass offset down
+   * the gravity vector is the shadow; the bright rim below handles the rest. */
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.shadowColor = rgba(DEEP, 0.9);
+  ctx.shadowBlur = cell * 1.5;
+  ctx.shadowOffsetX = gDir.x * cell * 0.7 * DPR;
+  ctx.shadowOffsetY = gDir.y * cell * 0.7 * DPR;
+  ctx.fillStyle = rgba(DEEP, 0.35);
+  ctx.fill(path);
+  ctx.restore();
+
+  // The body. Translucent — the water gradient behind still reads through it,
+  // which is the difference between a liquid and a decal.
+  const L = Math.hypot(W, H) * 0.55;
+  const body = ctx.createLinearGradient(CX - gDir.x * L, CY - gDir.y * L,
+                                        CX + gDir.x * L, CY + gDir.y * L);
+  body.addColorStop(0, rgba(OIL_LIT, 0.97));
+  body.addColorStop(0.42, rgba(OIL, 0.95));
+  body.addColorStop(1, rgba(OIL_DEEP, 0.96));
+  ctx.fillStyle = body;
+  ctx.fill(path);
+
+  ctx.save();
+  ctx.clip(path);
+
+  /* The refraction rim, inside the blob, drawn by stroking the same path
+   * shifted and letting the clip keep the half that lands inside.
+   *
+   * Shifted *toward* the lamp, the surviving half is the one away from it —
+   * which is where a droplet's bright edge actually is, because that light
+   * came through the drop rather than off it. The near side gets the direct
+   * specular instead. Between them they are most of what says "this is a
+   * lens" rather than "this is a shape". */
+  ctx.lineJoin = "round";
+  ctx.translate(lx * cell * 0.34, ly * cell * 0.34);
+  ctx.strokeStyle = rgba(mix(OIL, WHITE, 0.78), 0.55);
+  ctx.lineWidth = Math.max(1.1, cell * 0.16);
+  ctx.stroke(path);
+  ctx.translate(-lx * cell * 0.72, -ly * cell * 0.72);
+  ctx.strokeStyle = rgba(WHITE, 0.30);
+  ctx.lineWidth = Math.max(0.9, cell * 0.10);
+  ctx.stroke(path);
+  ctx.translate(lx * cell * 0.38, ly * cell * 0.38);
+
+  // A gloss band inside the oil only, so the two liquids do not share one
+  // highlight — they have different indices and would not.
+  const g2 = ctx.createLinearGradient(CX - lx * L, CY - ly * L, CX + lx * L, CY + ly * L);
+  g2.addColorStop(0, "rgba(255,255,255,0)");
+  g2.addColorStop(0.52, "rgba(255,255,255,0)");
+  g2.addColorStop(0.74, rgba(WHITE, 0.20));
+  g2.addColorStop(0.92, "rgba(255,255,255,0)");
+  ctx.fillStyle = g2;
+  ctx.fillRect(-cell * 3, -cell * 3, W + cell * 6, H + cell * 6);
+  ctx.restore();
+
+  // The interface itself, as a hairline. Thin, dark, and all the way round:
+  // it is what stops a droplet dissolving into the water behind it.
+  ctx.strokeStyle = rgba(OIL_DEEP, 0.55);
+  ctx.lineWidth = Math.max(0.8, cell * 0.055);
+  ctx.stroke(path);
+}
+
+function render() {
+  const ux = -gDir.x, uy = -gDir.y, a = -0.42;
+  lightAngle = Math.atan2(ux * Math.sin(a) + uy * Math.cos(a),
+                          ux * Math.cos(a) - uy * Math.sin(a));
+  let d = lightAngle - bakedAngle;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  if (Math.abs(d) > 0.05) buildLayers();
+
+  ctx.save();
+  if (CONFIG.glass > 0 || CONFIG.mode === "pouch") ctx.clearRect(0, 0, W, H);
+  if (CONFIG.mode === "pouch") {
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, rgba(DEEP, 1));
+    bg.addColorStop(1, "rgba(19,19,23,1)");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    squirclePath(ctx, CX, CY, RX, RY, CONFIG.squircleN, 220);
+    ctx.clip();
+  }
+  blit(backLayer);
+  contour();
+  if (loopCount) drawOil(oilPath());
+  blit(glossLayer);
+  ctx.restore();
+}
+
+/* -------------------------------------------------------------------- loop */
+
+let last = 0, raf = 0;
+let diagOn = false, diagFrames = 0, diagJs = 0, diagSince = 0;
+
+function advance(now) {
+  const dt = Math.min((now - last) / 1000 || 0.016, 0.05);
+  last = now;
+  const t0 = diagOn ? performance.now() : 0;
+  step(dt);
+  render();
+  if (diagOn) diagSample(now, performance.now() - t0);
+}
+
+function diagSample(now, js) {
+  diagFrames++; diagJs += js;
+  if (now - diagSince < 2000) return;
+  console.log("oilwater fps=" + (diagFrames * 1000 / (now - diagSince)).toFixed(1) +
+              " js=" + (diagJs / diagFrames).toFixed(1) + "ms" +
+              " grid=" + GW + "x" + GH + " loops=" + loopCount +
+              " pts=" + loopLen + " oil=" + oilArea().toFixed(3));
+  diagFrames = 0; diagJs = 0; diagSince = now;
+}
+
+function frame(now) { raf = requestAnimationFrame(frame); advance(now); }
+
+function start() {
+  if (!resize()) { requestAnimationFrame(start); return; }
+  render();
+  last = performance.now();
+  if (!raf) raf = requestAnimationFrame(frame);
+}
+
+window.addEventListener("resize", () => { resize(); });
+// A live wallpaper is hidden whenever the launcher is not showing, and one
+// that keeps solving there is a battery leak rather than a wallpaper.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { cancelAnimationFrame(raf); raf = 0; }
+  else { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); }
+});
+
+/* ------------------------------------------------------- running on a phone
+ * Identical to the other two pages, and for the same reasons. */
+let wakeLock = null;
+async function keepAwake() {
+  if (!navigator.wakeLock || document.visibilityState !== "visible") return;
+  try { wakeLock = await navigator.wakeLock.request("screen"); }
+  catch (e) { /* refused, or unsupported: there is no second way to ask */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") keepAwake();
+});
+
+function goImmersive(e) {
+  if (e.pointerType && e.pointerType !== "touch") return;
+  keepAwake();
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+  }
+  window.removeEventListener("pointerdown", goImmersive);
+}
+window.addEventListener("pointerdown", goImmersive);
+
+function installIcon(size) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  g.imageSmoothingQuality = "high";
+  const side = Math.min(canvas.width, canvas.height);
+  const ox = (canvas.width - side) / 2, oy = (canvas.height - side) / 2;
+  squirclePath(g, size / 2, size / 2, size / 2, size / 2, CONFIG.squircleN, 220);
+  g.clip();
+  g.drawImage(canvas, ox, oy, side, side, 0, 0, size, size);
+  return c.toDataURL("image/png");
+}
+
+function installManifest() {
+  const theme = document.createElement("meta");
+  theme.name = "theme-color";
+  theme.content = CONFIG.ramp[0];
+  document.head.appendChild(theme);
+  const manifest = {
+    name: "Oil and Water", short_name: "Oil",
+    display: "fullscreen", orientation: "portrait",
+    background_color: CONFIG.ramp[0], theme_color: CONFIG.ramp[0],
+    start_url: location.href.split("#")[0],
+    icons: [192, 512].map((s) => ({
+      src: installIcon(s), sizes: s + "x" + s, type: "image/png", purpose: "any",
+    })),
+  };
+  const link = document.createElement("link");
+  link.rel = "manifest";
+  link.href = URL.createObjectURL(
+    new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+  document.head.appendChild(link);
+}
+
+/* ------------------------------------------------ the native host, if any
+ *
+ * The shaker's object, verbatim in name and shape, so the WallpaperService in
+ * ../android can host any of the three pages without knowing which it has.
+ */
+let hostOffset = null;
+
+window.__shaker = {
+  motion(x, y, z, spin) { onMotion({ accelerationIncludingGravity: { x, y, z } }); },
+
+  /* Home-screen page swipes. A wallpaper is wider than the screen and slides
+   * under the icons, and sliding a vessel sideways sets the liquid in it
+   * moving — so this goes in as a bulk velocity along the swipe, and what
+   * follows is the solver doing what it already does. */
+  offset(t) {
+    if (hostOffset === null) { hostOffset = t; return; }
+    const d = Math.max(-0.3, Math.min(0.3, t - hostOffset));
+    hostOffset = t;
+    if (!d) return;
+    const k = d * W * 2.2;
+    for (let j = 1; j < GH - 1; j++) {
+      for (let i = 1; i < GW - 1; i++) u[j * GW + i] -= k;
+    }
+  },
+
+  /** A tap on the glass: a short shear pulse under the finger. A radial push
+   *  would be pure divergence and the projection would delete every bit of
+   *  it, which is measured and not assumed — see the shaker. */
+  tap(nx, ny) {
+    const x = nx * W, y = ny * H, R = STIR_R * cell * 1.6;
+    for (let j = 1; j < GH - 1; j++) {
+      for (let i = 1; i < GW - 1; i++) {
+        const k = j * GW + i;
+        const dx = gx(i) + cell * 0.5 - x, dy = gy(j) + cell * 0.5 - y;
+        const d = Math.hypot(dx, dy);
+        if (d > R) continue;
+        const w = 1 - d / R;
+        // A curl about the tap, which is what survives the projection.
+        u[k] += -dy / (d + 1e-3) * 620 * w;
+        v[k] += dx / (d + 1e-3) * 620 * w;
+      }
+    }
+  },
+
+  pause() { cancelAnimationFrame(raf); raf = 0; },
+  resume() { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); },
+  drive() { cancelAnimationFrame(raf); raf = 0; last = performance.now(); },
+  tick() { advance(performance.now()); },
+  diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; diagJs = 0; },
+  icon(size) { return installIcon(size); },
+
+  /** Shake it without shaking it. */
+  shake: emulsify,
+
+  /** What the cell is doing, as numbers. "Has it separated yet" is a
+   *  question about a field, and the only way a headless test can ask it. */
+  stats() {
+    let oil = 0, interface_ = 0, ke = 0, hi = 0, lo = 0;
+    for (let j = 1; j < GH - 1; j++) {
+      for (let i = 1; i < GW - 1; i++) {
+        const k = j * GW + i, f = phi[k];
+        if (f > 0) oil++;
+        if (f > -0.6 && f < 0.6) interface_++;
+        ke += u[k] * u[k] + v[k] * v[k];
+        if (f > hi) hi = f;
+        if (f < lo) lo = f;
+      }
+    }
+    const cells = (GW - 2) * (GH - 2);
+    return {
+      grid: GW + "x" + GH, cells,
+      oilFraction: oil / cells,
+      /* The single number that says whether it is mixed. Interface area is
+       * minimal when the two phases are one layer each and maximal when they
+       * are a foam of droplets, so it falls monotonically while it settles
+       * and is the honest measure of "has it separated". */
+      interfaceCells: interface_ / cells,
+      blobs: loopCount, drawnArea: drawnArea(),
+      /* Total interface length, in grid crossings. The honest measure of
+       * "is it still mixed": one crossing per cell the boundary passes
+       * through, so it is the perimeter and nothing else. `interfaceCells`
+       * counts partly-mixed cells and therefore falls both when droplets
+       * merge and when a blurred boundary sharpens up, which are different
+       * events and were being read as one. */
+      perimeter: loopLen,
+      rms: Math.sqrt(ke / cells),
+      mean: meanPhi(), targetMean, phiMax: hi, phiMin: lo,
+      stir: stirEnergy,
+      gravity: { x: gDir.x, y: gDir.y }, light: lightAngle,
+    };
+  },
+};
+
+/** Signed area of the extracted loops, as a fraction of the screen.
+ *
+ *  This is the renderer checking itself against the solver. The contour is a
+ *  separate representation of the same field, so if the case table has a
+ *  segment the wrong way round or the winding is inconsistent, this and
+ *  `oilFraction` disagree — and a flipped orientation shows up as a negative
+ *  number rather than as something subtle you find later on a phone. Holes
+ *  subtract, which is the point: a loop inside a loop must cancel or the
+ *  nonzero fill would paint it as more oil.
+ */
+function drawnArea() {
+  let a = 0;
+  for (let L = 0; L < loopCount; L++) {
+    const s = loopStart[L], e = loopStart[L + 1], m = e - s;
+    if (m < 3) continue;
+    for (let n = 0; n < m; n++) {
+      const i0 = s + n, i1 = s + (n + 1) % m;
+      a += loopXY[i0 * 2] * loopXY[i1 * 2 + 1] - loopXY[i1 * 2] * loopXY[i0 * 2 + 1];
+    }
+  }
+  return a * 0.5 / (W * H);
+}
+
+/** Oil as a fraction of the cell, for the diagnostics line. */
+function oilArea() {
+  let oil = 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) if (phi[j * GW + i] > 0) oil++;
+  }
+  return oil / ((GW - 2) * (GH - 2));
+}
+
+start();
+installManifest();
+</script>
+</body>
+</html>

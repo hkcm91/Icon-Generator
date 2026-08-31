@@ -251,20 +251,24 @@ reason: there is no device here. Everything above is a headless browser.
 
 ## What the line wants next
 
-The two candidates this one beat are both still worth building, and in this
-order:
+Both of the candidates this one beat have since been looked at properly, and
+the estimate above was half right.
 
-**Oil and water** is nearly free. The shaker's solver already carries a
-denser second phase with its own buoyancy, its own dispersion and its own
-colour — that is where its teal comes from, and it is deliberately not a stop
-on the ramp because the whole point of the pairing is that it is a *different
-fluid*. Turning that into an immiscible pair is a matter of interfacial
-tension and a much lower miscibility, and it lands as a colourway plus a
-tuning pass on a file that already exists.
+**Oil and water** is built — see [OIL-WATER.md](./OIL-WATER.md). The claim
+that it was nearly free turned out to be wrong in one specific respect, and it
+is the respect that mattered: the shaker's second phase is a *dye*, an
+advected scalar with buoyancy and nothing in it that forbids mixing. It
+marbles, and marbling is the one thing oil and water never do. Immiscibility
+had to be added as a term in the equation of motion — a phase field with a
+double-well free energy — not as a tuning constant. Everything else in the
+estimate held: the velocity solver, the shake model and the colourways came
+across nearly unchanged.
 
-**Slime** is the real piece of work: the shaker's solver with a
-shear-thinning, yield-stress constitutive law in place of the Newtonian
-viscosity, so it holds its shape until you push hard enough and then flows.
-It wants dragging as a verb — a finger that stretches the material rather than
-loading it — which is neither of the two verbs the line has now, so it is the
-next one that would teach the set something.
+**Slime** is still outstanding and is now clearly the most interesting of the
+three: the shaker's solver with a shear-thinning, yield-stress constitutive
+law in place of a Newtonian viscosity, so the material holds its shape until
+you push hard enough and then flows. It wants *dragging* as its verb — a
+finger that stretches the material rather than pressing or stirring it — which
+is a third thing the line does not have. The oil-and-water page did some of
+the groundwork: its viscous term is already written as a diffusion, which is
+exactly the term a non-Newtonian law replaces.

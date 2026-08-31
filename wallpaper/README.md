@@ -20,8 +20,15 @@ one it has.
 What it adds is the verb this page does not have. Everything here is a gesture
 you perform on the whole device — tilt it, shake it — and the screen answers as
 one. Bubble wrap is *press*: one finger at a time, at a place you choose. See
-[BUBBLE-WRAP.md](./BUBBLE-WRAP.md), which also says where the line goes after
-it.
+[BUBBLE-WRAP.md](./BUBBLE-WRAP.md).
+
+[`oil-water.html`](./OIL-WATER.md) is the third: a sealed cell of oil over
+water that tears apart when shaken and rebuilds its layer over about twenty
+seconds. It is the closest of the three to this page — it took this file's
+velocity solver, shake model and colourways nearly unchanged — but not as
+close as the plan claimed. This page's second phase is a dye, which marbles;
+oil and water is a phase field, which does not mix. That is a term in the
+equation of motion, not a constant.
 
 ## Try it
 
