@@ -57,11 +57,32 @@
 const params = new URLSearchParams(location.search);
 const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
 
+/* Two toys, one engine.
+ *
+ * "shaker" is the liquid glitter shaker: a suspension that never fully
+ * settles, because that is what makes a shaker worth watching.
+ *
+ * "sand" is a sand-art frame, and it is a different toy in exactly one
+ * respect that changes everything downstream — its particles *land*. Sand
+ * falls out of the liquid, comes to rest and becomes terrain, and terrain is
+ * what the toy is actually about: the dunes, the avalanches, and the striped
+ * layers that record which colour arrived when. None of that is reachable by
+ * a system whose only representation is a bag of independent grains.
+ *
+ * Everything either scene needs from the other is already here — the fluid
+ * solver, the free surface, the gravity basis, the sensors, the glass — so
+ * the scene switch buys a second toy for the cost of the parts that are
+ * genuinely different: a granular bed, and the core suspended above it.
+ */
+const SCENE = params.get("scene") === "sand" ? "sand" : "shaker";
+const SAND = SCENE === "sand";
+
 const CONFIG = {
   // "full" — the screen itself is the shaker, liquid edge to edge, squircle
   // corners landing in the screen corners. This is the wallpaper.
   // "pouch" — a discrete squircle floating on a backdrop, which is the
   // product-shot framing rather than a wallpaper.
+  scene: SCENE,
   mode: params.get("mode") === "pouch" ? "pouch" : "full",
   squircleN: num("n", 4),          // 2 = circle, 4 = squircle, 8 = near square
   /* A real glitter shaker is filled almost to the top. That used to be
@@ -70,7 +91,12 @@ const CONFIG = {
    * meniscus is trimmed to its true contact points and split into segments,
    * the surface can sit in the corner arc — or press against the ceiling —
    * and still terminate correctly, so the container can be properly full. */
-  fill: num("fill", 0.98),
+  /* The sand frame is deliberately less full. A sand-art picture needs a
+   * headspace big enough for the air to gather into one travelling bubble —
+   * that bubble is half the toy, because it is what the falling sand has to
+   * push past — and the liquid it displaces has to go somewhere the dunes
+   * are not. */
+  fill: num("fill", SAND ? 0.9 : 0.98),
   /* How large the suspension is against its vessel. One flake diameter is a
    * fixed fraction of a phone screen, which is right for a wallpaper and
    * wrong for anything small: a shaker drawn at 48dp with wallpaper-sized
@@ -82,10 +108,14 @@ const CONFIG = {
   // The visible glitter population is doubled again, but most of that density
   // remains in the batched micro layer so it still reads as suspended foil
   // instead of 19,500 individually drawn sprites.
-  stars: num("stars", 1650),
-  micro: num("micro", 17850),
-  bubbles: num("bubbles", 112),
-  fizz: num("fizz", 180),
+  /* Sand runs a smaller visible population than glitter and can afford to:
+   * at rest nearly all of it is buried in the bed, which is one height field
+   * rather than thousands of particles, so the count here is the size of the
+   * *cascade* rather than the size of the picture. */
+  stars: num("stars", SAND ? 1500 : 1650),
+  micro: num("micro", SAND ? 12600 : 17850),
+  bubbles: num("bubbles", SAND ? 74 : 112),
+  fizz: num("fizz", SAND ? 120 : 180),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   columns: 96,
   /* Blue-dominant. The green-teal is not in this ramp: it comes from the
@@ -95,14 +125,22 @@ const CONFIG = {
    * Addressable as a comma-separated list so a colourway is a URL rather than
    * an edit — the icon renderer sweeps this to produce a set. Any number of
    * stops works; they are spread evenly along the gravity axis. */
-  ramp: (params.get("ramp") || "#0a5fd4,#1a86f0,#2aa8ee,#3ec4e9").split(","),
+  /* The sand frame's carrier is dark, and that is not a mood choice. Sand
+   * art is lit from inside here: the core is the brightest thing in the
+   * vessel and the metallic grains are mirrors that have nothing to reflect
+   * unless there is something to reflect. Against the shaker's bright blue
+   * a warm core reads as a sticker laid on top; against a deep carrier the
+   * same core lights the dunes and the suspension between. */
+  ramp: (params.get("ramp") ||
+    (SAND ? "#05080f,#0a1320,#122032,#1b3146"
+          : "#0a5fd4,#1a86f0,#2aa8ee,#3ec4e9")).split(","),
   /* The denser second liquid, which settles out and marbles through the body.
    * Deliberately not a stop on `ramp` — the whole point of the pairing is
    * that it is a different fluid rather than a darker version of the first.
    *
    * It has to move with the colourway even so. A teal that reads as a second
    * phase suspended in blue reads as sludge at the bottom of pink. */
-  dense: params.get("dense") || "#4aecc6",
+  dense: params.get("dense") || (SAND ? "#4A7888" : "#4aecc6"),
   /* The headspace above the waterline: inner top wall, mid air, and the
    * liquid showing through the meniscus.
    *
@@ -110,7 +148,9 @@ const CONFIG = {
    * for every other one — tinted air is still air *in this vessel*, and a
    * cool blue headspace sitting above a hot pink liquid is the single
    * loudest thing keeping a set of colourways from reading as a family. */
-  air: (params.get("air") || "#c9dfec,#eaf5fb,#a9d4e6").split(","),
+  air: (params.get("air") ||
+    (SAND ? "#0d1622,#22394d,#0b131d"
+          : "#c9dfec,#eaf5fb,#a9d4e6")).split(","),
   /* Glass rather than paint.
    *
    * At 0 the liquid is opaque and the vessel is its own background, which is
@@ -130,6 +170,35 @@ const CONFIG = {
    * wallpaper is — it fills the screen and has no edge to curve over. An
    * icon is a small object you can see all of, so it wants a surface. */
   dome: Math.max(0, num("dome", 0)),
+
+  /* ---------------------------------------------------------- sand scene */
+
+  /* How much of the vessel the sand fills once it has all come to rest, as a
+   * fraction of the container's area. This is the one number that decides
+   * what the toy looks like at rest: too little and the frame is mostly
+   * empty water, too much and there is no room left for a cascade to fall
+   * through. A third leaves the dunes occupying the lower third and the core
+   * hanging clear above them. */
+  sand: Math.max(0.02, Math.min(0.7, num("sand", 0.34))),
+  /* How many of the metallic colourways are in play. Every band the frame
+   * owns eventually shows as a stripe, so this is the stripe count of the
+   * finished picture rather than a palette size. */
+  bands: Math.max(2, Math.min(8, Math.round(num("bands", 6)))),
+  /* Angle of repose, in degrees. It is the single parameter that decides
+   * what a heap of these grains looks like: the steepest face the pile can
+   * hold before it avalanches. Dry sand sits near 34 degrees and submerged
+   * sand a little shallower, because the liquid it is packed in carries part
+   * of its weight and lubricates the contacts. */
+  repose: Math.max(8, Math.min(60, num("repose", 32))),
+  /* The core: hot centre first, cooling outward. Two stops rather than one
+   * because a molten thing is not a colour, it is a temperature gradient —
+   * a single flat orange disc reads as a sticker whatever it is drawn over. */
+  core: (params.get("core") || "#ffd79a,#ff9a5c,#E8806C").split(","),
+  /* Its radius as a fraction of the container's short half-axis. */
+  coreSize: Math.max(0, Math.min(0.8, num("coreSize", 0.3))),
+  /* How far its light carries into the liquid around it. 0 leaves a bright
+   * blob that lights nothing, which is the giveaway of a painted highlight. */
+  coreGlow: Math.max(0, num("coreGlow", 1)),
 };
 
 /** #rgb or #rrggbb to channel bytes. */
@@ -147,7 +216,7 @@ const DYE_ALPHA = 172 * (1 - CONFIG.glass * 0.78);
  * the pale end to the saturated end across its own width, which is what
  * "iridescent" means: the hue you see depends on the angle you catch it at,
  * and a flake is big enough to span a range of angles. */
-const FLAKE_COLOURS = [
+const HOLO_COLOURS = [
   ["#fffbdc", "#f6d148"],   // butter yellow
   ["#dcffe8", "#4fdd83"],   // mint
   ["#e6f6ff", "#6dc3fb"],   // ice blue
@@ -156,6 +225,66 @@ const FLAKE_COLOURS = [
   ["#fffdea", "#ffe37c"],   // pale gold
   ["#e0fff8", "#5fe3ca"],   // aqua
 ];
+
+/* Metals come in pairs too, and for a different reason.
+ *
+ * Holographic film shifts hue with viewing angle. A metal does not: it keeps
+ * its hue and moves its *value*, from a near-white specular where it faces
+ * the light to a deep saturated body where it turns away. That is the whole
+ * difference between foil and metal, and painting a metallic grain as one
+ * flat mid-tone loses it — which is why flat gold reads as mustard.
+ *
+ * So the pale end of each pair here is the lit facet and the deep end is the
+ * body colour, and every one of them is a real metal's pairing rather than a
+ * tint and a shade of the same swatch: gold darkens toward olive, copper
+ * toward red-brown, and steel toward blue.
+ *
+ * The order is the order the stripes are laid down in, so it is a colour
+ * sequence and not just a set: warm metals against cool ones, so that
+ * neighbouring bands separate. */
+const SAND_COLOURS = [
+  ["#ffeab2", "#c9973a"],   // gold
+  ["#eef5f7", "#93a7b3"],   // platinum
+  ["#ffd3b0", "#b9633a"],   // copper
+  ["#d3f4ea", "#5fb9a6"],   // sea foam
+  ["#f3dcae", "#7d5f2c"],   // bronze
+  ["#e4f0f6", "#8fb3c0"],   // opal
+  ["#ffdcd4", "#c67f6d"],   // rose gold
+  ["#cbd5de", "#44545f"],   // gunmetal
+];
+
+/* One name downstream, so every consumer — the baked sprites, the batched
+ * micro layer, the bed's own bands — is handed whichever palette the scene
+ * is running without knowing there are two. */
+const FLAKE_COLOURS = SAND ? SAND_COLOURS.slice(0, CONFIG.bands) : HOLO_COLOURS;
+
+/* The core's temperature ramp, hot first. */
+const CORE_COLOURS = CONFIG.core.map(parseHex);
+
+/* What shows beyond the vessel's silhouette: the sliver in each screen
+ * corner that the squircle does not reach. A pale knockout is right behind a
+ * bright blue shaker and is a bright notch in the corner of a dark one, so
+ * it follows the carrier rather than being a fixed page colour. */
+const PAGE_BG = SAND ? "#05070c" : "#eef1f4";
+/* What the bottom of the pile fades to. Not black — nothing in this vessel
+ * is unlit, the carrier itself is the darkest thing in it, and a bed that
+ * bottoms out darker than its own liquid reads as a hole rather than as
+ * sand in shadow. */
+const SAND_SHADE = "#0a1018";
+
+/* Each band's own colour taken down toward that shade, rather than every
+ * band fading to the same one. Sand buried under sand is still the colour it
+ * was — it is simply in shadow — and running every stripe into a single dark
+ * tone at depth flattens the bottom of the pile into one muddy mass, which
+ * is the part of it carrying the oldest and most legible layering. */
+const SAND_DEEP = FLAKE_COLOURS.map(([, deep]) => {
+  const a = parseHex(deep), b = parseHex(SAND_SHADE), k = 0.62;
+  const mix = (x, y) => Math.round(x + (y - x) * k);
+  return "rgb(" + mix(a.r, b.r) + "," + mix(a.g, b.g) + "," + mix(a.b, b.b) + ")";
+});
+document.documentElement.style.background = PAGE_BG;
+document.body.style.background = PAGE_BG;
+if (SAND) document.getElementById("tap").style.color = "#7f8b99";
 
 const canvas = document.getElementById("c");
 // Opaque by default: the compositor skips a whole blend when it knows there
@@ -555,6 +684,31 @@ let pfx, pfy;
 let dye, dye0;
 let dyeCanvas = null, dyeCtx = null, dyeImage = null;
 
+/* The liquid core.
+ *
+ * A third scalar on the same grid, and the reason it is not simply another
+ * dye is cohesion. The dense phase is *miscible*: it is supposed to smear,
+ * finger and marble, and semi-Lagrangian advection's numerical diffusion is
+ * doing half that work for free. A core has to survive being torn — a
+ * cascade of sand falls straight through it and it has to come back
+ * together afterwards, which is the one thing a passive scalar can never do,
+ * because every operator acting on it only ever spreads it further.
+ *
+ * What holds a real blob together is surface tension, and its two visible
+ * consequences are reproduced here directly rather than by resolving an
+ * interface: the boundary stays sharp (a sharpening pass that exactly
+ * opposes the diffusion advection introduces) and separated fragments are
+ * drawn back to the mass they came from (a body force toward the core's own
+ * centroid, which is what makes a torn core reassemble instead of dispersing
+ * into an even orange haze).
+ */
+let core, core0, coreSmooth, coreDraw;
+let coreCanvas = null, coreCtx = null, coreImage = null;
+let coreTarget = 0;                     // conserved mass of the core
+let coreX = 0, coreY = 0;               // centroid, screen pixels
+let coreLift = 0, coreSpan = 0;         // and the same point in gravity space
+let coreRadius = 0;                     // rms radius, for the glow
+
 /* Flake concentration, and the dispersive flux that goes with it.
  *
  * A suspension does not let its particles pile up indefinitely: collisions
@@ -599,6 +753,9 @@ function buildFluid() {
   fp = new Float32Array(n); fdiv = new Float32Array(n);
   pfx = new Float32Array(n); pfy = new Float32Array(n);
   dye = new Float32Array(n); dye0 = new Float32Array(n);
+  core = new Float32Array(n); core0 = new Float32Array(n);
+  coreSmooth = new Float32Array(n);
+  coreDraw = new Float32Array(n);
   conc = new Float32Array(n); concNext = new Float32Array(n);
   gas = new Float32Array(n); gasNext = new Float32Array(n);
   fsolid = new Uint8Array(n);
@@ -611,6 +768,11 @@ function buildFluid() {
   dyeCanvas.width = GW; dyeCanvas.height = GH;
   dyeCtx = dyeCanvas.getContext("2d");
   dyeImage = dyeCtx.createImageData(GW, GH);
+
+  coreCanvas = document.createElement("canvas");
+  coreCanvas.width = GW; coreCanvas.height = GH;
+  coreCtx = coreCanvas.getContext("2d");
+  coreImage = coreCtx.createImageData(GW, GH);
   for (let j = 0; j < GH; j++) {
     for (let i = 0; i < GW; i++) {
       const inside = isInside((i + 0.5) * cell, (j + 0.5) * cell);
@@ -620,6 +782,7 @@ function buildFluid() {
     }
   }
   seedDye();
+  if (SAND) seedCore();
 }
 
 /** Start the dense phase pooled low, with enough irregularity that the
@@ -634,6 +797,185 @@ function seedDye() {
       dye[k] = Math.max(0, Math.min(1, (depth - 0.42 + wob) * 2.1));
     }
   }
+}
+
+/* The core starts as one round mass at the middle of the vessel, with a
+ * soft rather than a stepped edge: a hard disc on a grid this coarse is a
+ * staircase, and the sharpening pass below would then spend its first
+ * second fighting to keep the staircase rather than the circle. */
+function seedCore() {
+  const R = Math.min(RX, RY) * CONFIG.coreSize;
+  coreTarget = 0;
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) { core[k] = 0; continue; }
+      const dx = (i + 0.5) * cell - CX, dy = (j + 0.5) * cell - CY;
+      const d = Math.hypot(dx, dy) / Math.max(1, R);
+      /* Smoothstep from solid at 0.7 of the radius to nothing at 1.15, so
+       * the blob has a skin a couple of cells thick to sharpen against. */
+      const t = Math.max(0, Math.min(1, (1.15 - d) / 0.45));
+      core[k] = t * t * (3 - 2 * t);
+      coreTarget += core[k];
+    }
+  }
+  coreMoments();
+}
+
+/** Centroid, mass and rms radius of the core, in screen pixels. */
+function coreMoments() {
+  let m = 0, mx = 0, my = 0;
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      const v = core[j * GW + i];
+      if (v <= 0.002) continue;
+      m += v;
+      mx += v * ((i + 0.5) * cell);
+      my += v * ((j + 0.5) * cell);
+    }
+  }
+  if (m <= 1e-6) { coreRadius = 0; return; }
+  coreX = mx / m; coreY = my / m;
+  let s2 = 0;
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      const v = core[j * GW + i];
+      if (v <= 0.002) continue;
+      const dx = (i + 0.5) * cell - coreX, dy = (j + 0.5) * cell - coreY;
+      s2 += v * (dx * dx + dy * dy);
+    }
+  }
+  /* Twice the rms radius, which for a filled disc is close to its edge.
+   * Taken from the second moment rather than from a threshold crossing so a
+   * core that has been pulled into a ribbon reports the size of the ribbon
+   * instead of the size it used to be. */
+  coreRadius = Math.sqrt(s2 / m) * 1.42;
+  const dx = coreX - CX, dy = coreY - CY;
+  coreSpan = dx * tan.x + dy * tan.y;
+  coreLift = dx * up.x + dy * up.y;
+}
+
+/* Advection, then the two halves of surface tension.
+ *
+ * Order matters. Advection is what smears the interface, so the sharpening
+ * has to follow it in the same step — run the other way round it sharpens an
+ * edge that is about to be smeared again and the core loses definition over
+ * a few seconds however hard it is driven.
+ */
+function stepCore(dt) {
+  core0.set(core);
+  /* Measured against the size the core is supposed to be, not the size it
+   * currently is. Using its own rms radius looks self-correcting and is the
+   * opposite: a core that has been torn apart reports a large radius, the
+   * gathering only acts outside that radius, and so the further it has
+   * scattered the less there is pulling it back. Fragments then sit in
+   * separate warm blobs indefinitely. */
+  const reach = Math.max(1, Math.min(RX, RY) * CONFIG.coreSize * 1.4);
+  /* Where the whole mass wants to be, as one velocity shared by all of it.
+   * A translation, so it moves the core without deforming it, and capped so
+   * that a shake still wins. */
+  let homeX = up.x * (-(coreLift - CORE_HOME * upExtent) * CORE_ISO * gMag) +
+              tan.x * (-coreSpan * CORE_CENTRE);
+  let homeY = up.y * (-(coreLift - CORE_HOME * upExtent) * CORE_ISO * gMag) +
+              tan.y * (-coreSpan * CORE_CENTRE);
+  const homeMag = Math.hypot(homeX, homeY);
+  if (homeMag > CORE_HOMING_CAP) {
+    const q = CORE_HOMING_CAP / homeMag;
+    homeX *= q; homeY *= q;
+  }
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) { core[k] = 0; continue; }
+
+      /* The interface moves relative to the liquid, so the core is traced
+       * back along the carrier's velocity *plus* its own. */
+      let wx = homeX, wy = homeY;
+      if (core0[k] > 0) {
+        // Home, for whatever has been thrown clear of the body.
+        const rx = coreX - ((i + 0.5) * cell), ry = coreY - ((j + 0.5) * cell);
+        const rd = Math.hypot(rx, ry);
+        /* Only well outside the size the core is meant to be. Pulling on the
+         * body of the blob as well does not gather it, it squeezes it: most
+         * of a healthy core lies within a radius of its own centre, so a
+         * pull that starts at the radius acts on nearly all of it at once
+         * and kneads it out of shape. */
+        if (rd > reach) {
+          const far = Math.min(1, (rd - reach) / reach);
+          wx += rx / rd * CORE_GATHER * far;
+          wy += ry / rd * CORE_GATHER * far;
+        }
+      }
+
+      let x = i - dt * (fu[k] + wx) / cell;
+      let y = j - dt * (fv[k] + wy) / cell;
+      if (x < 0.5) x = 0.5; else if (x > GW - 1.5) x = GW - 1.5;
+      if (y < 0.5) y = 0.5; else if (y > GH - 1.5) y = GH - 1.5;
+      const i0 = x | 0, j0 = y | 0;
+      const sx = x - i0, ty = y - j0;
+      const a = j0 * GW, b = (j0 + 1) * GW;
+      core[k] = (1 - ty) * ((1 - sx) * core0[a + i0] + sx * core0[a + i0 + 1]) +
+                      ty * ((1 - sx) * core0[b + i0] + sx * core0[b + i0 + 1]);
+    }
+  }
+
+  /* Sharpening. An unsharp mask is the exact inverse of the diffusion the
+   * advection just applied: subtract a blurred copy and what is left is the
+   * gradient, so adding a share of it back steepens every edge the field
+   * has. Applied to the whole field rather than to a detected interface,
+   * because the interface is wherever the gradient is and this finds it by
+   * construction. The clamp is what makes it stable — without a ceiling the
+   * bright side of an edge climbs on every pass. */
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      coreSmooth[k] = fsolid[k] ? 0 :
+        (core[k] * 4 + core[k - 1] + core[k + 1] +
+         core[k - GW] + core[k + GW]) * 0.125;
+    }
+  }
+  const sharp = Math.min(0.85, CORE_SHARP * dt);
+  let mass = 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) continue;
+      let v = core[k] + (core[k] - coreSmooth[k]) * sharp;
+      /* Sand is not somewhere the core can be. Cutting it out here rather
+       * than pushing it out with a force is what keeps a dune that grows up
+       * under the core from swallowing it: the mass removed comes straight
+       * back through the conservation gain below, and it comes back into the
+       * part of the core that is still in open water, so the blob rides up
+       * off a rising bed instead of being buried by it. */
+      if (bedReady) {
+        const px = (i + 0.5) * cell - CX, py = (j + 0.5) * cell - CY;
+        if ((px * up.x + py * up.y) < bedTopAt(px * tan.x + py * tan.y)) v = 0;
+      }
+      /* Below the floor the field is numerical dust rather than core, and
+       * left in place it accumulates into a permanent orange fog filling the
+       * whole vessel. Sharpening is what makes it safe to cut: material this
+       * thin is on the outside of an edge that is being steepened anyway. */
+      if (v < CORE_FLOOR) v = 0; else if (v > 1) v = 1;
+      core[k] = v;
+      mass += v;
+    }
+  }
+
+  /* Mass is conserved, so anything the clamp and the floor took has to come
+   * back. Restoring it as a uniform gain rather than by putting it back
+   * where it was taken from is deliberate: it re-inflates the body of the
+   * core, which is where nearly all the mass is, instead of feeding the
+   * dust that was just removed. */
+  if (mass > 1e-6) {
+    const gain = Math.max(0.5, Math.min(1.5, coreTarget / mass));
+    if (Math.abs(gain - 1) > 0.001) {
+      for (let k = 0, n = GW * GH; k < n; k++) {
+        if (core[k] > 0) core[k] = Math.min(1, core[k] * gain);
+      }
+    }
+  }
+
+  coreMoments();
 }
 
 function advectDye(dt) {
@@ -815,11 +1157,27 @@ function meanDye() {
   return count ? s / count : 0.5;
 }
 
+/** The core's share of the liquid, for the same reason meanDye exists:
+ *  buoyancy is a force against the ambient, and taking it against a fixed
+ *  value injects a net push whenever the mixture is not that value. */
+function meanCore() {
+  let s = 0, count = 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      if (fsolid[k]) continue;
+      s += core[k]; count++;
+    }
+  }
+  return count ? s / count : 0;
+}
+
 function fluidStep(dt) {
   const n = GW * GH;
   buildAirMask();
   removeNetForce(pfx, pfy);
   const dyeMean = meanDye();
+  const coreMean = SAND ? meanCore() : 0;
   let gasSum = 0, gasCells = 0;
   for (let k = 0; k < n; k++) {
     if (fsolid[k] || fair[k]) continue;
@@ -865,6 +1223,49 @@ function fluidStep(dt) {
       const gw = (gas[k] - gasMean) * GAS_LIFT * gMag * dt;
       fu[k] -= gDir.x * gw;
       fv[k] -= gDir.y * gw;
+
+      /* The core, which is three forces on the liquid it occupies rather
+       * than on some object embedded in it — because the core *is* liquid,
+       * and the only way it can move is by the carrier moving with it. */
+      /* Where the core pushes on the liquid — which is not where it holds
+       * itself together.
+       *
+       * Cohesion cannot be a body force here, and the reason is the same one
+       * that makes a poke on the glass do nothing without a jet: a field of
+       * forces all pointing at one place is pure convergence, an
+       * incompressible liquid cannot converge, and the pressure projection
+       * removes the whole of it. Written that way the core stays exactly as
+       * torn as the last shake left it, however hard the pull is set. It is
+       * applied to the core's own transport instead, in stepCore, where it
+       * is a motion of the interface relative to the carrier — which is what
+       * surface tension physically is.
+       *
+       * What is left here is the pair of forces that genuinely act on the
+       * liquid, and they survive projection for the same reason buoyancy
+       * does: they act only where the core is, so they are a local imbalance
+       * rather than a uniform pull, and the flow that answers them curls. */
+      if (SAND && core[k] > 0) {
+        /* Buoyancy, and only buoyancy.
+         *
+         * The core is very nearly the density of the liquid, so this is a
+         * small term, and it is the only one of the three things the core
+         * does that belongs in a body force. Taken against the mean, exactly
+         * as the dense phase and the bubbles are, and for the reason the
+         * dense phase documents: the total then sums to zero over the
+         * liquid, so it can stir the vessel without pushing it.
+         *
+         * The other two — finding its own level and staying in frame — are
+         * net forces on a sealed container's contents, which is a thing
+         * that cannot happen. Left here they accumulate: the pressure
+         * projection only ever removes divergence, and a steady one-sided
+         * push is divergence-free, so it drives a jet that never decays and
+         * sweeps every grain in the vessel into one end. They act on the
+         * core's own transport instead, where they move it *through* the
+         * liquid rather than moving the liquid. */
+        const cb = (core[k] - coreMean) * CORE_BUOY * gMag * dt;
+        fu[k] -= gDir.x * cb;
+        fv[k] -= gDir.y * cb;
+      }
       if (swirl) {
         // Rotation about the centre, so a twist stirs rather than shoves.
         fu[k] -= ((j + 0.5) * cell - CY) * swirl * dt;
@@ -890,9 +1291,26 @@ function fluidStep(dt) {
        */
       if (!fair[k]) {
         const px = (i + 0.5) * cell - CX, py = (j + 0.5) * cell - CY;
-        const a = -SLOSH * gMag * surfaceSlope(px * tan.x + py * tan.y) * dt;
+        const along = px * tan.x + py * tan.y;
+        const a = -SLOSH * gMag * surfaceSlope(along) * dt;
         fu[k] += tan.x * a;
         fv[k] += tan.y * a;
+
+        /* Below the dune line the liquid is inside a packed bed, and a
+         * packed bed is not a place liquid flows — it seeps. Without this
+         * the solver treats the sand as empty water and drives a current
+         * straight through the pile, which then scours it from underneath.
+         * Darcy's law in its crudest useful form: resistance proportional
+         * to velocity, strong enough that the deep bed is effectively
+         * still while the few centimetres at the surface still feel the
+         * flow that is working on them. */
+        if (SAND && bedReady) {
+          const into = bedTopAt(along) - (px * up.x + py * up.y);
+          if (into > 0) {
+            const seep = Math.exp(-BED_SEEP * Math.min(1, into / (cell * 2)) * dt);
+            fu[k] *= seep; fv[k] *= seep;
+          }
+        }
       }
     }
   }
@@ -924,6 +1342,7 @@ function fluidStep(dt) {
 
   // The dense phase rides the velocity field it just helped create.
   advectDye(dt);
+  if (SAND) stepCore(dt);
 
   /* A sealed vessel cannot drift, though it can slosh.
    *
@@ -1004,6 +1423,60 @@ const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
 /* Far larger than DYE_BUOY, and it should be: the dense phase is a few per
  * cent heavier than the liquid, a bubble is a hundred per cent lighter. */
 const GAS_LIFT = 380;       // px/s^2 per g at a cell entirely full of gas
+
+/* How hard the core's edge is pulled back together, per second. High enough
+ * to undo advection's smearing within a step, low enough that a cascade of
+ * sand can still cut a visible notch in it before it heals. */
+/* Sharpening, per second. Rendering takes its own blurred copy of the
+ * field, so this is free to keep the interface as hard as the transport
+ * wants it without the core drawing as a grid of squares. */
+const CORE_SHARP = 3.4;
+// Below this a cell holds numerical dust rather than core.
+const CORE_FLOOR = 0.045;
+/* Cohesion, as a velocity of the core relative to the liquid carrying it.
+ *
+ * This is the long half of surface tension: what brings a fragment thrown
+ * clear of the body back to it. Keeping the *interface* sharp is the short
+ * half and is already done, by the sharpening pass — which is a filter over
+ * the field and so cannot move material across a gap, which is exactly why
+ * this has to exist as well.
+ *
+ * A gradient-following version of the short half lived here too and was
+ * removed. On a grid this coarse it concentrates material into individual
+ * cells: the interface it is meant to smooth is only two or three cells
+ * wide, so following its gradient is following the grid, and the core comes
+ * out as an angular lump with a hole in it. The sharpening pass does that
+ * job without a preferred direction.
+ *
+ * Deliberately slow next to the flow — tens of pixels a second against the
+ * hundreds a shake produces — so a cascade of sand genuinely cuts through
+ * the core, and the mending is something you watch happen rather than
+ * something that has already happened. */
+const CORE_GATHER = 56;     // px/s, toward the centre of the mass
+/* How much lighter than its carrier the core is. Small, because it is
+ * supposed to hang rather than rise; enough that a cascade landing on it
+ * makes it bulge back up. */
+const CORE_BUOY = 26;       // px/s^2 at a cell entirely full of core
+/* Isopycnal restoring: a density-matched body suspended in a stratified
+ * liquid sits at the level where the surrounding density equals its own, and
+ * drifts back toward it when displaced. That level is what holds the core
+ * clear of the dunes without pinning it — a shake still throws it about, it
+ * simply finds its way home afterwards. Expressed as a rate: a core a
+ * hundred pixels out of place returns at fifty a second. */
+const CORE_ISO = 0.5;       // 1/s
+/* Where that level sits, as a fraction of the container's half-height above
+ * centre. Above the middle, because the dunes occupy the bottom third and a
+ * core resting on them is a core the cascade cannot fall past. */
+const CORE_HOME = 0.16;
+/* And a far weaker version of the same across the vessel, which has no such
+ * physical excuse: nothing in a real frame stops a neutrally buoyant bead
+ * drifting to a wall and staying there. It is here because a wallpaper whose
+ * subject has parked itself in a corner is a wallpaper with a bug, and it is
+ * set an order of magnitude below the restoring above so that it never
+ * competes with anything the toy is actually doing. */
+const CORE_CENTRE = 0.055;  // 1/s
+// Neither of them may outrun a shake; past this the core stops being thrown.
+const CORE_HOMING_CAP = 90; // px/s
 /* Down-gradient drift, cut from 1100. At that strength nothing could ever
  * settle: measured from a well-mixed start, the glitter's centre of mass sat
  * at 0.49 of the container and was still at 0.53 a hundred seconds later,
@@ -1397,6 +1870,829 @@ function stepWaves(dt) {
   }
 }
 
+/* --------------------------------------------------------------- sand bed */
+
+/* Terrain, as a second height field.
+ *
+ * A grain of sand has two lives. In the liquid it is a particle, carried by
+ * the same flow as everything else. When it comes to rest it is absorbed
+ * into this field and stops being simulated at all — and what the toy is
+ * about starts there, because the interesting behaviour of sand is not what
+ * one grain does, it is what a pile of them does: hold a slope up to a limit
+ * and avalanche past it, and remember in stripes which colour arrived when.
+ *
+ * Absorbing them is not only a way to keep the cost down, though it is that:
+ * a settled frame carries perhaps two hundred moving particles instead of
+ * fourteen thousand. It is that a heap is a different object from its
+ * grains. Angle of repose, layering and avalanche cascades are all
+ * properties of the bulk, and a collection of independent particles has no
+ * representation in which to have them at all.
+ *
+ * The field lives in the gravity frame, exactly like the free surface, and
+ * for the same reason: a pile is always a graph over the horizontal, so
+ * arbitrary tilt costs a change of basis and nothing else.
+ *
+ *   bedH[i]      lift of the pile above the local glass floor, in column i
+ *   layerT/B     that lift, split into coloured layers, bottom to top
+ *   bedVolume    the cross-section the pile occupies, read off bedH
+ *
+ * Columns are shared with the free surface — same N, same tangent axis — so
+ * the waterline and the dune profile are sampled against the same grid and
+ * cannot disagree about where the vessel's middle is.
+ */
+
+/* How many pours a column remembers.
+ *
+ * Not a memory budget — it is a limit on how finely the picture can be
+ * striped, and it wants to be low. Material running down a slip face
+ * arrives band after band in whatever order the slope hands it over, and
+ * with room for thirty layers a column records every one of them: a steep
+ * flank ends up carrying a stack of hairline stripes that reads as fringe
+ * rather than as strata. Capping it forces the thinnest pair to merge, and
+ * what survives is the layers thick enough to be worth seeing. */
+const BED_LAYERS = 8;                     // stacked layers a column may hold
+const layerT = new Float32Array(N * BED_LAYERS);
+const layerB = new Uint8Array(N * BED_LAYERS);
+const layerN = new Int16Array(N);
+const bedH = new Float32Array(N);
+const bedShed = new Float32Array(N);      // erosion owed by each column, in lift
+/* How settled each column is, 0 loose and 1 consolidated.
+ *
+ * Freshly poured sand under water is about as mobile as sand gets: the
+ * grains are stacked as they happened to land, with water between them.
+ * Left alone it packs — the fines work down into the gaps, the surface
+ * grains find seats against each other, and the whole thing needs a
+ * noticeably stronger current to move than it did when it arrived. Bed
+ * armouring, and it is the reason a sand picture that has formed stays
+ * formed while the water it is in is still slowly turning over.
+ *
+ * It matters here more than it would in a river, because the vessel does not
+ * come completely to rest: a liquid this size holds a slow circulation for a
+ * long time after it has been disturbed. Without consolidation the picture
+ * reaches a standoff with that circulation — scour and deposition in balance,
+ * half the sand permanently in the water — and never finishes forming. */
+const bedFirm = new Float32Array(N);
+const BED_SET = 0.22;                     // 1/s toward fully consolidated
+const BED_ARMOUR = 2.4;                   // extra critical velocity when it is
+let bedVolume = 0;                        // bedTotal(), refreshed each tick
+let bedFull = 1;                          // what a complete pile is worth
+let bedDx = 1;                            // column width along `tan`
+let bedSpan = 0;                          // the span bedH was last expressed in
+let sandUnit = 1;
+let bedReady = false;
+let bedTook = 0;                          // how much bedTake actually got
+/* How far the vessel has turned since the pile in it was laid down.
+ *
+ * A heap is only a heap with respect to a particular down. Turn the frame
+ * and the pile's surface tilts with it; inside the angle of repose it simply
+ * stands there at an angle, and past it the thing fails. The shear term
+ * below reproduces the first of those and the collapse term the second, and
+ * both of them need to know the total rotation rather than this frame's —
+ * which is the whole difference between a frame turned over slowly and one
+ * flicked over, and the two should end the same way.
+ *
+ * This is what makes an ordinary half-turn work. The inversion guard the
+ * glitter uses is armed by a face-over-face flip, detected through gravity
+ * along the screen normal; turning a phone upside down in its own plane
+ * never touches it, and that is exactly the gesture a sand frame is for. */
+let bedLean = 0;
+let bedLaid = 0;                          // volume buried since the last tick
+const buriedPool = [];                    // grains currently part of the bed
+
+/* Angle of repose, as a slope. Everything about the shape of a dune follows
+ * from this one number: it is the steepest face a heap of these grains can
+ * stand up, and a pile pushed past it does not deform, it collapses. */
+let BED_REPOSE = 0.62;
+/* How fast a face past repose relaxes back to it, per second. Sand
+ * avalanches quickly but not instantly, and the difference between the two
+ * is the whole of whether a slump reads as material moving or as the
+ * geometry being corrected between frames. */
+const BED_RELAX = 9.0;
+/* The share of an avalanching slab that goes into suspension rather than
+ * arriving at the foot of the slope. A submerged avalanche raises a cloud;
+ * it is the most recognisable thing sand does under water. */
+const BED_SLIP_EJECT = 0.16;
+/* Critical velocity for scour, in px/s at unit scale. Below it the bed is
+ * stable however long you wait, above it the flow lifts grains off the
+ * crest — which is the whole reason a gentle tilt leaves the picture intact
+ * and a shake takes it apart. */
+/* Set well clear of what the vessel does when nothing is happening to it,
+ * and that margin is not padding. A settling suspension stirs the liquid it
+ * is falling through — that is what the two-way coupling is for — so a
+ * threshold anywhere near the resting flow closes a loop: the flow lifts
+ * grains off the bed, the grains stir the flow on the way down, and the
+ * frame never settles, with a third of the sand permanently in the water and
+ * the picture never re-forming. */
+const BED_SHIELDS = 215;
+const BED_SCOUR = 0.55;                   // lift eroded per px/s of excess
+/* Erosion during an inversion, as a fraction of the container's half-height
+ * per second. An unsupported pile does not erode, it falls, so this is set
+ * to empty a full bed inside half a second — which is what makes a flip the
+ * gesture the toy is for rather than a slow leak. */
+const BED_COLLAPSE = 1.9;
+/* How far past the repose angle the frame has to be turned before the pile
+ * is failing outright rather than merely leaning. Half a radian: a pile
+ * leaning thirty degrees past what it can hold is losing its surface, and
+ * one leaning sixty is on its way to the other end of the vessel. */
+const BED_FAIL_SPAN = 0.55;
+/* Darcy resistance inside the packed bed, 1/s at a cell fully buried.
+ *
+ * Deliberately soft. This is applied as a sink on the velocity field before
+ * the pressure solve, so a cell inside the bed and its neighbour in open
+ * water are asked to differ sharply — and the projection answers a sharp
+ * difference with a sharp pressure gradient, which shows up as a jet along
+ * the bed surface rather than as the still interior it is meant to produce.
+ * Enough to make the deep bed noticeably slower than the water over it, not
+ * enough to make it a wall the solver has to fight. */
+const BED_SEEP = 7;
+const BED_FRICTION = 7.5;                 // 1/s, grain sliding on the bed
+/* When a grain in contact with the bed becomes part of it.
+ *
+ * The obvious test is whether the grain itself has slowed down, and it is
+ * wrong in a way that only shows once the vessel has been disturbed. A
+ * liquid that has been stirred keeps a slow circulation for a long time
+ * afterwards, and a grain riding that circulation never falls below any
+ * fixed speed — so nothing settles, ever, and a frame that has been turned
+ * over stays a cloud instead of becoming a picture again.
+ *
+ * What actually decides it is the same thing that decides scour, from the
+ * other side. There is one critical velocity for these grains in this
+ * liquid: above it the flow can carry a grain along the bed, below it the
+ * flow cannot, and the grain stops because there is nothing left to move it.
+ * So deposition is tested against the flow, not against the grain, and it is
+ * the *same* threshold — set a little under, so that a bed sitting exactly
+ * at the critical velocity does not chatter between the two. */
+const BED_SETTLE = 0.8;                   // of the scour threshold
+const BED_REST_TIME = 0.05;               // seconds of contact before burial
+let bedCritical = 1;                      // this tick's critical velocity
+/* How much of the sand is left in suspension at the start rather than laid
+ * into the bed. Nothing forces this to be non-zero, but a frame that opens
+ * with perfectly clear water between the dunes and the waterline looks like
+ * a picture of sand rather than sand in liquid. */
+const SAND_FREE = 0.13;
+
+function bedTop(i) { return surfaceFloor[i] + bedH[i]; }
+
+/** The bed's top at an arbitrary tangent coordinate. */
+function bedTopAt(s) {
+  const f = (s + span) / (2 * span) * (N - 1);
+  const i = Math.max(0, Math.min(N - 2, Math.floor(f)));
+  const t = f - i;
+  return bedTop(i) * (1 - t) + bedTop(i + 1) * t;
+}
+
+function bedColumn(s) {
+  return Math.max(0, Math.min(N - 1,
+    Math.round((s + span) / (2 * span) * (N - 1))));
+}
+
+function bedTangent(i) { return -span + 2 * span * (i / (N - 1)); }
+
+/* Layer bookkeeping. Add and take are the only two operations that touch the
+ * stack. Neither touches `bedVolume`, and nothing else does either: it is
+ * read off the height field once a tick, so there is no second account of
+ * the bed to fall out of step with the first. */
+
+function bedAdd(i, band, t) {
+  if (!(t > 0)) return;
+  const b = i * BED_LAYERS;
+  let n = layerN[i];
+  if (n > 0 && layerB[b + n - 1] === band) {
+    layerT[b + n - 1] += t;
+  } else {
+    if (n >= BED_LAYERS) { bedMerge(i); n = layerN[i]; }
+    layerT[b + n] = t; layerB[b + n] = band; layerN[i] = n + 1;
+  }
+  bedH[i] += t;
+}
+
+/* Out of layers. The pair to merge is the thinnest adjacent one, and the
+ * band that survives is the thicker of the two — so what is lost is always
+ * the least visible stripe in the column, rather than the oldest, which is
+ * what dropping from the bottom would do. The bottom of a sand picture is
+ * its history and there is no reason to spend it first. */
+function bedMerge(i) {
+  const b = i * BED_LAYERS;
+  const n = layerN[i];
+  if (n < 2) return;
+  let at = 0, best = Infinity;
+  for (let k = 0; k < n - 1; k++) {
+    const t = layerT[b + k] + layerT[b + k + 1];
+    if (t < best) { best = t; at = k; }
+  }
+  const keep = layerT[b + at] >= layerT[b + at + 1] ? at : at + 1;
+  layerB[b + at] = layerB[b + keep];
+  layerT[b + at] = best;
+  for (let k = at + 1; k < n - 1; k++) {
+    layerT[b + k] = layerT[b + k + 1];
+    layerB[b + k] = layerB[b + k + 1];
+  }
+  layerN[i] = n - 1;
+}
+
+/** Peel `t` of lift off the top of a column. Reports the band it came from;
+ *  `bedTook` carries how much was actually there to take. */
+function bedTake(i, t) {
+  const b = i * BED_LAYERS;
+  let want = Math.min(t, bedH[i]);
+  let got = 0, band = 0;
+  while (want > 1e-7 && layerN[i] > 0) {
+    const k = b + layerN[i] - 1;
+    band = layerB[k];
+    const take = Math.min(layerT[k], want);
+    layerT[k] -= take; want -= take; got += take;
+    if (layerT[k] <= 1e-7) layerN[i]--;
+  }
+  bedH[i] = Math.max(0, bedH[i] - got);
+  if (layerN[i] === 0) bedH[i] = 0;
+  bedTook = got;
+  return band;
+}
+
+function bedScale(i, k) {
+  if (!(k >= 0) || k === 1) return;
+  const b = i * BED_LAYERS;
+  for (let j = 0; j < layerN[i]; j++) layerT[b + j] *= k;
+  bedH[i] *= k;
+  if (bedH[i] <= 1e-6) { bedH[i] = 0; layerN[i] = 0; }
+}
+
+/* The cross-section the pile actually occupies.
+ *
+ * Derived, never tracked. Keeping a running total alongside the height field
+ * and adjusting it at each of the half-dozen places material enters or
+ * leaves is the obvious design and it does not survive contact: the same
+ * material passes through two of those places on its way out — it leaves the
+ * height field when a slip face throws it into suspension, and leaves again
+ * when a grain is finally handed the debt — and debiting both times shrinks
+ * the total under a bed that has not changed. Whatever then reconciles the
+ * two scales the whole pile down to match a number that is wrong.
+ *
+ * The height field is the only description of the bed there is, so the
+ * volume is read off it. Nothing can disagree with it because there is
+ * nothing else to disagree.
+ */
+function bedTotal() {
+  let a = 0;
+  for (let i = 0; i < N; i++) a += bedH[i];
+  return a * bedDx;
+}
+
+/** Restore a total that an operation was supposed to preserve. Used only by
+ *  the two that are: the tilt shear, whose clamp at zero loses whatever it
+ *  cuts, and the change of span when the phone turns. */
+function bedConserve(target) {
+  const a = bedTotal();
+  if (a <= 1e-6 || target <= 0) return;
+  const k = target / a;
+  if (Math.abs(k - 1) < 1e-5) return;
+  for (let i = 0; i < N; i++) bedScale(i, k);
+}
+
+/* The container is not square, so turning it changes how wide a column is —
+ * a portrait vessel held sideways has its tangent axis running the long way.
+ * The pile's shape in normalised coordinates is what carries over; its
+ * height scales so that the area does not. */
+function bedRespan() {
+  if (bedSpan > 0 && Math.abs(span - bedSpan) > 1e-4) {
+    const target = bedTotal();
+    bedDx = 2 * span / (N - 1);
+    bedConserve(target);
+  } else {
+    bedDx = 2 * span / (N - 1);
+  }
+  bedSpan = span;
+}
+
+/* Turning the container tilts the pile in it, exactly as it tilts the water.
+ *
+ * The height field is a graph over `tan`, and `tan` follows gravity, so left
+ * alone a rotation would arrive with the pile already levelled — the sand
+ * would silently re-settle every time the phone moved. What actually happens
+ * is that the pile keeps its shape and its *top* acquires the tilt, and then
+ * either it is inside the angle of repose and nothing more happens, or it is
+ * not and the thing avalanches. Both come free from putting the tilt back.
+ *
+ * Applied by scaling each column rather than by adding to the top of it. A
+ * column is a stack of coloured layers; taking the shear out of the topmost
+ * one would eat the stripe currently being laid down, while scaling moves
+ * every boundary in proportion and keeps the picture intact.
+ */
+function bedTilt(d) {
+  const shear = Math.sin(d);
+  if (!shear || !bedReady) return;
+  /* Only while the pile is still standing.
+   *
+   * Past the repose angle it is not tilting any more, it is failing, and
+   * shearing it further is both wrong and destructive: over a half-turn the
+   * accumulated shear is enormous, the avalanche cannot keep up with it, and
+   * the entire bed ends up stacked against one wall — with every grain later
+   * released from it falling in a single lane. The collapse term owns
+   * everything past this point. */
+  if (Math.abs(bedLean) > Math.atan(BED_REPOSE)) return;
+  // Nor is there anything to shear while the pile is mostly in the water.
+  if (bedVolume < bedFull * 0.2) return;
+  const total = bedTotal();
+  for (let i = 0; i < N; i++) {
+    if (bedH[i] <= 0) continue;
+    const target = Math.max(0, bedH[i] - shear * bedTangent(i));
+    bedScale(i, target / bedH[i]);
+  }
+  bedConserve(total);
+}
+
+/* Avalanching, which is the entire behaviour of a heap.
+ *
+ * Any two neighbouring columns may differ in height by at most the repose
+ * slope times their separation; past that the face is unstable and material
+ * runs down it. Relaxing toward that limit rather than snapping to it is
+ * what makes a slump take time, and time is what makes it read as sand
+ * moving rather than as a shape being redrawn.
+ *
+ * Direction alternates between passes. Sweeping one way only lets material
+ * ride the sweep, and a pile left alone drifts steadily toward whichever end
+ * the loop finishes at.
+ */
+/* The vessel has a lid.
+ *
+ * Nothing in the height field knows how much room a column has: it measures
+ * from the glass floor upward and will happily stack a pile taller than the
+ * container it is in, at which point the bed's surface is outside the vessel
+ * and every consumer of it — contact, scour, the drawing — is working with a
+ * surface that is not there. It only takes one column collecting more than
+ * its share for a moment, and a pile that has once grown through the ceiling
+ * does not come back on its own.
+ *
+ * The overflow is handed to the neighbours rather than deleted, so the
+ * vessel's own shape does the spreading: a column that is full passes what
+ * it cannot hold sideways, exactly as it would if you kept pouring.
+ */
+function bedCeiling() {
+  for (let pass = 0; pass < 2; pass++) {
+    for (let q = 0; q < N; q++) {
+      const i = (pass & 1) ? N - 1 - q : q;
+      const room = Math.max(0, surfaceRoof[i] - surfaceFloor[i]) * 0.96;
+      const over = bedH[i] - room;
+      if (over <= 1e-4) continue;
+      const band = bedTake(i, over);
+      let left = bedTook;
+      const a = i > 0 ? i - 1 : i + 1;
+      const b = i < N - 1 ? i + 1 : i - 1;
+      if (a === b) { bedAdd(a, band, left); continue; }
+      const roomA = Math.max(0, (surfaceRoof[a] - surfaceFloor[a]) * 0.96 - bedH[a]);
+      const roomB = Math.max(0, (surfaceRoof[b] - surfaceFloor[b]) * 0.96 - bedH[b]);
+      const toA = Math.min(roomA, left * 0.5);
+      bedAdd(a, band, toA); left -= toA;
+      const toB = Math.min(roomB, left);
+      bedAdd(b, band, toB); left -= toB;
+      // Nowhere left to put it: it goes back into the water directly, since
+      // it has already been taken out of the field.
+      if (left > 1e-4) bedEject(i, left, band);
+    }
+  }
+}
+
+function bedAvalanche(dt) {
+  const maxStep = BED_REPOSE * bedDx;
+  const relax = Math.min(0.48, BED_RELAX * dt);
+  for (let pass = 0; pass < 2; pass++) {
+    const rev = pass & 1;
+    for (let q = 0; q < N - 1; q++) {
+      const i = rev ? N - 2 - q : q;
+      const d = (surfaceFloor[i] + bedH[i]) - (surfaceFloor[i + 1] + bedH[i + 1]);
+      let from, to, excess;
+      if (d > maxStep) { from = i; to = i + 1; excess = d - maxStep; }
+      else if (-d > maxStep) { from = i + 1; to = i; excess = -d - maxStep; }
+      else continue;
+      const move = Math.min(excess * relax * 0.5, bedH[from]);
+      if (move < 1e-5) continue;
+      const band = bedTake(from, move);
+      /* Part of what runs down a submerged face never reaches the foot of
+       * it: the slide drags liquid with it and the finest of what it carries
+       * stays up in that liquid. Handing it to the erosion debt puts it back
+       * into the particle system as a cloud over the slip face. */
+      /* All of it arrives at the foot of the slope, and a share of it is
+       * then marked as owed. It would be more direct to hold that share back
+       * — but the debt is paid by taking lift out of the column, so material
+       * withheld here and taken there leaves twice, and the pile shrinks
+       * under a bed nothing has actually left. */
+      bedAdd(to, band, bedTook);
+      bedShed[to] += bedTook * BED_SLIP_EJECT;
+    }
+  }
+}
+
+/* What takes grains back out of the bed.
+ *
+ * Three things, and they are three different physical situations rather than
+ * three tunings of one:
+ *
+ *  - Scour. Liquid moving over a bed drags on it, and past a critical
+ *    velocity that drag exceeds what holds a grain in place. Sampled just
+ *    above each crest, because that is where the flow meets the bed and
+ *    where the exposed grains are.
+ *  - Collapse. A pile held over its own head is not eroding, it is falling,
+ *    and no shear threshold has anything to do with it. This is the flip.
+ *  - Disturbance. Everything short of a flip: the frame being moved about
+ *    hard enough to unsettle the surface without inverting it.
+ */
+/** The flow speed at which these grains start to move, for whichever of the
+ *  two directions is asking. Depends only on the in-plane gravity, so it is
+ *  computed once a tick rather than per grain. */
+function bedUpdateCritical() {
+  bedCritical = BED_SHIELDS * sandUnit * Math.sqrt(0.15 + gMag);
+}
+
+function bedErode(dt) {
+  const fail = Math.min(1, Math.max(0,
+    Math.abs(bedLean) - Math.atan(BED_REPOSE)) / BED_FAIL_SPAN);
+  const collapse = Math.max(inversionGuard, fail) * BED_COLLAPSE * upExtent;
+  const shake = Math.max(0, motionActivity - 0.12) * 0.42 * upExtent;
+  for (let i = 0; i < N; i++) {
+    if (bedH[i] <= 1e-5) { bedShed[i] = 0; continue; }
+    const s = bedTangent(i);
+    const lift = bedTop(i) + sandUnit * 3;
+    sampleFlow(CX + tan.x * s + up.x * lift,
+               CY + tan.y * s + up.y * lift, flow);
+    const speed = Math.hypot(flow.x, flow.y);
+    const thresh = bedCritical * (1 + BED_ARMOUR * bedFirm[i]);
+    let rate = Math.max(0, speed - thresh) * BED_SCOUR + collapse + shake;
+    /* A crest is exposed on both sides and a trough is sheltered by its
+     * neighbours; the same flow takes the ridges down long before it
+     * touches the hollows, which is why a scoured bed flattens rather than
+     * eroding uniformly. */
+    const relief = bedH[i] - 0.5 * (bedH[Math.max(0, i - 1)] +
+                                    bedH[Math.min(N - 1, i + 1)]);
+    if (relief > 0) rate *= 1 + Math.min(2, relief / (bedDx * 2));
+    bedShed[i] += rate * dt;
+    /* Packing is undone far faster than it is done. A column losing material
+     * is by definition not settled, and a frame being moved about is not
+     * settling anywhere — so a shake reopens the whole bed at once, which is
+     * what keeps this from quietly turning the sand into rock. */
+    if (rate > 0) bedFirm[i] *= Math.exp(-rate * dt / (sandUnit * 2));
+    else bedFirm[i] += (1 - bedFirm[i]) * BED_SET * dt;
+    bedFirm[i] *= 1 - Math.min(1, motionActivity);
+  }
+}
+
+/* Turn the erosion debt back into particles.
+ *
+ * A grain leaving the bed is the same object that entered it — the pool is
+ * a stack, so the last grain buried is the first released, which is what
+ * gives a cascade its colour: the top stripe leaves first, falls first, and
+ * lands at the bottom of the new pile. The picture rebuilds itself in
+ * reverse order, and it does that because of how a stack works rather than
+ * because anything here arranges it.
+ */
+function bedRelease(dt) {
+  for (let i = 0; i < N; i++) {
+    let debt = bedShed[i];
+    if (debt <= 0) continue;
+    /* A column cannot owe more than it holds. Without this a thin column
+     * whose debt cannot be paid — see below — accumulates it forever, and
+     * arrives at a scour of thousands of pixels that empties it the instant
+     * anything lands there. */
+    if (debt > bedH[i]) debt = bedH[i];
+    while (bedH[i] > 1e-5) {
+      const p = bedTakeGrain(Math.min(debt, bedH[i]));
+      if (!p) break;
+      const lift = p.vol / bedDx;
+      p.hueIdx = bedTake(i, lift);
+      debt -= lift;
+      releaseGrain(p, i);
+    }
+    bedShed[i] = debt;
+  }
+}
+
+/* Take a grain off the pool that is worth no more than `room` of lift.
+ *
+ * Grains differ in size by a factor of ten and the pool is one stack, so the
+ * grain on top of it may be worth more than a thin column has left. Treating
+ * that as "nothing to release here" starves every shallow column behind one
+ * large grain, and its debt then accumulates without limit until something
+ * finally lands there and is swept away by it. Looking a little way down the
+ * stack for one that fits costs a few comparisons; the stack order still
+ * governs which *colour* comes off, which is the part that matters.
+ */
+function bedTakeGrain(room) {
+  let at = buriedPool.length - 1;
+  for (let scan = 0; scan < 12 && at >= 0; scan++, at--) {
+    if (buriedPool[at].vol / bedDx <= room) break;
+  }
+  if (at < 0 || buriedPool[at].vol / bedDx > room) return null;
+  const p = buriedPool[at];
+  buriedPool[at] = buriedPool[buriedPool.length - 1];
+  buriedPool[buriedPool.length - 1] = p;
+  buriedPool.pop();
+  return p;
+}
+
+/* Hand grains to material that has *already* left the height field.
+ *
+ * The distinction from the debt below is the whole reason both exist. Scour
+ * marks a column as owing lift that is still standing in it, so paying that
+ * debt has to take the lift out. The ceiling has no such option — a column
+ * cannot keep material it has no room for — so by the time this is called
+ * the lift is gone, and taking it out again would remove it twice. Which is
+ * exactly what a bed does when it is told to: it goes on shrinking while
+ * every grain in the vessel is marked as buried in it.
+ */
+function bedEject(i, lift, band) {
+  let owed = lift;
+  while (owed > 1e-5) {
+    const p = bedTakeGrain(owed);
+    if (!p) break;
+    p.hueIdx = band;
+    owed -= p.vol / bedDx;
+    releaseGrain(p, i);
+  }
+  // A sliver too small for any grain to carry simply stays where it was.
+  if (owed > 1e-5) bedAdd(i, band, owed);
+}
+
+/** Put a released grain back into the liquid, just clear of the bed it came
+ *  out of and moving with whatever liquid is there. */
+function releaseGrain(p, i) {
+  const s = bedTangent(i) + (Math.random() - 0.5) * bedDx;
+  const lift = surfaceFloor[i] + bedH[i] + p.r * (0.8 + Math.random() * 2.2);
+  p.x = CX + tan.x * s + up.x * lift;
+  p.y = CY + tan.y * s + up.y * lift;
+  clampInside(p, Math.max(1, p.r));
+  sampleFlow(p.x, p.y, flow);
+  /* Lifted off the bed rather than dropped into the flow at rest. A grain
+   * that leaves a bed leaves it because something picked it up, so it starts
+   * with the velocity that did — otherwise a collapsing pile appears to
+   * evaporate from the top instead of shedding off it. */
+  const kick = (10 + 70 * Math.max(motionActivity, inversionGuard)) * sandUnit;
+  p.vx = flow.x + up.x * kick * Math.random();
+  p.vy = flow.y + up.y * kick * Math.random();
+  p.buried = false;
+  p.rest = 0;
+  p.z = p.zHome = Math.random() * 2 - 1;
+  p.zv = 0;
+  p.spin = Math.random() * Math.PI * 2;
+  p.releaseLane = Math.max(-0.94, Math.min(0.94, s / span));
+}
+
+/** Absorb a grain into the column it came to rest over. */
+function buryGrain(p, s) {
+  const i = bedColumn(s);
+  /* Spread across the column it landed in and its two neighbours.
+   *
+   * A bed is *laterally continuous* — a stratum runs sideways for a long way,
+   * because what lays it down is a sheet of sediment arriving over a whole
+   * stretch of floor at once, not a queue of individual grains each choosing
+   * its own spot. Credited to one column only, every column accumulates its
+   * own private sequence of layers, uncorrelated with the column beside it,
+   * and the bed draws as vertical pinstripes: the boundaries are all at
+   * different heights, so there is no bedding left to see.
+   *
+   * Sharing each arrival with its neighbours correlates them without any
+   * appeal to what it should look like — a grain landing on loose sand does
+   * disturb the sand around it — and the layers come out running sideways
+   * again, which is the whole picture. */
+  const t = p.vol / bedDx;
+  bedAdd(i, p.hueIdx, t * 0.5);
+  bedAdd(i > 0 ? i - 1 : i + 1, p.hueIdx, t * 0.25);
+  bedAdd(i < N - 1 ? i + 1 : i - 1, p.hueIdx, t * 0.25);
+  bedFirm[i] *= 0.6;          // what has just landed has not packed yet
+  bedLaid += p.vol;
+  p.buried = true;
+  p.vx = 0; p.vy = 0;
+  buriedPool.push(p);
+}
+
+/* Contact with the bed, which for a grain is the end of its free life or a
+ * skid across the surface, depending on how fast it arrives.
+ *
+ * Both outcomes are needed. Burying anything that touches makes a shaken
+ * frame set solid the instant a grain brushes the pile, and skidding forever
+ * means the bed never accepts anything and the picture never builds. The
+ * discriminator is speed against a threshold that rises with how hard the
+ * frame is being moved: at rest almost anything settles, mid-shake almost
+ * nothing does, which is bed-load transport in the only detail that shows.
+ */
+function bedContact(p, dt, pad) {
+  const dx = p.x - CX, dy = p.y - CY;
+  const s = dx * tan.x + dy * tan.y;
+  const lift = dx * up.x + dy * up.y;
+  const over = lift - bedTopAt(s);
+
+  /* Touching, not overlapping.
+   *
+   * A grain cannot reach the bed surface, let alone pass through it: it has
+   * a radius, and the wall clamp holds every particle a further pad clear of
+   * the glass. Testing for a grain *below* the surface therefore works
+   * perfectly on a pile that already exists and never fires on bare glass —
+   * so a frame whose bed has just collapsed can never lay a new one, and
+   * every grain in it settles onto the floor and sits there loose forever.
+   * The pile stops existing after the first flip, which is the flip the toy
+   * is for. */
+  const touch = pad + p.r;
+  if (over > touch) { p.rest = 0; return; }
+
+  if (over < 0) { p.x -= up.x * over; p.y -= up.y * over; }
+  const vn = p.vx * up.x + p.vy * up.y;
+  if (vn < 0) { p.vx -= up.x * vn; p.vy -= up.y * vn; }
+  const fric = Math.exp(-BED_FRICTION * dt);
+  p.vx *= fric; p.vy *= fric;
+
+  sampleFlow(p.x, p.y, flow);
+  const carry = bedCritical * BED_SETTLE *
+    (1 + BED_ARMOUR * bedFirm[bedColumn(s)]) *
+    (1 - 0.55 * Math.min(1, Math.max(motionActivity, inversionGuard)));
+  if (Math.hypot(flow.x, flow.y) > carry) { p.rest = 0; return; }
+  p.rest += dt;
+  if (p.rest >= BED_REST_TIME) buryGrain(p, s);
+}
+
+/* Lay the opening picture directly, rather than dropping fourteen thousand
+ * grains into clear water and waiting.
+ *
+ * A sand-art frame is bought as a finished picture and the whole of its
+ * appeal is that it already is one. Simulating the first minute of a toy
+ * that has not settled yet is a minute of a wallpaper that looks broken, and
+ * the state it would reach is one this can simply start from.
+ *
+ * The stripes are laid at constant lift and the dunes are built over them,
+ * which is what a real one looks like: the layers went down flat, and the
+ * relief on top is the last thing that happened to it.
+ */
+function seedBed(grains) {
+  layerN.fill(0); layerT.fill(0); bedH.fill(0); bedShed.fill(0);
+  bedFirm.fill(1);            // the picture it opens with has had time to set
+  buriedPool.length = 0;
+  bedVolume = 0;
+  bedSpan = span;
+  bedDx = 2 * span / (N - 1);
+  bedLean = 0;
+  bedLaid = 0;
+  BED_REPOSE = Math.tan(CONFIG.repose * Math.PI / 180);
+
+  const wanted = polygonArea(outline) * CONFIG.sand;
+
+  /* Volumes first, so the sand the bed is made of and the sand still in the
+   * water are the same substance measured the same way. Each grain carries
+   * the share of the total its area is worth, which makes burial and release
+   * exactly reversible — the bed cannot slowly gain or lose material across
+   * a few thousand flips. */
+  let area = 0;
+  for (const p of grains) area += p.r * p.r;
+  const total = wanted / (1 - SAND_FREE);
+  for (const p of grains) {
+    p.vol = total * (p.r * p.r) / Math.max(1e-6, area);
+    p.buried = false;
+    p.rest = 0;
+  }
+
+  // A gentle dune profile: three incommensurate humps, so no repeat reads.
+  let sum = 0;
+  for (let i = 0; i < N; i++) {
+    const u = i / (N - 1) * 2 - 1;
+    /* Broad humps rather than busy ones. The repose angle caps the *slope*,
+     * so a short-wavelength profile has to be shallow to be stable while a
+     * long one can stand up tall inside the same limit — and it is height
+     * that makes a dune read as a dune. */
+    const relief = 1
+      + 0.62 * Math.sin(u * 2.2 + 0.6)
+      + 0.30 * Math.sin(u * 3.9 - 1.7)
+      + 0.13 * Math.sin(u * 7.1 + 2.4);
+    bedH[i] = Math.max(0.05, relief);
+    sum += bedH[i];
+  }
+  const scale = wanted / Math.max(1e-6, sum * bedDx);
+  for (let i = 0; i < N; i++) bedH[i] *= scale;
+
+  /* Open on a pile the grains can actually stand up.
+   *
+   * A profile drawn from a few sine terms has no idea what these grains can
+   * hold, and at any amplitude worth looking at its flanks are steeper than
+   * the angle of repose. The avalanche step then does exactly what it is
+   * for and slumps the whole thing in the first second — which reaches the
+   * right answer by opening on a picture that immediately collapses.
+   *
+   * Scaling the relief down until nothing is too steep is the obvious
+   * alternative and it is much worse: the repose angle limits the *slope*,
+   * so shrinking a profile that is too steep anywhere flattens it
+   * everywhere, and the dunes go away. Running the same relaxation the
+   * simulation uses, to convergence and before the layers are laid, keeps
+   * the height wherever the slope allows it and takes it off only where it
+   * does not. What the frame opens with is then the same shape the physics
+   * would have arrived at, without the second of collapsing to get there.
+   */
+  const step = BED_REPOSE * bedDx;
+  /* Brought close to the limit before the relaxation runs, rather than
+   * handed to it several times over. Relaxation preserves volume and caps
+   * slope, so a profile that is steep everywhere comes out of it as one
+   * straight face at exactly the repose angle — the humps do not survive,
+   * because there was nothing in the profile that was ever inside the
+   * limit. Scaled to just past it, the same pass clips the crests and rounds
+   * the hollows and leaves the shape recognisable. */
+  let steepest = 0;
+  for (let i = 0; i < N - 1; i++) {
+    steepest = Math.max(steepest, Math.abs(bedH[i] - bedH[i + 1]));
+  }
+  if (steepest > step * 1.15) {
+    let mean = 0;
+    for (let i = 0; i < N; i++) mean += bedH[i];
+    mean /= N;
+    const k = step * 1.15 / steepest;
+    for (let i = 0; i < N; i++) bedH[i] = Math.max(0.05, mean + (bedH[i] - mean) * k);
+  }
+  for (let pass = 0; pass < 600; pass++) {
+    let moved = 0;
+    for (let q = 0; q < N - 1; q++) {
+      const i = (pass & 1) ? N - 2 - q : q;
+      const d = (surfaceFloor[i] + bedH[i]) - (surfaceFloor[i + 1] + bedH[i + 1]);
+      let m = 0;
+      if (d > step) m = Math.min((d - step) * 0.25, bedH[i]);
+      else if (-d > step) m = -Math.min((-d - step) * 0.25, bedH[i + 1]);
+      if (m === 0) continue;
+      bedH[i] -= m; bedH[i + 1] += m;
+      moved += Math.abs(m);
+    }
+    if (moved < bedDx * 0.002) break;
+  }
+  for (let i = 0; i < N; i++) bedH[i] = Math.max(0, bedH[i]);
+
+  /* Stripe boundaries at constant lift rather than at constant fraction of
+   * each column. Fractional boundaries follow the dunes and give a pile that
+   * looks striped in an aerosol sort of way; flat ones give a picture the
+   * dunes are cut *into*, which is the thing being imitated. */
+  let crest = 0;
+  for (let i = 0; i < N; i++) crest = Math.max(crest, bedH[i]);
+  const bands = FLAKE_COLOURS.length;
+  for (let i = 0; i < N; i++) {
+    const u = i / (N - 1) * 2 - 1;
+    const target = bedH[i];
+    bedH[i] = 0; layerN[i] = 0;
+    for (let b = 0; b < bands; b++) {
+      /* Undulating boundaries. A ruler-straight stripe is the one thing a
+       * poured layer never is, and the wobble is a smooth function of
+       * position so neighbouring columns agree about where the line goes. */
+      const wob = crest * 0.035 *
+        (Math.sin(u * 4.3 + b * 1.9) + 0.6 * Math.sin(u * 8.1 - b * 2.7));
+      const edge = crest * ((b + 1) / bands) + wob;
+      const t = Math.min(target, Math.max(0, edge)) - bedH[i];
+      if (t > 1e-6) bedAdd(i, b, t);
+      if (bedH[i] >= target - 1e-6) break;
+    }
+    if (bedH[i] < target) bedAdd(i, bands - 1, target - bedH[i]);
+  }
+
+  /* Shuffled before any of it is buried, and that is not tidiness.
+   * The pool is a stack and release walks it from the top, so its order is
+   * the order a cascade arrives in. Burying the list as it stands puts every
+   * coarse grain at the bottom and every fine one on top, and the first flip
+   * then delivers a cloud of dust followed several seconds later by all the
+   * heavy material at once. Shuffled, every cascade carries the full mix. */
+  const order = grains.slice();
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const t = order[i]; order[i] = order[j]; order[j] = t;
+  }
+
+  // Bury grains until the pile is paid for; the rest stay in the water.
+  let owed = 0;
+  for (let i = 0; i < N; i++) owed += bedH[i];
+  owed *= bedDx;
+  bedFull = Math.max(1, owed);
+  let paid = 0;
+  for (const p of order) {
+    if (paid >= owed) break;
+    p.buried = true;
+    p.vx = 0; p.vy = 0;
+    buriedPool.push(p);
+    paid += p.vol;
+  }
+  bedVolume = bedTotal();
+
+  /* Whatever is left over is the suspension. Spread through the water above
+   * the bed with a bias toward it, since that is where sand that has not
+   * quite landed actually is. */
+  for (const p of grains) {
+    if (p.buried) continue;
+    /* Whatever is still up in the water is whatever came off the top of the
+     * pile, so it is the top stripe's colour. Left as the random hue the
+     * seeding gave it, this suspension rains every band in the palette onto
+     * every column indefinitely, and the picture's crest turns into a
+     * speckled patchwork within seconds of opening — the one place the
+     * layering is supposed to be crispest. */
+    p.hueIdx = bands - 1;
+    const s = (Math.random() * 2 - 1) * span * 0.92;
+    const floorLift = bedTopAt(s);
+    const roomTop = level - Math.max(2, p.r * 2);
+    const lift = floorLift +
+      Math.pow(Math.random(), 1.7) * Math.max(0, roomTop - floorLift);
+    p.x = CX + tan.x * s + up.x * lift;
+    p.y = CY + tan.y * s + up.y * lift;
+    clampInside(p, Math.max(1, p.r));
+    p.releaseLane = Math.max(-0.94, Math.min(0.94, s / span));
+  }
+  bedReady = true;
+}
+
 /* --------------------------------------------------------------- particles */
 
 const stars = [], microGlitter = [], bubbles = [];
@@ -1609,7 +2905,8 @@ function seed() {
        * big flakes lag, overshoot on a turn and sink noticeably faster. That
        * spread is what makes the settle look like a real suspension instead
        * of every flake moving as one sheet. */
-      tau: 0.038 + (r / unit) * (r / unit) * 0.0021,
+      tau: SAND ? 0.020 + (r / unit) * (r / unit) * 0.0009
+                : 0.038 + (r / unit) * (r / unit) * 0.0021,
       /* Settling speed. Turning a real glitter shaker over empties it in
        * tens of seconds, not minutes, and this was three times slower than
        * that — the glitter had nowhere it was visibly going. It was set low
@@ -1638,23 +2935,43 @@ function seed() {
        * same convection on the same terms, and what settles out is a
        * gradient instead: concentrated under the waterline, thinning down
        * through the body, holding that shape indefinitely. */
-      terminal: (36 + (r / unit) * 10.2) * unit,
+      /* Sand is not foil, and the difference is the whole reason it makes a
+       * picture instead of a haze. A glitter flake is a plate cut from a
+       * film: it has almost no thickness, so buoyancy nearly cancels its
+       * weight and it drifts. A grain is a lump of mineral several times
+       * the density of the liquid, and it falls — quickly, and in a
+       * straight line, because nothing about its shape gives it lift. That
+       * is what lets it arrive somewhere and stay there. */
+      terminal: SAND ? (150 + (r / unit) * 44) * unit
+                     : (36 + (r / unit) * 10.2) * unit,
       /* Nominally identical film still falls at visibly different rates.
        * Larger cuts hold their edge-on attitude longer and slip faster,
        * while fine cuts spend more of the fall broadside. Keep that spread
        * correlated with size instead of applying one gravity multiplier to
        * the entire glitter cloud. */
-      settleScale: 0.78 + Math.pow(Math.min(1, r / (12 * unit)), 0.72) * 0.36 +
+      settleScale: (SAND ? 0.90 : 0.78) +
+                   Math.pow(Math.min(1, r / (12 * unit)), 0.72) * 0.36 +
                    Math.random() * 0.14,
       // Most commercial PET glitter sinks, a few pieces are near-neutral,
       // and a tiny fraction can be carried upward by the viscous flow.
-      density: Math.random() < 0.94 ? 1 : (Math.random() < 0.75 ? 0.16 : -0.34),
+      /* Sand has no buoyant minority. What keeps a sand frame's water from
+       * going clear is the finest fraction staying up in it, and that is
+       * slow settling rather than flotation — so the few here are light,
+       * not lighter than the liquid. */
+      density: SAND
+        ? (Math.random() < 0.97 ? 1 : 0.26)
+        : (Math.random() < 0.94 ? 1 : (Math.random() < 0.75 ? 0.16 : -0.34)),
       // Flakes rock from side to side as they sink rather than dropping
       // straight — the characteristic glitter flutter.
       flutterRate: 1.4 + Math.random() * 2.6,
       flutterPhase: Math.random() * Math.PI * 2,
       flutterClock: Math.random() * Math.PI * 2,
-      flutterAmp: (10 + Math.random() * 20) * unit,
+      /* Flutter is a plate's behaviour: it comes from the lift a flat thing
+       * generates as it tips, and a grain that is roughly as thick as it is
+       * wide generates none. What is left is the small wander of an
+       * irregular lump, which is a tenth of it. */
+      flutterAmp: (SAND ? 1.2 + Math.random() * 2.4
+                        : 10 + Math.random() * 20) * unit,
       // Mass proxy for the reaction it exerts back on the liquid.
       mass: (r / unit) * (r / unit),
       /* Position through the thickness of the pouch, -1 at the back wall
@@ -1685,10 +3002,12 @@ function seed() {
       r: (0.55 + Math.random() * 1.25) * unit,
       hueIdx: (Math.random() * FLAKE_COLOURS.length) | 0,
       phase: Math.random() * Math.PI * 2,
-      terminal: (8 + Math.random() * 16) * unit,
+      terminal: (SAND ? 44 + Math.random() * 70 : 8 + Math.random() * 16) * unit,
       // Dust-size flecks remain suspended behind the heavier cut foil.
-      settleScale: 0.52 + Math.random() * 0.30,
-      density: Math.random() < 0.96 ? 1 : (Math.random() < 0.84 ? 0.10 : -0.26),
+      settleScale: (SAND ? 0.66 : 0.52) + Math.random() * 0.30,
+      density: SAND
+        ? (Math.random() < 0.985 ? 1 : 0.18)
+        : (Math.random() < 0.96 ? 1 : (Math.random() < 0.84 ? 0.10 : -0.26)),
       z, zHome: z, zv: 0,
     };
     settleSpawn(p, Math.max(1, p.r), 1.0);
@@ -1735,6 +3054,12 @@ function seed() {
     b.sfx = b.pfx = flow.x; b.sfy = b.pfy = flow.y;
     bubbles.push(b);
   }
+  sandUnit = unit;
+  /* The bed is laid last, because it is made out of the grains above: they
+   * are seeded as an ordinary suspension and then most of them are buried,
+   * so there is exactly one description of what a grain is. */
+  if (SAND) seedBed(stars.concat(microGlitter));
+
   /* Draw order is depth order, and depth is now a real coordinate rather
    * than size standing in for it. */
   stars.sort((a, b) => a.z - b.z);
@@ -1918,7 +3243,7 @@ function buildLayers() {
      * This is what lets the render loop drop its per-frame clip(): the
      * liquid can be drawn as a plain full-screen fill and this layer trims
      * the corners on the way past. */
-    g.fillStyle = "#eef1f4";
+    g.fillStyle = PAGE_BG;
     g.beginPath();
     g.rect(0, 0, W, H);
     traceOutline(g);
@@ -1964,7 +3289,47 @@ const SHADOW_X = Math.cos(LIGHT_ANGLE), SHADOW_Y = Math.sin(LIGHT_ANGLE);
  * whichever way is currently up. Recomputed once per step, not per bubble. */
 let riseAngle = 0;
 
+/* Grain silhouettes.
+ *
+ * Sand is broken rock, and broken rock is convex, blocky and slightly
+ * rounded at the corners from having been knocked about — never a star and
+ * never a long thin shard. Drawing sand with the foil cuts is the single
+ * thing that would keep it reading as glitter however the colours were
+ * changed, because a five-pointed silhouette is a manufactured object and
+ * the eye knows it.
+ *
+ * Four authored outlines rather than a random walk, for the same reason the
+ * foil cuts are authored: a radius drawn per corner puts adjacent corners at
+ * unrelated depths, and at the size the hero grains are drawn that comes out
+ * as pinched and folded rather than as chipped.
+ */
+const SAND_CUTS = [
+  [[-0.62,-0.66],[0.22,-0.86],[0.80,-0.34],[0.78,0.40],[0.14,0.84],[-0.66,0.58],[-0.88,-0.10]],
+  [[-0.50,-0.78],[0.44,-0.74],[0.86,-0.06],[0.52,0.72],[-0.34,0.84],[-0.84,0.24]],
+  [[-0.72,-0.44],[0.02,-0.84],[0.74,-0.52],[0.88,0.22],[0.28,0.82],[-0.52,0.66]],
+  [[-0.44,-0.82],[0.50,-0.66],[0.84,0.12],[0.40,0.80],[-0.46,0.78],[-0.86,0.06],[-0.80,-0.44]],
+];
+
 function flakePath(g, cx, cy, R, shape) {
+  if (SAND) {
+    const cut = SAND_CUTS[shape % SAND_CUTS.length];
+    g.beginPath();
+    /* Corners rounded off with quadratics through the midpoints. A grain
+     * that has been in a tumbler for a geological age has no sharp corners
+     * left on it, and at three pixels across the rounding is the difference
+     * between sand and confetti. */
+    let mx = (cut[cut.length - 1][0] + cut[0][0]) * 0.5 * R + cx;
+    let my = (cut[cut.length - 1][1] + cut[0][1]) * 0.5 * R + cy;
+    g.moveTo(mx, my);
+    for (let i = 0; i < cut.length; i++) {
+      const n = cut[(i + 1) % cut.length];
+      mx = (cut[i][0] + n[0]) * 0.5 * R + cx;
+      my = (cut[i][1] + n[1]) * 0.5 * R + cy;
+      g.quadraticCurveTo(cut[i][0] * R + cx, cut[i][1] * R + cy, mx, my);
+    }
+    g.closePath();
+    return;
+  }
   g.beginPath();
   if (shape === 0) {
     for (let i = 0; i < 10; i++) {
@@ -2091,6 +3456,7 @@ function buildFlakeSprites() {
 }
 
 function buildSprites() {
+  if (SAND) buildSandTexture();
   buildFlakeSprites();
   /* A bubble's shadow. It is a diverging lens, so it spreads the light
    * passing through it and the liquid directly behind it receives less —
@@ -2528,6 +3894,19 @@ function updateBasis() {
   }
   basisReady = true;
   updateSurfaceBounds(!Number.isFinite(boundsAngle));
+  /* The bed is a graph over the same axis and inherits the same two
+   * corrections: the span it is expressed in, and the tilt the rotation
+   * left in it. Both after the wall bounds, because a pile is measured from
+   * the glass floor and the floor has just moved. */
+  if (SAND && bedReady) {
+    bedRespan();
+    if (d !== 0) {
+      bedLean += d;
+      if (bedLean > Math.PI) bedLean -= Math.PI * 2;
+      else if (bedLean < -Math.PI) bedLean += Math.PI * 2;
+      bedTilt(d);
+    }
+  }
 }
 
 function surfaceAt(s) {
@@ -3030,6 +4409,7 @@ function drawParticles(s0, s1, b0, b1, time) {
   ctx.globalAlpha = 1;
   for (let i = s0; i < s1; i++) {
     const p = stars[i];
+    if (p.buried) continue;
     if (displayDepthOf(projectedX(p.x, p.z), projectedY(p.y, p.z)) > 0) continue;
     drawStar(p, time);
   }
@@ -3053,6 +4433,7 @@ function buildMicroPaths() {
   microPathsBack = FLAKE_COLOURS.map(() => new Path2D());
   microPathsFront = FLAKE_COLOURS.map(() => new Path2D());
   for (const p of microGlitter) {
+    if (p.buried) continue;
     const x = projectedX(p.x, p.z), y = projectedY(p.y, p.z);
     if (displayDepthOf(x, y) > 0) continue;
     const zScale = 0.72 + (p.z + 1) * 0.22;
@@ -3503,6 +4884,516 @@ function paintSurfaceBubbleGlint(poly) {
   ctx.restore();
 }
 
+/* ------------------------------------------------------------- sand render */
+
+/* Grain texture.
+ *
+ * The bed is drawn as filled bands, and filled bands are the reason painted
+ * sand looks painted: a real pile has no flat area anywhere on it, because
+ * every square millimetre of it is grains catching light at their own
+ * angles. One tiled sheet of speckle laid over the whole silhouette supplies
+ * that at a cost of a single fill, and it is what separates sand from a
+ * stack of coloured stripes.
+ *
+ * Both signs of speck, not just highlights. A lit grain and the shadow it
+ * casts on its neighbour are the same event, and dropping the dark half
+ * makes the surface glitter without ever reading as granular.
+ */
+let sandTile = null, sandPattern = null;
+
+function buildSandTexture() {
+  const px = 128;
+  sandTile = document.createElement("canvas");
+  sandTile.width = sandTile.height = px;
+  const g = sandTile.getContext("2d");
+  /* Seeded by hand rather than by Math.random, so the tile is the same on
+   * every launch and on every device. A texture that reshuffles itself
+   * between sessions is a texture the eye can catch changing. */
+  let seed = 20260831;
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  for (let i = 0; i < 2600; i++) {
+    const x = rnd() * px, y = rnd() * px;
+    const r = 0.35 + rnd() * 0.95;
+    const lit = rnd() < 0.52;
+    g.fillStyle = lit
+      ? "rgba(255,252,242," + (0.10 + rnd() * 0.34).toFixed(3) + ")"
+      : "rgba(14,10,6," + (0.08 + rnd() * 0.26).toFixed(3) + ")";
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.fill();
+  }
+  sandPattern = null;
+}
+
+/* Edge samples of the pile and of the glass under it. Taken between columns
+ * rather than at them so that neighbouring columns share a boundary exactly
+ * and the crest comes out as one continuous line instead of a staircase. */
+const bedEdgeTop = new Float32Array(N + 1);
+const bedEdgeFloor = new Float32Array(N + 1);
+const bedEdgeS = new Float32Array(N + 1);
+// Absolute lift of every layer boundary, floor first. One extra entry per
+// column because n layers have n+1 boundaries.
+const bedCum = new Float32Array(N * (BED_LAYERS + 1));
+// Per-column stratum thicknesses, and the laterally smoothed copy drawn from.
+const bedSlot = new Float32Array(N * BED_LAYERS);
+const bedSmooth = new Float32Array(N * BED_LAYERS);
+// The colour each drawn slot ends up with, after the same lateral smoothing.
+const bedSlotBand = new Uint8Array(N * BED_LAYERS);
+const bedVote = new Float32Array(16);
+
+function bedEdges() {
+  for (let e = 0; e <= N; e++) {
+    const a = Math.max(0, e - 1), b = Math.min(N - 1, e);
+    bedEdgeTop[e] = 0.5 * (bedTop(a) + bedTop(b));
+    bedEdgeFloor[e] = 0.5 * (surfaceFloor[a] + surfaceFloor[b]);
+    bedEdgeS[e] = Math.max(-span, Math.min(span,
+      bedTangent(b) - (e === b ? bedDx * 0.5 : -bedDx * 0.5)));
+  }
+  bedEdgeS[0] = -span;
+  bedEdgeS[N] = span;
+}
+
+/* Draw the dunes.
+ *
+ * Everything happens in the gravity frame, which is why tilt costs nothing
+ * here either: the transform is the same one the caustics use, so a column
+ * is a vertical strip whichever way the phone is being held.
+ *
+ * Each column's stack is mapped affinely onto the wedge between the glass
+ * and the pile's top at that point, so a layer occupying the top fifth of a
+ * column is drawn in the top fifth of it. Layer boundaries can therefore
+ * disagree by a fraction of a column between neighbours — which is what
+ * stratification actually looks like, and is invisible at the one place it
+ * would matter, since the top boundary is a fraction of exactly one in every
+ * column and the crest is continuous by construction.
+ */
+/* Which band a drawn slot belongs to.
+ *
+ * The lateral blur hands a column material in slots it never had a stratum
+ * in, which is the point — that is how a layer becomes continuous across
+ * columns. What it cannot do is say what colour that material is, and taking
+ * the column's own topmost band is badly wrong in one case that shows: a
+ * column eroded down to a single stratum then answers with that one band for
+ * every slot, and draws as a full-height post of it straight through the
+ * banding on either side.
+ *
+ * The material came from the neighbours, so its colour does too. Nearest
+ * column with a stratum at that depth, either side, and only the column's
+ * own top band when there is genuinely no other answer.
+ */
+function bedBandAt(i, j) {
+  if (j < layerN[i]) return layerB[i * BED_LAYERS + j];
+  for (let d = 1; d <= 4; d++) {
+    const a = i - d, b = i + d;
+    if (a >= 0 && j < layerN[a]) return layerB[a * BED_LAYERS + j];
+    if (b < N && j < layerN[b]) return layerB[b * BED_LAYERS + j];
+  }
+  return layerN[i] > 0 ? layerB[i * BED_LAYERS + layerN[i] - 1] : 0;
+}
+
+function drawBed() {
+  if (!bedReady || bedVolume <= 0) return;
+  bedEdges();
+
+  const bands = FLAKE_COLOURS.length;
+  const paths = [];
+  for (let b = 0; b < bands; b++) paths.push(new Path2D());
+  const seams = new Path2D();
+
+  let crest = -Infinity, base = Infinity;
+  for (let e = 0; e <= N; e++) {
+    if (bedEdgeTop[e] > crest) crest = bedEdgeTop[e];
+    if (bedEdgeFloor[e] < base) base = bedEdgeFloor[e];
+  }
+
+  /* Every boundary at the lift it is actually at.
+   *
+   * The obvious construction — map each column's stack onto the wedge under
+   * its own crest, so a layer occupying the top fifth of a column is drawn
+   * in the top fifth of it — is wrong, and wrong in the one place it shows.
+   * On a steep face two neighbouring columns differ in height by a large
+   * fraction, so the same stratum gets squeezed into a very different band
+   * of each, and a set of layers that are flat in the data comes out as a
+   * staircase of blocks climbing the slope. The lifts are stored; they are
+   * what should be drawn.
+   *
+   * Strata are then smoothed across columns before they are drawn.
+   *
+   * A stirred vessel genuinely mixes its sand, so a bed that has just
+   * re-formed is marbled rather than cleanly banded, and it should look
+   * marbled. What it must not look like is a picket fence — and that is what
+   * per-column stacks give, because each column holds its own sequence of
+   * thicknesses and the boundaries between neighbours land at unrelated
+   * heights. The mixing is real; the verticality of it is an artefact of the
+   * columns being the unit of storage.
+   *
+   * Blurring the *thicknesses* rather than the boundary positions is what
+   * makes this safe. A blurred thickness is still positive, so the prefix
+   * sum is still increasing and boundaries cannot cross — which is the
+   * failure that turns a smoothed bed into a thicket of spikes. Rescaling
+   * each column afterward puts its top back exactly on the crest, so the
+   * surface the light is drawn along is untouched.
+   */
+  const cum = bedCum, K = BED_LAYERS;
+  for (let i = 0; i < N; i++) {
+    const b0 = i * BED_LAYERS, c0 = i * (K + 1);
+    let acc = 0;
+    for (let j = 0; j < K; j++) {
+      // Columns hold different numbers of strata; the missing ones are
+      // empty slots at the top, so every column has the same slot count.
+      const t = j < layerN[i] ? layerT[b0 + j] : 0;
+      bedSlot[i * K + j] = t;
+      acc += t;
+    }
+    cum[c0] = acc;      // borrow the first entry to hold the column's total
+  }
+  /* Three passes of a box blur nine columns wide.
+   *
+   * The width is the whole point and a narrow kernel does not do the job. A
+   * bed that has just rebuilt out of a cascade has wildly different stacks
+   * in adjacent columns, and a one-column kernel only takes the hard edges
+   * off that — the picket fence is still a picket fence, with slightly
+   * softer palings. Three box passes carry a stratum across something like a
+   * tenth of the frame, which is what makes it read as a bed rather than as
+   * ninety-six independent columns of sand. */
+  const R = 5;
+  let src = bedSlot, dst = bedSmooth;
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < N; i++) {
+      const lo = Math.max(0, i - R), hi = Math.min(N - 1, i + R);
+      const inv = 1 / (hi - lo + 1), c = i * K;
+      for (let j = 0; j < K; j++) {
+        let sum = 0;
+        for (let q = lo; q <= hi; q++) sum += src[q * K + j];
+        dst[c + j] = sum * inv;
+      }
+    }
+    const t = src; src = dst; dst = t;
+  }
+  for (let i = 0; i < N; i++) {
+    const c0 = i * (K + 1);
+    let sum = 0;
+    for (let j = 0; j < K; j++) sum += src[i * K + j];
+    const k = sum > 1e-6 ? cum[c0] / sum : 0;
+    let run = surfaceFloor[i];
+    cum[c0] = run;
+    for (let j = 0; j < K; j++) {
+      run += src[i * K + j] * k;
+      cum[c0 + j + 1] = run;
+    }
+  }
+  /* And the colours, over the same window.
+   *
+   * Smoothing the thicknesses alone gets the *geometry* of a bed and leaves
+   * it striped anyway, because a stratum is a colour and the colours are
+   * still assigned per column: two neighbours can hold the same thickness at
+   * the same depth and paint it gold and platinum. The bands have to travel
+   * sideways as well as the material does.
+   *
+   * A vote rather than a blur, since a band index is a name and the average
+   * of gold and sea foam is not a colour anything is made of. Weighted by
+   * the material sitting at that depth, so a stratum that is thick across
+   * the window carries it and a sliver does not.
+   */
+  for (let j = 0; j < K; j++) {
+    for (let i = 0; i < N; i++) {
+      const lo = Math.max(0, i - R), hi = Math.min(N - 1, i + R);
+      for (let b = 0; b < bands; b++) bedVote[b] = 0;
+      const surface = j === K - 1;
+      for (let q = lo; q <= hi; q++) {
+        /* The topmost slot is the bed's exposed surface, and a surface is
+         * one thing across its width — so it votes on what each column
+         * actually has on top rather than on what happens to sit in that
+         * slot index. Without it a column whose stack is a slot shorter than
+         * its neighbours' contributes a band from further down, and the
+         * crest grows a one-column spike of a colour that is nowhere near
+         * it. */
+        const b = surface && layerN[q] > 0
+          ? layerB[q * BED_LAYERS + layerN[q] - 1]
+          : bedBandAt(q, j);
+        bedVote[b % bands] += bedSlot[q * K + j] + 1e-4;
+      }
+      let best = 0, bv = -1;
+      for (let b = 0; b < bands; b++) {
+        if (bedVote[b] > bv) { bv = bedVote[b]; best = b; }
+      }
+      bedSlotBand[i * K + j] = best;
+    }
+  }
+
+  const bleed = Math.max(0.3, Math.min(RX, RY) * 0.0015);
+  for (let i = 0; i < N; i++) {
+    /* Every slot, not only the ones this column had material in: the blur
+     * has just given it a share of its neighbours' strata, which is the
+     * whole point, and skipping the slots it started empty would drop
+     * exactly the material that makes a layer continuous. */
+    const n = layerN[i] === 0 ? 0 : BED_LAYERS;
+    if (bedH[i] <= 1e-4 || n === 0) continue;
+    const sL = bedEdgeS[i], sR = bedEdgeS[i + 1];
+    const b0 = i * BED_LAYERS, c1 = i * (BED_LAYERS + 1);
+    /* Each column drawn at its own lifts, with no attempt to pair layers
+     * across columns.
+     *
+     * Pairing them by index is the tempting thing and it fails badly: two
+     * neighbours need not hold the same number of strata, so a boundary
+     * index runs off the end of the shorter one and has to be clamped to its
+     * crest — which draws a quad reaching from deep inside one column to the
+     * top of the next. A well-mixed bed is full of such mismatches, and the
+     * layers come out as a thicket of long spikes rather than as bedding.
+     *
+     * Left as plain rectangles, the worst a mismatch can do is a step of a
+     * few pixels between two columns, which is what stratification looks
+     * like anyway. Only the topmost boundary is interpolated, because that
+     * one is the surface: it has to agree to the pixel with the crest the
+     * light is drawn along, and every column has one, so it can never be
+     * mismatched.
+     */
+    let run = Math.min(cum[c1], bedEdgeTop[i], bedEdgeTop[i + 1]);
+    for (let j = 0; j < n; j++) {
+      const top = j === n - 1;
+      const next = cum[c1 + j + 1];
+      const lL1 = top ? bedEdgeTop[i]
+        : Math.min(bedEdgeTop[i], Math.max(run, next));
+      const lR1 = top ? bedEdgeTop[i + 1]
+        : Math.min(bedEdgeTop[i + 1], Math.max(run, next));
+      /* Nothing to draw for a slot the clamp has flattened. Emitted anyway
+       * it is a sliver one bleed tall sitting exactly on the crest — and
+       * since the fills go in band order rather than in depth order, a
+       * sliver belonging to a deeper band paints straight over the stratum
+       * that should be on top of it. */
+      if (lL1 - run < 1e-3 && lR1 - run < 1e-3) continue;
+      const path = paths[bedSlotBand[i * K + j]];
+      path.moveTo(sL, -(run - bleed));
+      path.lineTo(sR, -(run - bleed));
+      path.lineTo(sR, -lR1);
+      path.lineTo(sL, -lL1);
+      path.closePath();
+      // The line between this layer and the one under it.
+      if (j > 0) { seams.moveTo(sL, -run - bleed); seams.lineTo(sR, -run - bleed); }
+      run = Math.min(lL1, lR1);
+    }
+  }
+
+  ctx.save();
+  ctx.transform(tan.x, tan.y, -up.x, -up.y, CX, CY);
+
+  /* One gradient per band, running the pile's whole height: the same metal
+   * pale where it is near the surface and deep where it is buried. This is
+   * the depth cue the bed would otherwise have none of — a stack of flat
+   * fills reads as a bar chart however carefully the colours are chosen. */
+  for (let b = 0; b < bands; b++) {
+    const [light, deep] = FLAKE_COLOURS[b];
+    const g = ctx.createLinearGradient(0, -crest, 0, -base);
+    g.addColorStop(0, light);
+    g.addColorStop(0.30, deep);
+    g.addColorStop(1, SAND_DEEP[b]);
+    ctx.fillStyle = g;
+    ctx.fill(paths[b]);
+  }
+
+  // The pile's own silhouette, for the texture and for the light on it.
+  const shape = new Path2D();
+  shape.moveTo(bedEdgeS[0], -bedEdgeTop[0]);
+  for (let e = 1; e <= N; e++) shape.lineTo(bedEdgeS[e], -bedEdgeTop[e]);
+  for (let e = N; e >= 0; e--) shape.lineTo(bedEdgeS[e], -bedEdgeFloor[e] + 4);
+  shape.closePath();
+
+  if (sandTile) {
+    if (!sandPattern) sandPattern = ctx.createPattern(sandTile, "repeat");
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = sandPattern;
+    ctx.fill(shape);
+    ctx.globalAlpha = 1;
+  }
+
+  // Layer boundaries: a thin compacted line where one pour met the next.
+  ctx.strokeStyle = "rgba(10,8,6,.16)";
+  ctx.lineWidth = Math.max(0.5, Math.min(RX, RY) * 0.0011);
+  ctx.stroke(seams);
+  ctx.restore();
+
+  drawBedSurface();
+}
+
+/* The lit face of the pile.
+ *
+ * A dune is read almost entirely from its crest line: which side of each
+ * ridge faces the light and which is in its own shadow is what turns a
+ * grey silhouette into relief. Classified per segment and stroked as two
+ * paths rather than shaded per pixel, because the surface is a polyline and
+ * a polyline is the cheapest thing canvas draws.
+ */
+function drawBedSurface() {
+  const lit = new Path2D(), dark = new Path2D();
+  const glints = [];
+  let px = CX + tan.x * bedEdgeS[0] + up.x * bedEdgeTop[0];
+  let py = CY + tan.y * bedEdgeS[0] + up.y * bedEdgeTop[0];
+  for (let e = 1; e <= N; e++) {
+    const qx = CX + tan.x * bedEdgeS[e] + up.x * bedEdgeTop[e];
+    const qy = CY + tan.y * bedEdgeS[e] + up.y * bedEdgeTop[e];
+    const dx = qx - px, dy = qy - py;
+    const m = Math.hypot(dx, dy);
+    if (m > 1e-4) {
+      // Outward normal of the surface, which is `up` where the pile is flat.
+      const nx = dy / m, ny = -dx / m;
+      const face = nx * SHADOW_X + ny * SHADOW_Y;
+      const path = face > 0 ? lit : dark;
+      path.moveTo(px, py);
+      path.lineTo(qx, qy);
+      /* Specular off the exposed grains, on the faces that are actually
+       * turned toward the source. Placed from the column index rather than
+       * from a random draw, so a still pile holds still highlights — a
+       * metallic surface that scintillates while nothing moves is the
+       * clearest tell that the sparkle is an animation rather than light. */
+      if (face > 0.45 && ((e * 2654435761) >>> 0) % 5 === 0) {
+        glints.push((px + qx) * 0.5, (py + qy) * 0.5, face);
+      }
+    }
+    px = qx; py = qy;
+  }
+
+  const w = Math.max(1, Math.min(RX, RY) * 0.010);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  // The shadowed face first, so the lit one is never drawn under it.
+  ctx.strokeStyle = "rgba(8,10,16,.34)";
+  ctx.lineWidth = w;
+  ctx.stroke(dark);
+  ctx.strokeStyle = "rgba(255,246,226,.30)";
+  ctx.lineWidth = w * 1.35;
+  ctx.stroke(lit);
+  ctx.strokeStyle = "rgba(255,252,240,.62)";
+  ctx.lineWidth = Math.max(0.8, w * 0.34);
+  ctx.stroke(lit);
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "miter";
+
+  /* A soft point, not a drawn star. The flare sprite the flakes throw is a
+   * four-ray burst, which is what a specular event looks like when it is
+   * bright enough to bloom in the optics — and a grain lying still on a dune
+   * is not that. Rays sitting along the crest read as little sprouts growing
+   * out of the sand. */
+  if (glowSprite) {
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < glints.length; i += 3) {
+      const r = w * (1.0 + glints[i + 2] * 1.2);
+      ctx.globalAlpha = 0.16 + glints[i + 2] * 0.24;
+      ctx.drawImage(glowSprite, glints[i] - r, glints[i + 1] - r, r * 2, r * 2);
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+  }
+}
+
+/* --------------------------------------------------------------- the core */
+
+/* Drawn as light rather than as a body.
+ *
+ * The core is the only thing in this vessel emitting rather than reflecting,
+ * and the difference has to survive into the compositing or it does not
+ * exist: an opaque orange disc laid over the liquid is a sticker, and the
+ * same shape added to what is behind it is a light. So every pass here is
+ * additive, and the value that decides its colour is the field's own
+ * density — hot where the core is thick, cooling out to its skin — which
+ * makes the temperature gradient a consequence of the shape rather than a
+ * gradient painted on top of one.
+ */
+let coreBloom = null, coreBloomCtx = null;
+
+function drawCore() {
+  if (!coreRadius) return;
+  /* Rasterised from a smoothed copy, never from the field itself.
+   *
+   * Sharpening is what keeps the core coherent, and its by-product is a
+   * field whose cells are nearly all fully on or fully off. That is exactly
+   * what the physics wants and exactly what cannot be drawn: on a grid this
+   * coarse a binary field upscales into visible square cells however good
+   * the interpolation is, and the core reads as a pixelated blob rather than
+   * as liquid. Three blur passes for the picture, none for the simulation —
+   * the blob is only a handful of cells across, so the smoothing has to be
+   * wide enough to lose the cells without losing the shape. */
+  for (let pass = 0; pass < 3; pass++) {
+    const src = pass === 0 ? core : coreDraw;
+    for (let j = 1; j < GH - 1; j++) {
+      for (let i = 1; i < GW - 1; i++) {
+        const k = j * GW + i;
+        coreSmooth[k] = (src[k] * 2 + src[k - 1] + src[k + 1] +
+                         src[k - GW] + src[k + GW]) * 0.166667;
+      }
+    }
+    coreDraw.set(coreSmooth);
+  }
+  const d = coreImage.data;
+  const stops = CORE_COLOURS.length;
+  for (let k = 0, n = GW * GH; k < n; k++) {
+    let v = coreDraw[k];
+    if (v <= 0.004) { d[k * 4 + 3] = 0; continue; }
+    if (v > 1) v = 1;
+    // Hot at the heart of the mass, cooling toward the skin.
+    const f = (1 - v) * (stops - 1);
+    const i0 = Math.min(stops - 1, f | 0), i1 = Math.min(stops - 1, i0 + 1);
+    const t = f - i0;
+    const a = CORE_COLOURS[i0], b = CORE_COLOURS[i1];
+    d[k * 4] = a.r + (b.r - a.r) * t;
+    d[k * 4 + 1] = a.g + (b.g - a.g) * t;
+    d[k * 4 + 2] = a.b + (b.b - a.b) * t;
+    /* Well short of opaque, because every pass here is additive and the
+     * bloom lands on top of the body. Taken to full strength the three of
+     * them stack past white in the middle, and a blown highlight is not a
+     * hot core — it is a hole, with no colour left in it to say what
+     * temperature it is. */
+    d[k * 4 + 3] = Math.pow(v, 0.8) * 150;
+  }
+  coreCtx.putImageData(coreImage, 0, 0);
+
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+
+  /* Bloom, by way of a smaller canvas. A blur filter over a full-screen
+   * layer is one of the most expensive things canvas can be asked for, and
+   * downsampling to a ninth of an already coarse grid and letting the
+   * upscale spread it costs two blits and looks the same at this softness. */
+  if (CONFIG.coreGlow > 0) {
+    if (!coreBloom) {
+      coreBloom = document.createElement("canvas");
+      coreBloomCtx = coreBloom.getContext("2d");
+    }
+    const bw = Math.max(4, GW >> 2), bh = Math.max(4, GH >> 2);
+    if (coreBloom.width !== bw || coreBloom.height !== bh) {
+      coreBloom.width = bw; coreBloom.height = bh;
+    }
+    coreBloomCtx.clearRect(0, 0, bw, bh);
+    coreBloomCtx.drawImage(coreCanvas, 0, 0, bw, bh);
+    const over = Math.min(W, H) * 0.055;
+    ctx.globalAlpha = 0.30 * CONFIG.coreGlow;
+    ctx.drawImage(coreBloom, -over, -over, W + over * 2, H + over * 2);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.drawImage(coreCanvas, 0, 0, W, H);
+
+  /* And the light it throws. Without this the core is the brightest object
+   * in a vessel it is not lighting, which reads as a hole cut in the
+   * wallpaper — the dunes under it have to warm up, or nothing about it is
+   * actually inside the liquid. */
+  if (CONFIG.coreGlow > 0 && coreRadius > 1) {
+    const R = coreRadius * 3.4;
+    const g = ctx.createRadialGradient(coreX, coreY, coreRadius * 0.5,
+                                       coreX, coreY, R);
+    const hot = CORE_COLOURS[CORE_COLOURS.length - 1];
+    const rgb = hot.r + "," + hot.g + "," + hot.b;
+    g.addColorStop(0, "rgba(" + rgb + "," + (0.19 * CONFIG.coreGlow).toFixed(3) + ")");
+    g.addColorStop(0.45, "rgba(" + rgb + "," + (0.07 * CONFIG.coreGlow).toFixed(3) + ")");
+    g.addColorStop(1, "rgba(" + rgb + ",0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(coreX - R, coreY - R, R * 2, R * 2);
+  }
+  ctx.restore();
+}
+
 /* The render loop deliberately uses no clip() at all.
  *
  * Canvas rasterises a clip against a 100-plus-point path on every use, and
@@ -3613,6 +5504,18 @@ function render(time) {
     drawGlyph(CONFIG.glyph, CX, CY, Math.min(RX, RY) * CONFIG.glyphScale);
   }
 
+  /* The dunes, and the core over them.
+   *
+   * Both belong here, between the two depth passes. The bed is a solid body
+   * spanning the whole thickness of the vessel, so everything at the back
+   * has to be behind it and everything at the front in front of it — that is
+   * what stops the pile reading as a shape drawn on the glass. And the core
+   * goes over the bed rather than under it because its light falls on the
+   * dunes; a glow drawn first and then covered by the sand it is supposed to
+   * be lighting is a glow that lights nothing.
+   */
+  if (SAND) { drawBed(); drawCore(); }
+
   /* Caustics. The free surface is a lens: where it curves concave it
    * converges the light passing through into a bright shaft in the body
    * below, and where convex it spreads it thin. It is the strongest depth
@@ -3680,7 +5583,7 @@ function render(time) {
     CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel,
     CX + displayUp.x * (displayLevel - displayUpExtent * 0.55),
     CY + displayUp.y * (displayLevel - displayUpExtent * 0.55));
-  under.addColorStop(0, "rgba(255,255,255,.30)");
+  under.addColorStop(0, SAND ? "rgba(214,238,255,.12)" : "rgba(255,255,255,.30)");
   under.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = under;
   ctx.fillRect(0, 0, W, H);
@@ -3938,13 +5841,32 @@ function fixedStep(dt, time) {
   // Internal convection must not keep a resting toy in perpetual motion. A
   // shake opens the coupling immediately, then it closes over a few seconds
   // as the viscous carrier settles.
+  if (SAND) bedUpdateCritical();
   const particleFlow = 0.015 + 0.985 * motionActivity;
   // Even a quiet toy keeps sedimenting smoothly. The old 7% floor looked
   // frozen once the post-shake tail ended; 12% remains viscous without
   // turning sensor noise back into visible jitter.
-  const settleRate = 0.12 + 0.88 * cascadeActivity;
+  /* Sand does not get that floor, and giving it one is the difference
+   * between a picture and a permanent cloud.
+   *
+   * The glitter's floor exists because a shaker is *supposed* to stay in
+   * suspension: a flake that fell out of the liquid at its own terminal
+   * velocity every time would leave nothing to look at, so it is deliberately
+   * held back to a fraction of it until the toy is disturbed. Sand is the
+   * opposite object. It falls, that is its entire behaviour, and the picture
+   * only exists because it lands. Held to a tenth of its terminal velocity it
+   * is slower than the circulation a stirred vessel keeps for minutes
+   * afterwards, so it is carried round and round and never reaches the bed —
+   * and the frame stays a cloud indefinitely rather than resolving into
+   * layers. Gravity has to win against the liquid's own leftover motion,
+   * which for a real grain it comfortably does. */
+  const settleRate = SAND
+    ? 0.78 + 0.22 * cascadeActivity
+    : 0.12 + 0.88 * cascadeActivity;
 
   for (const p of stars) {
+    // Buried grains are part of the bed's height field, not of this system.
+    if (p.buried) continue;
     sampleFlow(p.x, p.y, flow);
     /* A face-over-face inversion leaves the old convection field expressed
      * in screen coordinates while gravity has reversed. Let its component
@@ -4105,6 +6027,7 @@ function fixedStep(dt, time) {
                p.spinRate * 6 * flutterDrive) * dt;
     if (clampInside(p, pad)) hitWall(p, attemptedX, attemptedY);
     if (clampUnderSurface(p, Math.max(0.5, p.r * 0.35))) clampInside(p, pad);
+    if (SAND) bedContact(p, dt, pad);
     stepDepth(p, dt, 0.82);
   }
 
@@ -4115,6 +6038,7 @@ function fixedStep(dt, time) {
   if (microTick % 3 === 0) {
     const mdt = dt * 3;
     for (const p of microGlitter) {
+      if (p.buried) continue;
       sampleFlow(p.x, p.y, flow);
       const crossKeep = (1 - inversionGuard) * (1 - inversionGuard);
       let fallX = gDir.x, fallY = gDir.y;
@@ -4162,9 +6086,40 @@ function fixedStep(dt, time) {
       const attemptedX = p.x, attemptedY = p.y;
       if (clampInside(p, pad)) hitWall(p, attemptedX, attemptedY);
       if (clampUnderSurface(p, Math.max(0.35, p.r * 0.30))) clampInside(p, pad);
+      if (SAND) bedContact(p, mdt, pad);
       stepDepth(p, mdt, 0.55);
     }
     microPathsDirty = true;
+  }
+
+  /* The bed, after everything that could have landed on it this step and
+   * before the bubbles, which have to know where its surface is. Slump
+   * first: a face left over the repose angle from the last step is not a
+   * valid thing for the scour term to be measuring the flow over. */
+  if (SAND) {
+    bedAvalanche(dt);
+    bedCeiling();
+    bedErode(dt);
+    bedRelease(dt);
+    bedVolume = bedTotal();
+    /* Sand that has just landed arrived level, so it is not leaning at all —
+     * and the pile's lean is the average over what is in it. Replacing a
+     * third of the bed therefore takes a third off the lean, and a bed that
+     * has been emptied has no orientation left to remember. This is what
+     * lets a frame be turned over twice in a row: the second turn is
+     * measured from where the first one left the sand, not from where the
+     * picture was originally made. */
+    /* Measured against a whole pile, not against whatever is left of this
+     * one. Dividing by the current volume looks equivalent and is not: it is
+     * during a collapse that the bed is smallest, so a handful of grains
+     * landing on the remains of it wipes the lean out completely — which
+     * switches the collapse off and lets the shear term back in, halfway
+     * through the very rotation both of them exist to handle. The bed then
+     * spends the rest of the turn being sheared into one end of the vessel,
+     * and every grain later released from it falls in a single lane. */
+    if (bedVolume < bedFull * 0.02) bedLean = 0;
+    else if (bedLaid > 0) bedLean *= Math.max(0, 1 - bedLaid / bedFull * 1.5);
+    bedLaid = 0;
   }
 
   const invDt = 1 / Math.max(dt, 1e-4);
@@ -4267,6 +6222,24 @@ function fixedStep(dt, time) {
     const attemptedX = b.x, attemptedY = b.y;
     const bubblePad = Math.max(pad, b.r * 1.08);
     if (clampInside(b, bubblePad)) hitWall(b, attemptedX, attemptedY);
+
+    /* Gas does not stay under a bed of sand. A bubble that finds itself
+     * inside the pile — because it was born there, or because the pile grew
+     * over it — climbs out through it, and on the way out it lifts the
+     * grains it pushes past. That puff of sand off the dune where a bubble
+     * surfaces is one of the few things happening in a sand frame that is
+     * nothing to do with the sand falling. */
+    if (SAND && bedReady) {
+      const bx = b.x - CX, by = b.y - CY;
+      const bs = bx * tan.x + by * tan.y;
+      const escape = bedTopAt(bs) + b.r - (bx * up.x + by * up.y);
+      if (escape > 0) {
+        const rise = Math.min(escape, (b.rise * gMag + 40) * dt);
+        b.x += up.x * rise; b.y += up.y * rise;
+        clampInside(b, bubblePad);
+        bedShed[bedColumn(bs)] += rise * 0.5;
+      }
+    }
 
     // Oblate when climbing: a rising bubble is flattened perpendicular to
     // its motion, and the faster it goes the more so.

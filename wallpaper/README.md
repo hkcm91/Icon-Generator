@@ -1,8 +1,18 @@
 # Liquid shaker — interactive wallpaper
 
-A full-screen liquid shaker that actually responds to the phone: tilt it and
-the liquid finds level, shake it and the whole thing sloshes and throws the
-glitter around. One self-contained HTML file, no build step, no dependencies.
+A full-screen vessel that actually responds to the phone: tilt it and the
+liquid finds level, shake it and the whole thing sloshes and throws its
+contents around. One self-contained HTML file, no build step, no
+dependencies.
+
+Two toys share the engine, chosen with `?scene=`:
+
+- **`shaker`** (the default) — liquid glitter. A suspension that never
+  quite settles, because that is what makes a shaker worth watching.
+- **`sand`** — a metallic sand-art frame with a molten core. Sand falls out
+  of the liquid, lands, and becomes terrain: dunes that hold a slope and
+  avalanche past it, and striped layers recording which colour arrived when.
+  Turn the phone over and the picture collapses and builds itself again.
 
 This is the half that reacts. The [Blender pipeline](../blender) bakes the
 hero loop at full render quality, but a baked loop plays back identically no
@@ -691,6 +701,99 @@ twice the frame rate. Measured before the fix, the same two seconds of
 shaking left the flow energy 21.6% apart between 30fps and 60fps; after,
 0.0%.
 
+## The sand frame
+
+`index.html?scene=sand`. Everything above still applies — same fluid solver,
+same free surface, same gravity basis, same sensors, same glass. What is
+different is what the particles do, and the difference is one thing with
+consequences everywhere: **they land.**
+
+Glitter is interesting because it stays up. Sand is interesting because it
+does not, and the moment a grain comes to rest it stops being a particle and
+becomes part of the terrain. That is not a way of keeping the cost down,
+though it is that too — a settled frame carries a couple of hundred moving
+particles rather than fourteen thousand. It is that a heap is a different
+object from its grains. Angle of repose, layering and avalanche cascades are
+all properties of the bulk, and a bag of independent particles has no
+representation in which to have any of them.
+
+**The bed** is a second height field, sharing the free surface's columns and
+its gravity frame, so arbitrary tilt costs a change of basis and nothing
+else. Each column carries its total lift split into coloured layers, bottom
+to top, and that stack is the picture: what the stripes record is the order
+the colours arrived in.
+
+- *Avalanching.* Two neighbouring columns may differ in height by at most the
+  repose slope times their separation. Past that the face is unstable and
+  material runs down it — relaxed toward the limit rather than snapped to it,
+  because a slump has to take time to read as material moving rather than as
+  geometry being corrected between frames. A share of what runs down a
+  submerged face goes into suspension instead of reaching the foot of it,
+  which is the cloud a slip face raises under water.
+- *Scour.* Liquid moving over a bed drags on it, and past a critical velocity
+  that drag exceeds what holds a grain down. Sampled just above each crest,
+  and stronger on crests than in hollows, so a scoured bed flattens rather
+  than eroding evenly.
+- *Deposition* uses the same threshold from the other side. There is one
+  critical velocity for these grains in this liquid: above it the flow can
+  carry a grain along the bed, below it the grain stops because nothing is
+  left to move it. Testing instead whether the *grain* has slowed is the
+  obvious thing and it fails — a vessel that has been stirred keeps a slow
+  circulation for a long time afterwards, and a grain riding it never falls
+  below any fixed speed, so nothing ever settles.
+- *Consolidation.* Freshly poured sand under water is as mobile as sand gets.
+  Left alone it packs, and needs a noticeably stronger current to move than
+  it did when it arrived. Bed armouring is why a picture that has formed
+  stays formed while the water around it is still slowly turning over, and it
+  is undone far faster than it is done, so a shake still reopens the whole
+  bed at once.
+- *Collapse.* A heap is only a heap with respect to a particular down. The
+  bed remembers the orientation it was laid in; inside the repose angle a
+  turn simply leans it, and past that it fails and rains out of the height
+  field into the particle system. The pool of buried grains is a stack, so
+  the top stripe leaves first, falls first, and lands at the bottom of the
+  new pile — the picture rebuilds in reverse order because of how a stack
+  works, not because anything arranges it.
+
+**The core** is a third scalar on the fluid grid, and the reason it is not
+simply another dye is cohesion. The dense phase is *miscible*: it is supposed
+to smear and marble, and advection's numerical diffusion does half that work
+for free. A core has to survive being torn — a cascade of sand falls straight
+through it — and then come back together, which no passive scalar can do.
+
+Both halves of surface tension are reproduced directly rather than by
+resolving an interface: a sharpening pass that exactly opposes the diffusion
+advection introduces, and a drift toward the mass for whatever has been
+thrown clear of it.
+
+Neither is a force on the liquid, and that is not a shortcut. Cohesion cannot
+be a body force in an incompressible solver — a field of forces all pointing
+at one place is pure convergence, the liquid cannot converge, and the
+pressure projection deletes the whole of it. (The same trap is why a poke at
+the glass does nothing unless it is written as a jet.) Written that way the
+core stays exactly as torn as the last shake left it, however hard the pull
+is set. So cohesion acts on the core's own transport, where it is a motion of
+the interface relative to the carrier — which is what surface tension
+physically is — and the only thing the core does to the liquid is buoyancy,
+taken against the mean so it can stir the vessel without pushing it.
+
+Finding its own level works the same way. A density-matched body suspended in
+a stratified liquid sits where the surrounding density equals its own; here
+that is a drift through the carrier rather than a shove applied to it,
+because a net force on a sealed container's contents is a thing that cannot
+happen and accumulates without bound if you write one anyway.
+
+### A known limitation
+
+A slow **in-plane** half-turn — rotating the phone 180° about the viewing
+axis without ever tipping it face-over-face — leaves the vessel with a
+circulation that does not decay: the free surface holds a tilt it cannot
+level, and the slope keeps driving the fluid that keeps holding the tilt.
+This predates the sand scene and reproduces in the stock shaker on the same
+input. The sand frame notices it more, because scour and deposition are both
+thresholded on flow speed; consolidation is what lets the picture finish
+forming anyway.
+
 ## Options
 
 Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
@@ -706,6 +809,19 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `bubbles` | `112` | Persistent air-bubble count; shake-generated fizz is separate |
 | `fizz` | `180` | Ceiling on the short-lived fine fizz spawned by strong vortices |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
+
+Sand scene only (`?scene=sand`), which also changes the defaults for `fill`
+(0.9), `ramp`, `air`, `dense` and the particle counts:
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `scene` | `shaker` | `shaker` for liquid glitter, `sand` for the sand-art frame |
+| `sand` | `0.34` | Fraction of the container the settled sand fills |
+| `bands` | `6` | Metallic colourways in play, and so stripes in the finished picture (max 8) |
+| `repose` | `32` | Angle of repose in degrees — the steepest face the pile can hold |
+| `core` | `#ffd79a,#ff9a5c,#E8806C` | The core's temperature ramp, hot centre first |
+| `coreSize` | `0.3` | Core radius against the container's short half-axis; `0` omits it |
+| `coreGlow` | `1` | How far its light carries into the liquid; `0` leaves it lighting nothing |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
 fluid solver's cost is fixed, so the particle count is the dial that matters.
@@ -765,6 +881,32 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Net fluid drift | 12.7 px/s before the momentum fix, 0.99 after |
 | Bubble population at rest | median 4.3px, max 31px, 3-8 above 12px, stable over 100s |
 | Convection after a flip | decayed 357 -> 29px/s at the old coupling, holds at 51 now |
+
+### The sand frame
+
+Driven the same way, at 420×900, over the shaker's own host bridge so the
+clock and the sensor input are exact. `scene=sand` plus `mode=pouch`, an
+empty core, two bands, eight bands, a 45° repose angle, a nearly-empty bed
+and a nearly-full one all run 7s of shaking, a half-turn and a tap on the
+glass without a runtime error or a non-finite value anywhere in the surface,
+the flow, the bed or the core.
+
+| Property | Result |
+| --- | --- |
+| Bed at rest, over 40s | flow 5–8 px/s mean, suspension clears 1,796 → 241 grains, bed grows 1.00 → 1.12 as it settles |
+| Slope held at rest | every column within the repose limit; steepest face 6.8px against a 2.8px per-column limit |
+| Half-turn, 45s | bed collapses to 0.13 of full in under 5s and rebuilds to 1.13 by 20s, with 560 grains left in the water |
+| Grains at the crest, at rest | flow median 3 px/s against a 134 px/s critical velocity — no scour without an input |
+| Grains at the crest, 30s after a half-turn | median 16, 90th percentile 125 — marginal, which is what consolidation is for |
+| Frame cost against the shaker, same viewport | +4% at rest, +31% mid-cascade (software rasteriser; absolute numbers mean nothing) |
+
+One caveat, and it is the shaker's rather than the sand frame's: a slow
+in-plane half-turn leaves a circulation that does not decay — measured at 158
+px/s mean flow, indefinitely, in the **stock shaker** with no sand code
+involved. The sand frame is more exposed to it, because scour and deposition
+are both thresholded on flow speed. Consolidation is what lets the picture
+finish forming in spite of it, and the underlying surface/flow feedback is
+left alone rather than retuned from here.
 | Sealed vessel holds no drift | 29px/s of bulk drift at that coupling, 2.7px/s with the high-pass |
 | Gas lift on a bubble-rich cell | 114px/s^2, against 75 for the densest cell of the heavy phase |
 | Film drainage sets the size range | largest bubble 7px at 1.4s drainage, 31px at 10s |
