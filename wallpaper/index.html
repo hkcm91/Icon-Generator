@@ -152,7 +152,6 @@ function resize() {
   displaySolveCompression = Infinity;
   displaySolveBubbleOffset = Infinity;
   cascadeSpreadHold = 0;
-  cascadeLanePolarity = 1;
   flipArmed = false;
   microPathsDirty = true;
   buildOutline();
@@ -1607,11 +1606,11 @@ function seed() {
     });
     const flake = stars[stars.length - 1];
     settleSpawn(flake, r, 0.95);
-    /* Preserve the naturally broad first-spawn curtain as this flake's
-     * loose horizontal home. Repeat flips may steer it gently back toward
-     * this lane, but never teleport it or lock it to a column. */
+    /* The first-spawn position is this flake's initial loose fall lane. A
+     * completed flip replaces it with an order-preserving bed quantile. */
     flake.releaseLane = Math.max(-0.94, Math.min(0.94,
       ((flake.x - CX) * tan.x + (flake.y - CY) * tan.y) / span));
+    flake.releaseBed = 0;
   }
 
   /* Microglitter supplies the dense sparkle a physical shaker gets from
@@ -1635,6 +1634,7 @@ function seed() {
     settleSpawn(p, Math.max(1, p.r), 1.0);
     p.releaseLane = Math.max(-0.94, Math.min(0.94,
       ((p.x - CX) * tan.x + (p.y - CY) * tan.y) / span));
+    p.releaseBed = 0;
     microGlitter.push(p);
   }
   bubbleUnit = unit;
@@ -2332,8 +2332,38 @@ let upExtent = 1;    // along `up`
 let basisAngle = 0, basisReady = false;
 let inversionGuard = 0;   // suppress stale cross-flow after a face-over-face flip
 let cascadeSpreadHold = 0; // keeps a released resting bed broad across the glass
-let cascadeLanePolarity = 1; // tangent reverses sign on each face-over-face flip
 let flipArmed = false, flipStartX = 0, flipStartY = 1;
+
+/* Build release lanes from where the bed actually is when a flip completes.
+ * Suspended particles keep their current broad lane. Material in the old
+ * settled end receives deterministic targets spread across the whole usable
+ * width, so neither a corner pile nor a dense patch becomes the same narrow
+ * waterfall on every later flip. */
+function prepareCascadeRelease() {
+  const prepare = (list) => {
+    const bed = [];
+    for (const p of list) {
+      const along = ((p.x - CX) * tan.x + (p.y - CY) * tan.y) / span;
+      const down = ((p.x - CX) * gDir.x + (p.y - CY) * gDir.y) / upExtent;
+      const end = Math.max(0, Math.min(1, (Math.abs(down) - 0.54) / 0.30));
+      p.releaseLane = Math.max(-0.86, Math.min(0.86, along));
+      p.releaseBed = end;
+      if (end > 0.02) bed.push({ p, along });
+    }
+    /* Order-preserving quantiles give the bed an even full-width target
+     * without asking particles to cross one another. Independent random
+     * targets produced lateral traffic jams before the five-second release
+     * window ended—the cure becoming another kind of clump. */
+    bed.sort((a, b) => a.along - b.along);
+    for (let i = 0; i < bed.length; i++) {
+      const p = bed[i].p;
+      const broad = -0.78 + 1.56 * ((i + 0.5) / bed.length);
+      p.releaseLane = broad;
+    }
+  };
+  prepare(stars);
+  prepare(microGlitter);
+}
 
 /* The air pocket is the largest single mass cue in the scene. Its silhouette
  * should not rotate in lock-step with the sensor while the heavier liquid and
@@ -3098,9 +3128,9 @@ function bezelBlit(dx, dy, dw, dh, sx, sy, sw, sh) {
   ctx.drawImage(bezelSrc, sx * DPR, sy * DPR, sw * DPR, sh * DPR, dx, dy, dw, dh);
 }
 
-function drawBezel() {
+function drawBezel(capture = true) {
   const T = Math.min(RX, RY) * BEZEL_T;
-  bezelCapture(T);
+  if (capture) bezelCapture(T);
   const x0 = CX - RX, x1 = CX + RX, y0 = CY - RY, y1 = CY + RY;
   const wide = x1 - x0;
   for (let k = 0; k < BEZEL_BANDS; k++) {
@@ -3216,6 +3246,12 @@ function render(time) {
    * sampling one end of the ramp, so it rendered as a flat grey slab that
    * read like a UI bar sitting on top of the wallpaper. */
   paintHeadspace(poly);
+
+  /* Capture the liquid and air for the thick-glass refraction before any
+   * particles are drawn. Sampling the finished scene duplicated every edge
+   * flake into the rim and made an even suspension look packed into the
+   * sides and rounded corners. The wall still bends the liquid behind it. */
+  bezelCapture(Math.min(RX, RY) * BEZEL_T);
 
   const menisc = meniscus(poly, 64);   // array of interface segments
 
@@ -3408,7 +3444,7 @@ function render(time) {
   ctx.lineJoin = "miter";
 
   // Glass shell, casing edge and corner knockout, all baked at resize.
-  drawBezel();
+  drawBezel(false);
   ctx.drawImage(glassLayer, 0, 0, W, H);
 }
 
@@ -3472,7 +3508,7 @@ function fixedStep(dt, time) {
     if (gDir.x * flipStartX + gDir.y * flipStartY < -0.45) {
       inversionGuard = 1;
       cascadeSpreadHold = 1;
-      cascadeLanePolarity *= -1;
+      prepareCascadeRelease();
     }
     flipArmed = false;
   }
@@ -3686,13 +3722,15 @@ function fixedStep(dt, time) {
      * Pulling position toward the centre made repeat flips collapse into one
      * narrow stream even though a fresh seed correctly covered the glass. */
     const cascadeStraighten = cascadeSpreadHold *
-      (p.density > 0 ? 0.82 : 0.62);
+      (p.density > 0 ? 0.46 : 0.32);
     const cascadeCross = tx * tan.x + ty * tan.y;
     tx -= tan.x * cascadeCross * cascadeStraighten;
     ty -= tan.y * cascadeCross * cascadeStraighten;
-    const laneError = along - p.releaseLane * cascadeLanePolarity * span;
-    const laneReturn = laneError * cascadeSpreadHold *
-      (p.density > 0 ? 0.16 : 0.08);
+    const laneError = along - p.releaseLane * span;
+    const laneGain = p.density > 0
+      ? 0.060 + cascadeSpreadHold * (0.050 + p.releaseBed * 0.12)
+      : 0.020 + cascadeSpreadHold * 0.040;
+    const laneReturn = laneError * laneGain;
     tx -= tan.x * laneReturn;
     ty -= tan.y * laneReturn;
     /* At rest only discourage flakes from entering the last sliver against
@@ -3704,11 +3742,10 @@ function fixedStep(dt, time) {
     const sideDepth = Math.max(0, Math.abs(along) - sideStart);
     if (sideDepth > 0) {
       const wallReturn = Math.sign(along) * sideDepth *
-        (0.35 + 1.1 * inversionGuard);
+        (0.35 + 0.65 * inversionGuard);
       tx -= tan.x * wallReturn;
       ty -= tan.y * wallReturn;
     }
-
     /* The surface is a ceiling. Buoyancy would otherwise carry the glitter
      * straight through the waterline and into the headspace, where there is
      * no liquid to hold it up. */
@@ -3765,20 +3802,22 @@ function fixedStep(dt, time) {
       ty += gasAvoid.y * voidSlip;
       const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
       const cascadeStraighten = cascadeSpreadHold *
-        (p.density > 0 ? 0.88 : 0.68);
+        (p.density > 0 ? 0.54 : 0.38);
       const cascadeCross = tx * tan.x + ty * tan.y;
       tx -= tan.x * cascadeCross * cascadeStraighten;
       ty -= tan.y * cascadeCross * cascadeStraighten;
-      const laneError = along - p.releaseLane * cascadeLanePolarity * span;
-      const laneReturn = laneError * cascadeSpreadHold *
-        (p.density > 0 ? 0.19 : 0.09);
+      const laneError = along - p.releaseLane * span;
+      const laneGain = p.density > 0
+        ? 0.100 + cascadeSpreadHold * (0.040 + p.releaseBed * 0.14)
+        : 0.026 + cascadeSpreadHold * 0.044;
+      const laneReturn = laneError * laneGain;
       tx -= tan.x * laneReturn;
       ty -= tan.y * laneReturn;
       const sideStart = span * (0.92 - 0.06 * inversionGuard);
       const sideDepth = Math.max(0, Math.abs(along) - sideStart);
       if (sideDepth > 0) {
         const wallReturn = Math.sign(along) * sideDepth *
-          (0.35 + 1.1 * inversionGuard);
+          (0.35 + 0.65 * inversionGuard);
         tx -= tan.x * wallReturn;
         ty -= tan.y * wallReturn;
       }

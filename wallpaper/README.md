@@ -255,6 +255,13 @@ needs into a scratch canvas first turns them into ordinary blits: a quarter
 of the screen copied once, rather than the whole of it two dozen times. It
 takes the bezel from 20ms to under 1ms.
 
+The scratch copy is captured after the liquid and air are painted but before
+the glitter and bubbles. The wall still bends the material behind it, while
+the finished particles are drawn only once. Capturing the completed scene
+made edge flakes appear again inside the refracted rim, visually doubling
+glitter along the sides and rounded corners even when its physical positions
+were evenly distributed.
+
 **Dispersion.** Glass bends the short wavelengths harder than the long ones,
 so at the steep angles the wall presents near its silhouette the colours
 separate — the pair of faint warm and cool hairlines you get along the edge
@@ -632,13 +639,14 @@ lateral boundary layer widens temporarily. Three alternating sensor-driven
 flips held the glitter's mean lateral spread at 68–73px rather than walking it
 outward on every inversion.
 
-Once a real face-over-face reversal completes, the released resting bed also
-gets a five-second, decaying cross-gravity damper. Each piece falls from the
-part of the bed it already occupied instead of being swept sideways. Every
-piece keeps a loose memory of its naturally even first-spawn lane, so repeat
-flips can gently restore a full-width curtain without teleporting glitter or
-locking it into rigid columns. Only the extreme glass corners receive an
-extra inward correction. The heavier cut foil falls a little faster than
+Once a real face-over-face reversal completes, the released resting bed is
+sorted left-to-right and assigned evenly spaced, order-preserving fall lanes
+across the usable width. That turns a corner pile or uneven settled patch back
+into a broad curtain without particles crossing, teleporting, or stacking in
+one traffic jam. A five-second cross-gravity damper makes the initial release
+clean, then a much weaker lane memory remains so residual fluid circulation
+cannot slowly bank the fine glitter against a side wall. Suspended pieces keep
+the lane they already occupy. The heavier cut foil falls a little faster than
 before, while the fine glitter retains a wider, slower tail.
 
 The residual also passes through a 0.045g radial dead zone before it reaches
