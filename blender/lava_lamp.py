@@ -74,8 +74,8 @@ LOOKS = {
     "lamp": {},
     "bubbles": {
         "palette": "bubblegum", "no_pool": True,
-        "blobs": 68, "droplets": 40, "blob_size": 0.13, "size_spread": 1.1,
-        "threshold": 1.0, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
+        "blobs": 60, "droplets": 36, "blob_size": 0.145, "size_spread": 1.1,
+        "threshold": 0.45, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
         "glow": 1.35, "glow_reach": 1.0, "bulb": 0.0, "crown": 700.0,
         "env": 0.15, "haze": 0.8, "density": 1.6,
         "view_transform": "Standard",
@@ -191,8 +191,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                           "which is what a bubble field wants and what a lava "
                           "lamp does not")
     wax.add_argument("--threshold", type=float, default=0.6,
-                     help="metaball field threshold; lower fattens every blob "
-                          "and makes them reach for each other sooner")
+                     help="metaball field threshold. Lower renders a bigger "
+                          "blob from the same influence radius AND makes "
+                          "blobs merge only when much closer, which is not "
+                          "the trade-off it sounds like: at 1.0 two blobs "
+                          "fuse across a gap of 0.68 of their radius, at 0.45 "
+                          "only across 0.30. Reach for it to get a field that "
+                          "is larger and less sticky at once")
     wax.add_argument("--mesh-res", type=float, default=0.022,
                      help="metaball polygonisation size in metres at render "
                           "time. Smaller is rounder and much slower")
