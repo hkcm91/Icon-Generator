@@ -197,14 +197,15 @@ conditionally stable and its stiffness is expressed in dt²: hand it a 40 ms
 frame after a stall and the pressure correction overshoots into a spray of
 drops that never comes back.
 
-Three more guards exist for the same reason, and each of them is a failure
-that actually happened during development rather than a precaution:
+Four more guards exist for the same reason, and each of them is a failure that
+actually happened during development rather than a precaution:
 
 | Guard | What it prevents |
 | --- | --- |
 | Speed capped at one interaction radius per step | A drop that outruns the neighbour search stops finding the neighbours it is touching, so it loses its pressure and moves further still — and the end state is every drop in one hash cell with the solver quietly gone quadratic |
 | Pressure correction capped per neighbour pair | Slam the liquid into a wall and a drop can find three times the neighbours it wants; the correction meant to ease it out is then a shove of tens of drop-widths, and the pool comes apart into a spray that never finds itself again |
 | Traction capped, and switched off on lone drops | Written the obvious way — strongest where a drop is most exposed — the traction is strongest on a drop that has already left, which accelerates it further. It is an *interface* stress: it needs liquid on one side and air on the other, so it peaks at half the rest density and falls to nothing at both ends |
+| Magnetophoretic pull capped | A body force should move the body: in a real liquid, pressure redistributes it faster than it can pull anything apart. The pressure solver here has a bounded correction per step, so a force varying steeply over a few drop-widths — a strong magnet close to the liquid, which is exactly what a tap is — outruns it, and four taps pull the pool to pieces. The clamp does more than limit the force: inside it every drop gets the *same* pull, so the differential that does the tearing is gone |
 
 ## Options
 
@@ -239,13 +240,27 @@ close to free.
 ## Rendering it
 
 ```bash
-node wallpaper/tools/render-ferrofluid.mjs
+node wallpaper/tools/render-ferrofluid.mjs          # stills
+node wallpaper/tools/render-ferrofluid-motion.mjs   # a clip
+node wallpaper/tools/verify-ferrofluid.mjs          # the numbers below
 ```
 
-Writes a contact sheet to `/tmp/ferrofluid`, and rewrites the thumbnail the
-Android wallpaper picker shows. The clock is hand-turned and `Math.random` is
-seeded, so two runs produce the same picture and a change to the page is
-visible as a change to the sheet rather than as noise.
+The first writes a contact sheet to `/tmp/ferrofluid` and rewrites the
+thumbnail the Android wallpaper picker shows. The second answers the question
+a still cannot — whether it reads as a magnetic liquid when something is
+actually happening to it — by driving one motion script through the magnets
+working the pool alone, two taps, a roll and a shake, and piping the frames
+straight into ffmpeg. It needs an ffmpeg with libx264, which Playwright's
+bundled build is not; the header lists four ways to get one.
+
+The third is the one that catches things, and what it catches is under
+**Verified** below.
+
+All three hand-turn the clock and seed `Math.random`, so two runs produce the
+same picture and a change to the page is visible as a change to the output
+rather than as noise. That matters most for the clip: with the real clock the
+frame interval is however long a software rasteriser happened to take, so the
+playback speed would encode machine load rather than simulated time.
 
 ## Verified
 
@@ -254,13 +269,21 @@ clock, so runs are comparable.
 
 | Property | Result |
 | --- | --- |
-| Runtime errors across 8 configurations and 4 viewports, each resized mid-run | none |
-| Drops leaving the cell — idle 45 s, a 2 s shake, a 52° tilt held 12 s | 0 of 1000 in every case |
-| Recoalescence after a 2 s shake | 90% of drops in a body immediately after, 92% ten seconds later |
-| Idle, 45 s | 94% of drops in a body; drop count constant |
-| 60 fps versus 30 fps, 8 s idle | mean 2.8 px apart, max 11 px — a third of a drop spacing. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
-| JavaScript per frame, 1000 drops | 3.6 ms driven one frame at a time under a software rasteriser in a container. `drops=700` takes it to 2.5 ms |
-| Host interface — `motion`, `offset`, `tap`, `pause`, `resume`, `drive`, `tick`, `diag`, `icon` | all exercised with the values and units the Android service sends |
+| Runtime errors across 8 configurations and 4 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped |
+| Drops leaving the cell — ever, in any of the above | 0 of 1000 |
+| A 2 s shake | 92% of drops in a body before, 87% immediately after, 90% ten seconds later; peak speed 727 px/s |
+| Four taps in nine seconds, the worst a user can do to it | 98% -> 94% -> 89%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
+| Five home-screen swipes arriving in one frame | 92% -> 89% -> 87%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
+| 52° of tilt held 12 s | 98% in a body, occupying 87,286–416,876 of 420×880 |
+| 45 s idle | 97% in a body, drop count constant |
+| 60 fps against 30 fps, 8 s idle | mean 3.4 px apart, max 10 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
+| JavaScript per frame | 8.5 ms at 1000 drops, 7.1 ms at 700, measured back to back with no idle between frames. A wallpaper draws once per vsync and sleeps the rest; one frame at a time it comes out around half that. The upper bound is the useful one |
+
+Re-run all of it with `node wallpaper/tools/verify-ferrofluid.mjs`, which
+exits non-zero if any of it regresses. It exists because two real defects got
+through a reading of the code and a look at the stills — a NaN tap silently
+turning every magnet off, and the relaxation manufacturing kinetic energy
+without bound — and neither is visible in a single frame.
 
 **It has never run on a handset.** There is no device or emulator here. Every
 number above is a headless software rasteriser, which is the wrong machine in

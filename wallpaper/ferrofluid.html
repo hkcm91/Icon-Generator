@@ -481,6 +481,7 @@ const MAX_CATCHUP = 3;
 let N = 0;
 let px, py, vx, vy, ox, oy;        // position, velocity, position before the step
 let den, snx, sny, surf;           // density, surface normal, how free a surface it is
+let rdx, rdy;                      // relaxation correction owed to each drop
 let ehx, ehy, egx, egy;            // applied field, and the gradient of its magnitude
 let ehux, ehuy, emm;               // its direction, and the magnetisation it alone induces
 let shx, shy;                      // the field the liquid makes at itself
@@ -519,6 +520,22 @@ const SELF_CLAMP = 1.4;
  * stands in for it. Below the cohesion this liquid actually has, the traction
  * shapes the surface; above it, it takes the surface apart. */
 const SPIKE_CLAMP = 3;
+/* And one on the pull, for a different reason.
+ *
+ * Magnetophoresis is a body force, and in a real liquid a body force moves the
+ * body: pressure redistributes it faster than it can pull anything apart. Here
+ * the pressure solver has a bounded correction per step, so a force that
+ * varies steeply across a few drop-widths — which is exactly what a strong
+ * magnet close to the liquid is — outruns it, and the pool is pulled apart
+ * drop by drop instead of moving. Clamping the magnitude does more than limit
+ * it: inside the clamp every drop gets the *same* pull, so the differential
+ * that does the tearing is gone and the body moves together, which is what it
+ * was supposed to do in the first place. */
+const PULL_CLAMP = 5;
+/* The furthest one step of pressure relaxation may move a drop, in drop
+ * spacings. See passB — this is the bound that stops the relaxation being a
+ * source of energy rather than a pressure. */
+const RELAX_CAP = 0.6;
 
 /** Rest density of a hexagonal packing at `spacing`, summed with the same
  *  kernel the solver uses. Measuring it costs one loop at startup and removes
@@ -546,6 +563,7 @@ function buildParticles() {
   vx = new Float32Array(N); vy = new Float32Array(N);
   ox = new Float32Array(N); oy = new Float32Array(N);
   den = new Float32Array(N);
+  rdx = new Float32Array(N); rdy = new Float32Array(N);
   snx = new Float32Array(N); sny = new Float32Array(N); surf = new Float32Array(N);
   ehx = new Float32Array(N); ehy = new Float32Array(N);
   egx = new Float32Array(N); egy = new Float32Array(N);
@@ -651,6 +669,7 @@ function applyBodyForces(dt) {
   // ∇H has units of 1/length, so the pull is made dimensionless against a
   // typical pole standoff. That is what lets `pull` read as gravities.
   const pull = CONFIG.pull * G * U * 0.16;
+  const pullCap = PULL_CLAMP * G;
   const spike = CONFIG.spike * G;
   const spikeCap = SPIKE_CLAMP * G;
 
@@ -662,8 +681,10 @@ function applyBodyForces(dt) {
        * liquid's own field has a gradient too, but the forces it exerts are
        * internal and sum to nothing over the body; including it here would be
        * a body pulling itself across the screen. */
-      ax += pull * m * egx[i];
-      ay += pull * m * egy[i];
+      let fx = pull * m * egx[i], fy = pull * m * egy[i];
+      const fm = Math.hypot(fx, fy);
+      if (fm > pullCap) { fx = fx / fm * pullCap; fy = fy / fm * pullCap; }
+      ax += fx; ay += fy;
 
       // Normal-field traction: extrude the free surface along H, in whichever
       // of the two directions it already faces.
@@ -849,17 +870,6 @@ function passB(dt) {
 
     const P = K_PRESSURE * (rho - REST);
     const Pn = K_NEAR * rhoNear;
-    /* A ceiling on how far one neighbour may push another in one step.
-     *
-     * The pressure is linear in the density error and the density error has
-     * no bound: slam the liquid into a wall and a drop can find itself with
-     * three times the neighbours it wants, at which point the correction that
-     * is meant to ease it out is instead a shove of tens of drop-widths and
-     * the pool comes apart into a spray that never finds itself again. Real
-     * liquid answers a compression like that with a shock, not with an
-     * explosion, and this is the difference. */
-    const cap = spacing * 0.28;
-    let dxs = 0, dys = 0;
     for (let j = j0; j <= j1; j++) {
       for (let i = i0; i <= i1; i++) {
         const c = j * hashW + i;
@@ -871,15 +881,45 @@ function passB(dt) {
           if (d2 >= IR * IR || d2 < 1e-12) continue;
           const d = Math.sqrt(d2);
           const q = 1 - d / IR;
-          let disp = k * (P * q + Pn * q * q) * 0.5;
-          if (disp > cap) disp = cap; else if (disp < -cap) disp = -cap;
+          const disp = k * (P * q + Pn * q * q) * 0.5;
           const ux = dx / d, uy = dy / d;
-          px[b] += disp * ux; py[b] += disp * uy;
-          dxs -= disp * ux; dys -= disp * uy;
+          rdx[b] += disp * ux; rdy[b] += disp * uy;
+          rdx[a] -= disp * ux; rdy[a] -= disp * uy;
         }
       }
     }
-    px[a] += dxs; py[a] += dys;
+  }
+
+  /* Spend the corrections, with a ceiling on the total each drop may take.
+   *
+   * This is the guard that keeps the whole thing alive, and it has to be on
+   * the sum rather than on any one pair. The pressure is linear in the density
+   * error and the density error has no bound: slam the liquid into a wall and
+   * a drop can find itself with three times the neighbours it wants, and every
+   * one of those neighbours then contributes to shoving it out. A per-pair
+   * limit does nothing about forty of them agreeing.
+   *
+   * What that produces is not a wobble. The relaxation is a position
+   * projection and the velocity is recovered from the positions afterwards, so
+   * an unbounded correction is an unbounded velocity — the drop is launched,
+   * hits a wall, compresses, and is launched again. Measured: two home-screen
+   * swipes in a row left every drop pinned at the speed limit and still pinned
+   * there ten seconds later, with the pool gone. Bounding the sum bounds the
+   * velocity the relaxation can invent, which is what makes it a pressure
+   * rather than a source of energy.
+   *
+   * Capping the sum means accumulating it, which makes this Jacobi where
+   * Clavet is Gauss-Seidel: every drop is corrected against the same snapshot
+   * instead of against its predecessors' new positions. It converges a little
+   * slower per step and it is symmetric, which at this stiffness is the better
+   * trade. */
+  const cap = spacing * RELAX_CAP;
+  for (let i = 0; i < N; i++) {
+    const dx = rdx[i], dy = rdy[i];
+    const m = Math.hypot(dx, dy);
+    if (m > cap) { px[i] += dx / m * cap; py[i] += dy / m * cap; }
+    else { px[i] += dx; py[i] += dy; }
+    rdx[i] = 0; rdy[i] = 0;
   }
 }
 
@@ -1569,6 +1609,15 @@ document.addEventListener("visibilitychange", () => {
 let dragging = false, dragPole = null;
 
 function placePole(x, y, strength, seconds) {
+  /* Refuse a pole that is not somewhere.
+   *
+   * This is a public entry point — a host calls tap() — and a pole at NaN is
+   * not a pole that does nothing, it is a pole that makes the field NaN
+   * everywhere. Every comparison against it then fails, every magnetic force
+   * is skipped, and the wallpaper goes quietly inert for as long as the pole
+   * lives, with no error anywhere to say why. */
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(strength)) return null;
+
   /* Deeper than the ambient pair, and stronger to match. The field of a pole
    * falls off as the inverse square of the distance but its strength goes as
    * the square of its standoff, so a broad magnet held further back reaches

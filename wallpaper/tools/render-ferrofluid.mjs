@@ -17,6 +17,7 @@
  *   FF_TIMES     seconds to capture        (default 6,13,20,27,34,41)
  *   FF_QUERY     extra page parameters     (default none)
  *   FF_THUMB     also write the Android thumbnail here
+ *   FF_THUMB_AT  the second of simulated time to catch it at
  *   PW_CHROMIUM  a chromium binary, if Playwright cannot find its own
  */
 import { chromium } from 'playwright';
@@ -41,7 +42,7 @@ const W = 420, H = 880, FPS = 60, DT = 1000 / FPS;
  * along the floor of whatever shape it is given, so a square viewport puts the
  * pool where a crop would have had to go looking for it. */
 const THUMB_SIZE = 192;
-const THUMB_AT = 13.4;             // a moment with the crest well up
+const THUMB_AT = Number(process.env.FF_THUMB_AT ?? 11);   // a moment with a crest well up
 
 /* The page's own clock, and a seeded Math.random, so a run is reproducible.
  * Without the seed the drop jitter differs every time and no two sheets can
