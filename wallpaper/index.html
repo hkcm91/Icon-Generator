@@ -71,6 +71,14 @@ const CONFIG = {
    * the surface can sit in the corner arc — or press against the ceiling —
    * and still terminate correctly, so the container can be properly full. */
   fill: num("fill", 0.98),
+  /* How large the suspension is against its vessel. One flake diameter is a
+   * fixed fraction of a phone screen, which is right for a wallpaper and
+   * wrong for anything small: a shaker drawn at 48dp with wallpaper-sized
+   * glitter is a field of sub-pixel speckle that reads as blue noise. Raising
+   * this renders a physically smaller vessel — fewer flake-diameters across —
+   * rather than magnifying a picture of a big one, so the flakes get their
+   * own drag, terminal velocity and mass at the new size. */
+  zoom: num("zoom", 1),
   // The visible glitter population is doubled again, but most of that density
   // remains in the batched micro layer so it still reads as suspended foil
   // instead of 19,500 individually drawn sprites.
@@ -82,9 +90,58 @@ const CONFIG = {
   columns: 96,
   /* Blue-dominant. The green-teal is not in this ramp: it comes from the
    * denser second phase settling out, so the colour is a consequence of
-   * stratification rather than a painted gradient. */
-  ramp: ["#0a5fd4", "#1a86f0", "#2aa8ee", "#3ec4e9"],
+   * stratification rather than a painted gradient.
+   *
+   * Addressable as a comma-separated list so a colourway is a URL rather than
+   * an edit — the icon renderer sweeps this to produce a set. Any number of
+   * stops works; they are spread evenly along the gravity axis. */
+  ramp: (params.get("ramp") || "#0a5fd4,#1a86f0,#2aa8ee,#3ec4e9").split(","),
+  /* The denser second liquid, which settles out and marbles through the body.
+   * Deliberately not a stop on `ramp` — the whole point of the pairing is
+   * that it is a different fluid rather than a darker version of the first.
+   *
+   * It has to move with the colourway even so. A teal that reads as a second
+   * phase suspended in blue reads as sludge at the bottom of pink. */
+  dense: params.get("dense") || "#4aecc6",
+  /* The headspace above the waterline: inner top wall, mid air, and the
+   * liquid showing through the meniscus.
+   *
+   * Was three fixed pale blues. That is right for a blue shaker and wrong
+   * for every other one — tinted air is still air *in this vessel*, and a
+   * cool blue headspace sitting above a hot pink liquid is the single
+   * loudest thing keeping a set of colourways from reading as a family. */
+  air: (params.get("air") || "#c9dfec,#eaf5fb,#a9d4e6").split(","),
+  /* Glass rather than paint.
+   *
+   * At 0 the liquid is opaque and the vessel is its own background, which is
+   * what a wallpaper wants — it has nothing behind it. At 1 the body and the
+   * headspace drop to a tint and whatever is behind shows through, which is
+   * what an *icon* wants: a container sitting on the home screen with the
+   * user's own wallpaper visible through the glass.
+   *
+   * Everything suspended in the liquid stays fully opaque. Only the fluid
+   * itself thins — glitter and bubbles are objects, not tint. */
+  glass: Math.max(0, Math.min(1, num("glass", 0))),
+  /* The mark suspended in the liquid: heart, bolt, chat, music, camera, gear.
+   * Empty leaves the vessel holding only glitter, which is the wallpaper. */
+  glyph: params.get("glyph") || "",
+  glyphScale: num("glyphScale", 0.62),
+  /* How strongly the front face bulges. 0 is a flat pane, which is what a
+   * wallpaper is — it fills the screen and has no edge to curve over. An
+   * icon is a small object you can see all of, so it wants a surface. */
+  dome: Math.max(0, num("dome", 0)),
 };
+
+/** #rgb or #rrggbb to channel bytes. */
+function parseHex(s) {
+  const h = s.trim().replace("#", "");
+  const v = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16);
+  return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+}
+const DENSE = parseHex(CONFIG.dense);
+// Peak alpha of the dense-phase blit, thinned along with the fluid it is
+// suspended in. 172 is the opaque-vessel value and stands at clear=0.
+const DYE_ALPHA = 172 * (1 - CONFIG.glass * 0.78);
 
 /* Holographic foil comes in pairs, not flat colours. Each flake shifts from
  * the pale end to the saturated end across its own width, which is what
@@ -101,7 +158,9 @@ const FLAKE_COLOURS = [
 ];
 
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
+// Opaque by default: the compositor skips a whole blend when it knows there
+// is nothing behind. A clear vessel needs that blend, so it pays for it.
+const ctx = canvas.getContext("2d", { alpha: CONFIG.glass > 0 });
 const hint = document.getElementById("tap");
 const enableBtn = document.getElementById("enable");
 
@@ -1521,7 +1580,7 @@ function settleSpawn(out, pad, cluster) {
 function seed() {
   stars.length = 0; microGlitter.length = 0;
   bubbles.length = 0; fizz.length = 0; fizzDebt = 0;
-  const unit = Math.min(W, H) / 720;
+  const unit = Math.min(W, H) / 720 * CONFIG.zoom;
   for (let i = 0; i < CONFIG.stars; i++) {
     // Medium foil plus a restrained scatter of hero cuts. Fine glitter has a
     // separate batched system below, so these pieces can remain legible.
@@ -3120,6 +3179,275 @@ function drawBezel() {
   ctx.globalAlpha = 1;
 }
 
+/* ------------------------------------------------------------------- glyph
+ *
+ * An app's mark, suspended in the liquid as a solid object.
+ *
+ * This is the thing an icon pack cannot do. A pack ships one drawn tile per
+ * app and covers only the apps somebody drew; a container renders whatever
+ * mark it is handed, so it works for anything installed. The mark is not
+ * pasted on top of the glass — it is placed at the mid-plane of the vessel,
+ * so glitter passes behind it washed by the full thickness of liquid and in
+ * front of it sharp, which is what puts it *inside* rather than *on*.
+ *
+ * Depth comes from extrusion rather than from a drawn bevel: the silhouette
+ * is stamped repeatedly along the axis pointing away from the light, dark to
+ * light, and the front face laid over the stack. A rim is left showing on
+ * the lit side by stamping once more toward the light before the face goes
+ * down. Every offset is derived from LIGHT_ANGLE, so the mark is lit by the
+ * same light as the flakes and the bezel.
+ */
+/* Real glyph geometry, not hand-drawn approximations of it.
+ *
+ * These are Material Design Icons (Apache License 2.0), filled weight, taken
+ * verbatim as SVG path data on a 24x24 grid. Hand-rolling icon shapes gets
+ * you something that reads as *nearly* a gear from across the room and never
+ * survives being looked at: the optical corrections that make a real icon set
+ * work -- terminal weights, how much a counter opens, where a curve flattens
+ * -- are hundreds of small decisions per mark. Path2D parses SVG path data
+ * directly, so there is nothing to convert and nothing to get wrong.
+ */
+const GLYPH_PATHS = {
+  heart:  "m12 21.35-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z",  // favorite
+  bolt:   "M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.48 10.94 10.42 7.54 13 3h1l-1 7h3.5c.49 0 .56.33.47.51l-.07.15C12.96 17.55 11 21 11 21z",  // bolt
+  chat:   "M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z",  // chat_bubble
+  music:  "M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z",  // music_note
+  camera: "M9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z",  // photo_camera
+  gear:   "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z",  // settings
+};
+
+/* Optical size, not bounding-box size. A gear fills its box and a music note
+ * does not, so drawn to the same nominal size the gear reads half again as
+ * large. Every icon set corrects this by eye; these are those corrections. */
+const GLYPH_OPTICAL = {
+  heart: 1.00, bolt: 1.06, chat: 1.00, music: 1.06, camera: 0.96, gear: 0.92,
+};
+
+const GLYPH_CACHE = new Map();
+
+/** The mark as a Path2D already in canvas coordinates. */
+function glyphPath(name, cx, cy, size) {
+  const d = GLYPH_PATHS[name];
+  if (!d) return null;
+  const k = (size / 24) * (GLYPH_OPTICAL[name] || 1);
+  const key = name + "|" + cx + "|" + cy + "|" + k;
+  let hit = GLYPH_CACHE.get(key);
+  if (hit) return hit;
+  let raw = GLYPH_CACHE.get(name);
+  if (!raw) { raw = new Path2D(d); GLYPH_CACHE.set(name, raw); }
+  const p = new Path2D();
+  // 24x24 grid, centred on the vessel and scaled to the requested size.
+  p.addPath(raw, new DOMMatrix().translate(cx, cy).scale(k).translate(-12, -12));
+  if (GLYPH_CACHE.size > 64) GLYPH_CACHE.clear();
+  GLYPH_CACHE.set(key, p);
+  return p;
+}
+
+/* Porcelain.
+ *
+ * Glazed ceramic is not white plastic, and the difference is mostly in three
+ * places. Its body carries a trace of warmth rather than being neutral -- a trace,
+ * because past that it stops reading as glaze and starts reading as old
+ * ivory, and against a warm liquid it loses its separation altogether. Its
+ * glaze gives one broad soft reflection and one tight bright one, not a
+ * single blob. And it is faintly translucent, so an edge lit from behind
+ * carries a little warmth through it rather than going straight to shadow.
+ *
+ * Depth is a real extrusion with a chamfered edge. The chamfer is drawn as a
+ * stroke clipped to the inside of the silhouette rather than as an inset copy
+ * of the path: scaling a path inward shrinks a thin feature -- a note's stem,
+ * a gear's tooth -- far more than a fat one, so an inset copy bevels compact
+ * shapes correctly and eats slender ones alive. A clipped stroke gives a band
+ * of constant width along every edge whatever the shape.
+ */
+function drawGlyph(name, cx, cy, size) {
+  const p = glyphPath(name, cx, cy, size);
+  if (!p) return;
+
+  /* Every length below is in units of the icon's own 24-grid, not in
+   * fractions of the mark's overall size.
+   *
+   * Scaled to the bounding radius instead, the bevel came out wider than a
+   * music note's head: the chamfer and the glaze between them consumed the
+   * whole disc, it lost its face entirely, and it stopped reading as joined
+   * to the stem it is actually joined to. A bevel is a property of an edge,
+   * so it has to be sized against the stroke weight of the artwork -- about
+   * two grid units for this set -- and not against how big the glyph
+   * happens to be drawn. */
+  const u = size / 24;
+  const lx = SHADOW_X, ly = SHADOW_Y;          // toward the light
+  const r = size * 0.5;
+  const depth = u * 1.5, steps = 20;
+  const axis = (a, b) => {
+    const g = ctx.createLinearGradient(cx + lx * r, cy + ly * r,
+                                       cx - lx * r, cy - ly * r);
+    g.addColorStop(0, a); g.addColorStop(1, b);
+    return g;
+  };
+
+  ctx.save();
+
+  // Cast into the liquid: soft and weak, because it is an absence of light in
+  // a fluid rather than a silhouette on a surface.
+  ctx.save();
+  ctx.filter = "blur(" + (u * 1.5).toFixed(2) + "px)";
+  ctx.globalAlpha = 0.34;
+  ctx.fillStyle = "#06203a";
+  ctx.translate(-lx * u * 1.5, -ly * u * 1.5);
+  ctx.fill(p);
+  ctx.restore();
+
+  // Side wall, back to front. Warm in shadow: porcelain never goes blue-grey.
+  for (let i = steps; i >= 1; i--) {
+    const t = i / steps;
+    const v = 0.63 + 0.31 * (1 - t);
+    ctx.save();
+    ctx.translate(-lx * depth * t, -ly * depth * t);
+    ctx.fillStyle = "rgb(" + ((224 * v) | 0) + "," + ((220 * v) | 0) + "," +
+                    ((213 * v) | 0) + ")";
+    ctx.fill(p);
+    ctx.restore();
+  }
+
+  // Face.
+  ctx.fillStyle = axis("#ffffff", "#eceae5");
+  ctx.fill(p);
+
+  ctx.save();
+  ctx.clip(p);
+
+  // Chamfer: a constant-width band inside every edge.
+  ctx.lineWidth = u * 1.15;
+  ctx.strokeStyle = axis("rgba(255,255,255,0.98)", "rgba(191,185,175,0.50)");
+  ctx.filter = "blur(" + (u * 0.22).toFixed(2) + "px)";
+  ctx.stroke(p);
+
+  // Glaze: the tight reflection sitting on the chamfer's lit side.
+  ctx.lineWidth = u * 0.42;
+  ctx.strokeStyle = axis("rgba(255,255,255,0.98)", "rgba(255,255,255,0)");
+  ctx.filter = "blur(" + (u * 0.10).toFixed(2) + "px)";
+  ctx.stroke(p);
+
+  /* Subsurface. Porcelain is thin enough at an edge to pass a little light,
+   * so the shadow side never reaches neutral grey -- it warms first. */
+  ctx.globalCompositeOperation = "source-atop";
+  ctx.lineWidth = u * 0.7;
+  ctx.strokeStyle = axis("rgba(255,240,222,0)", "rgba(255,228,198,0.30)");
+  ctx.filter = "blur(" + (u * 0.34).toFixed(2) + "px)";
+  ctx.stroke(p);
+
+  // Broad glaze sheen across the lit half.
+  ctx.filter = "none";
+  const sheen = ctx.createLinearGradient(cx + lx * r * 1.1, cy + ly * r * 1.1,
+                                         cx - lx * r * 0.2, cy - ly * r * 0.2);
+  sheen.addColorStop(0, "rgba(255,255,255,0.42)");
+  sheen.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = sheen;
+  ctx.fill(p);
+
+  ctx.restore();
+  ctx.restore();
+}
+
+/* -------------------------------------------------------------------- dome
+ *
+ * A flat pane and a domed one differ in three places, and every one of them
+ * is about where the surface normal points rather than about the liquid:
+ *
+ *  - the rim turns away from you and reflects the room instead of
+ *    transmitting, so a dome shades just inside its own edge,
+ *  - the reflection of the light source is a band hugging the edge the light
+ *    comes from, not a pool in the middle,
+ *  - light entering near the far rim leaves brightened, so the edge opposite
+ *    the light carries a thin crescent.
+ *
+ * Every one of those follows the silhouette. The first version of this drew
+ * radial gradients centred on the vessel, and a radial gradient laid over a
+ * squircle reads as exactly what it is: a disc sitting in the middle of the
+ * tile. Curvature has to be drawn where the normal actually turns, which is
+ * at the outline -- so everything below is stroked along it.
+ *
+ * Drawn before the glass layer so its corner knockout still trims this, and
+ * scaled by `strength` so the whole effect is one dial.
+ */
+/** The stretch of outline whose outward normal faces the light, inset toward
+ *  the centre. Returned as one open run, so a stroke over it never cuts a
+ *  chord across the vessel where the lit arc wraps the array. */
+function rimRun(minDot, inset) {
+  const n = outline.length, lit = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const dx = outline[i].x - CX, dy = outline[i].y - CY;
+    const m = Math.hypot(dx, dy) || 1;
+    lit[i] = (dx / m) * SHADOW_X + (dy / m) * SHADOW_Y > minDot;
+  }
+  let start = -1;
+  for (let i = 0; i < n; i++) if (lit[i] && !lit[(i - 1 + n) % n]) { start = i; break; }
+  if (start < 0) return null;
+  const pts = [];
+  for (let j = 0; j < n; j++) {
+    const i = (start + j) % n;
+    if (!lit[i]) break;
+    pts.push({ x: CX + (outline[i].x - CX) * inset,
+               y: CY + (outline[i].y - CY) * inset });
+  }
+  return pts.length > 1 ? pts : null;
+}
+
+function strokeRun(pts, width, blur, style) {
+  if (!pts) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = width;
+  ctx.strokeStyle = style;
+  if (blur > 0) ctx.filter = "blur(" + blur.toFixed(2) + "px)";
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawDome(k) {
+  const near = Math.min(RX, RY);
+
+  /* Shade just inside the whole rim, following the outline. */
+  ctx.save();
+  ctx.beginPath();
+  traceOutline(ctx);
+  ctx.filter = "blur(" + (near * 0.075).toFixed(2) + "px)";
+  ctx.lineWidth = near * 0.20;
+  ctx.strokeStyle = "rgba(8,24,44," + (0.26 * k).toFixed(3) + ")";
+  ctx.stroke();
+  ctx.restore();
+
+  /* The light's reflection, as a streak running along the lit rim. A dome
+   * reflects a source in a band that hugs the edge it is lit from; the blob
+   * in the middle this used to draw was the shape of the gradient, not the
+   * shape of the surface. */
+  strokeRun(rimRun(0.28, 0.80), near * 0.10, near * 0.065,
+            "rgba(255,255,255," + (0.55 * k).toFixed(3) + ")");
+  strokeRun(rimRun(0.52, 0.86), near * 0.045, near * 0.030,
+            "rgba(255,255,255," + (0.50 * k).toFixed(3) + ")");
+
+  /* Light leaving the far rim: the counter-crescent that tells you the thing
+   * is solid and curved rather than a hollow ring. */
+  ctx.save();
+  ctx.beginPath();
+  traceOutline(ctx);
+  const cres = ctx.createLinearGradient(
+    CX + SHADOW_X * RX, CY + SHADOW_Y * RY,
+    CX - SHADOW_X * RX, CY - SHADOW_Y * RY);
+  cres.addColorStop(0, "rgba(255,255,255,0)");
+  cres.addColorStop(0.55, "rgba(255,255,255,0)");
+  cres.addColorStop(1, "rgba(255,255,255," + (0.5 * k).toFixed(3) + ")");
+  ctx.strokeStyle = cres;
+  ctx.lineWidth = near * 0.034;
+  ctx.filter = "blur(" + (near * 0.012).toFixed(2) + "px)";
+  ctx.stroke();
+  ctx.restore();
+}
+
 /* Paint the same headspace twice: once as the background and once after the
  * particles. The second pass is a cheap, exact surface mask. It prevents a
  * cached microglitter layer—or a large flake whose centre is submerged but
@@ -3128,9 +3456,9 @@ function paintHeadspace(poly) {
   const air = ctx.createLinearGradient(
     CX + displayUp.x * displayUpExtent, CY + displayUp.y * displayUpExtent,
     CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel);
-  air.addColorStop(0, "#c9dfec");
-  air.addColorStop(0.45, "#eaf5fb");
-  air.addColorStop(1, "#a9d4e6");
+  air.addColorStop(0, CONFIG.air[0]);
+  air.addColorStop(0.45, CONFIG.air[1] || CONFIG.air[0]);
+  air.addColorStop(1, CONFIG.air[2] || CONFIG.air[0]);
   ctx.fillStyle = air;
   ctx.beginPath();
   const far = (displaySpan + displayUpExtent) * 2;
@@ -3205,7 +3533,15 @@ function render(time) {
     grad.addColorStop(i / (ramp.length - 1), ramp[i]);
   }
   ctx.fillStyle = grad;
+  /* Opaque, the fill covers the previous frame on its own. Clear, it does
+   * not — so the canvas has to be emptied first or every frame accumulates
+   * on the last and the tint walks to opaque within a second. */
+  if (CONFIG.glass) {
+    ctx.clearRect(0, 0, W, H);
+    ctx.globalAlpha = 1 - CONFIG.glass * 0.86;
+  }
   ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
 
   /* Headspace. Painted as pale tinted air rather than left as page
    * background: white reads as a hole in the wallpaper, which is exactly
@@ -3215,6 +3551,25 @@ function render(time) {
    * the waterline. Spanning the whole container instead left the thin band
    * sampling one end of the ramp, so it rendered as a flat grey slab that
    * read like a UI bar sitting on top of the wallpaper. */
+  const air = ctx.createLinearGradient(
+    CX + up.x * upExtent, CY + up.y * upExtent,
+    CX + up.x * level, CY + up.y * level);
+  air.addColorStop(0, CONFIG.air[0]);            // inner top wall, shadowed
+  air.addColorStop(0.45, CONFIG.air[1] || CONFIG.air[0]);
+  air.addColorStop(1, CONFIG.air[2] || CONFIG.air[0]);  // liquid through the meniscus
+  ctx.fillStyle = air;
+  ctx.beginPath();
+  const far = (span + upExtent) * 2;
+  ctx.moveTo(poly[0].x + up.x * far, poly[0].y + up.y * far);
+  for (let i = 0; i <= 64; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  ctx.lineTo(poly[64].x + up.x * far, poly[64].y + up.y * far);
+  ctx.closePath();
+  // Air in a clear vessel is the emptiest thing in it: almost all of this
+  // has to go, or the headspace reads as a solid pale cap.
+  if (CONFIG.glass) ctx.globalAlpha = 1 - CONFIG.glass * 0.9;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
   paintHeadspace(poly);
 
   const menisc = meniscus(poly, 64);   // array of interface segments
@@ -3238,13 +3593,25 @@ function render(time) {
   for (let i = 0, n = GW * GH; i < n; i++) {
     let v = dye[i];
     if (v < 0) v = 0; else if (v > 1) v = 1;
-    dd[i * 4] = 74; dd[i * 4 + 1] = 236; dd[i * 4 + 2] = 198;
-    dd[i * 4 + 3] = (v * 172) | 0;
+    dd[i * 4] = DENSE.r; dd[i * 4 + 1] = DENSE.g; dd[i * 4 + 2] = DENSE.b;
+    // Thinned with the rest of the fluid. Left at full strength this is the
+    // densest layer in a clear vessel by some margin, and it alone holds the
+    // tile at about half opacity however far the dial is turned.
+    dd[i * 4 + 3] = (v * DYE_ALPHA) | 0;
   }
   dyeCtx.putImageData(dyeImage, 0, 0);
   ctx.drawImage(dyeCanvas, 0, 0, W, H);
 
   ctx.drawImage(depthLayer, 0, 0, W, H);
+
+  /* The mark sits here, at the mid-plane: after the far-field flakes and the
+   * liquid tint that washes them, before the caustics that fall across it and
+   * the near-field flakes that drift in front. That ordering is the whole
+   * illusion — glitter passing on both sides of it is what makes it read as
+   * suspended in the liquid rather than printed on the glass. */
+  if (CONFIG.glyph) {
+    drawGlyph(CONFIG.glyph, CX, CY, Math.min(RX, RY) * CONFIG.glyphScale);
+  }
 
   /* Caustics. The free surface is a lens: where it curves concave it
    * converges the light passing through into a bright shaft in the body
@@ -3409,6 +3776,7 @@ function render(time) {
 
   // Glass shell, casing edge and corner knockout, all baked at resize.
   drawBezel();
+  if (CONFIG.dome) drawDome(CONFIG.dome);
   ctx.drawImage(glassLayer, 0, 0, W, H);
 }
 
@@ -4214,6 +4582,11 @@ function start() {
   targetArea = polygonArea(outline) * CONFIG.fill;
   h.fill(0); wv.fill(0);
   seed();
+  /* One frame drawn synchronously, before anything is scheduled. The manifest
+   * icon is a picture of this canvas, and it is asked for on the line after
+   * start() returns — with the first frame left to the animation callback the
+   * icon was a snapshot of a canvas nothing had drawn into yet. */
+  render(simTime);
   last = performance.now();
   if (!raf) raf = requestAnimationFrame(frame);
 }
@@ -4275,25 +4648,32 @@ function installIcon(size) {
   const c = document.createElement("canvas");
   c.width = c.height = size;
   const g = c.getContext("2d");
-  const grad = g.createLinearGradient(0, 0, 0, size);
-  const ramp = CONFIG.ramp;
-  for (let i = 0; i < ramp.length; i++) {
-    grad.addColorStop(i / (ramp.length - 1), ramp[i]);
-  }
-  g.fillStyle = grad;
+  g.imageSmoothingQuality = "high";
+
+  // The centre square of the live canvas, which in full-bleed mode is the
+  // container and in pouch mode is the container plus its backdrop.
+  const side = Math.min(canvas.width, canvas.height);
+  const ox = (canvas.width - side) / 2, oy = (canvas.height - side) / 2;
+  const k = size / side;
+
+  /* Clipped to the vessel's own boundary rather than to a rounded square
+   * drawn to resemble it, so the icon is bounded by whatever shape the
+   * container actually has — including the corner radius the page was asked
+   * for. `outline` is in CSS pixels; the canvas is scaled by DPR on top of
+   * that, and the icon is the centre square of the result. */
   g.beginPath();
-  const r = size * 0.22;
-  g.moveTo(r, 0);
-  g.arcTo(size, 0, size, size, r); g.arcTo(size, size, 0, size, r);
-  g.arcTo(0, size, 0, 0, r);       g.arcTo(0, 0, size, 0, r);
-  g.closePath(); g.fill();
-  const stars = [[0.30, 0.34, 0.13], [0.68, 0.28, 0.09], [0.55, 0.62, 0.16],
-                 [0.24, 0.70, 0.07], [0.80, 0.72, 0.06]];
-  for (const [x, y, k] of stars) {
-    g.fillStyle = "rgba(255,255,255,.92)";
-    flakePath(g, x * size, y * size, k * size, 0);
-    g.fill();
+  for (let i = 0; i < outline.length; i++) {
+    const x = (outline[i].x * DPR - ox) * k, y = (outline[i].y * DPR - oy) * k;
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
   }
+  g.closePath();
+  g.clip();
+
+  /* Drawn from the simulation, not approximated from the palette. The five
+   * hand-placed flakes this used to draw were the one thing on the home
+   * screen that was not the real optics: no refraction, no caustics, no
+   * settled distribution, and a specular that belonged to nothing. */
+  g.drawImage(canvas, ox, oy, side, side, 0, 0, size, size);
   return c.toDataURL("image/png");
 }
 
@@ -4420,6 +4800,11 @@ window.__shaker = {
 
   /** Frame timing to the console, for a host that has no other way to see it. */
   diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; diagJs = 0; },
+
+  /** A picture of the container as it stands right now, clipped to its own
+   *  boundary and returned as a PNG data URL. This is what the icon renderer
+   *  reads out once it has driven the simulation to the state it wants. */
+  icon(size) { return installIcon(size); },
 };
 
 start();
