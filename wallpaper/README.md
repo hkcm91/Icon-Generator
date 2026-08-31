@@ -170,18 +170,17 @@ vessel shows up in the curls rather than evenly through the volume. So it is
 seeded by vorticity: sample eight points, take the one sitting in the
 strongest swirl, and only while there is agitation to produce it. The current
 mix deliberately keeps that signal restrained: no fizz at all while still,
-short three-to-five-bubble puffs during a shake, and a hard ceiling of 180.
-Their 0.9–1.9 second lifetime lets the eddy trail disappear promptly instead
-of hanging around as a second field of glitter.
-
-It is emitted in puffs rather than one particle at a time, because
-cavitation follows a vortex line and the gas comes out along it — spawning
-singly gave an even dust that read as more glitter rather than as bubbles
-being torn out of the liquid.
+one pin bubble per emission during a real shake, and a hard ceiling of 12.
+A 0.18g threshold means ordinary turning does not emit any, while the
+0.45–1.0 second lifetime erases a violent-shake trail promptly instead of
+leaving a second field of glitter. The fizz pass sits behind the front foil,
+so its pale sprites cannot overwrite glitter as continuous white streaks.
+The remaining bubbles are about 75% larger than the former dust-sized fizz,
+so each one reads clearly even though the population is much smaller.
 
 It is a separate population from the ordinary bubbles, not more of them. A
 bubble in the main pool is a persistent object with a size, a film and a
-life cycle; fizz is a puff that lasts a second or two and is gone. Being
+life cycle; fizz is a pin bubble that lasts less than a second and is gone. Being
 small enough to follow the flow almost exactly, what it draws is the shape
 of the eddy that made it.
 
@@ -211,9 +210,12 @@ and the mean is conserved across both.
 converges the light passing through into a bright shaft in the body below;
 where convex it spreads it thin. It is the strongest depth cue a real liquid
 container has, and without it the body is evenly lit everywhere, which is
-what made it read flat. Drawn in the gravity frame so the shafts hang
-straight down however the phone is held, and added rather than blended,
-because this is light arriving rather than a surface.
+what made it read flat. Drawn in the same damped display frame as the visible
+surface so the shafts hang down without snapping ahead of the blue fill, and
+added rather than blended because this is light arriving rather than a
+surface. Their peak and near-surface pool are deliberately restrained; the
+earlier additive values turned dense glitter paths into white streaks during
+a turn.
 
 They are deliberately irregular: evenly spaced shafts of equal width read as
 corduroy, so two incommensurate frequencies and a per-shaft width give them
@@ -254,6 +256,13 @@ because it cannot know the regions do not overlap. Copying what the bezel
 needs into a scratch canvas first turns them into ordinary blits: a quarter
 of the screen copied once, rather than the whole of it two dozen times. It
 takes the bezel from 20ms to under 1ms.
+
+The scratch copy is captured after the liquid and air are painted but before
+the glitter and bubbles. The wall still bends the material behind it, while
+the finished particles are drawn only once. Capturing the completed scene
+made edge flakes appear again inside the refracted rim, visually doubling
+glitter along the sides and rounded corners even when its physical positions
+were evenly distributed.
 
 **Dispersion.** Glass bends the short wavelengths harder than the long ones,
 so at the steep angles the wall presents near its silhouette the colours
@@ -418,14 +427,15 @@ still liquid: fizz generates 0.0px/s of lateral motion, large bubbles
 later run, the frequency fell with it, to 0.9Hz.
 
 The visible population now favours small and medium bubbles. The persistent
-count is 112 rather than 128, only a small tail is born large, and coalescence
-is capped at roughly 6.5% of the short screen axis. On a 390x844 test canvas,
-the number above 14px radius fell from 33 to 6 and the maximum fell from about
-32px to 19px. Local carrier flow and its material acceleration are sampled
-through diameter-scale low-pass filters; deliberate shake still opens the
-coupling quickly, while quiet-grid changes no longer reverse a bubble from
-frame to frame. Resting sideways reversals fell from roughly 850 per second
-to 38 per second after a shake-and-settle cycle.
+count is 112 rather than 128, but no more than five may exceed ten bubble-size
+units at once. Births respect that budget and a merge that would create a
+sixth large bubble separates instead; coalescence still has its independent
+cap at roughly 6.5% of the short screen axis. Local carrier flow and its
+material acceleration are sampled through diameter-scale low-pass filters;
+deliberate shake still opens the coupling quickly, while quiet-grid changes
+no longer reverse a bubble from frame to frame. Resting sideways reversals
+fell from roughly 850 per second to 38 per second after a shake-and-settle
+cycle.
 
 **Response time is not a free parameter.** A bubble reaches terminal speed
 when buoyancy balances drag, so tau = v_t / 3g, the 3 being the added-mass
@@ -632,13 +642,14 @@ lateral boundary layer widens temporarily. Three alternating sensor-driven
 flips held the glitter's mean lateral spread at 68–73px rather than walking it
 outward on every inversion.
 
-Once a real face-over-face reversal completes, the released resting bed also
-gets a five-second, decaying cross-gravity damper. Each piece falls from the
-part of the bed it already occupied instead of being swept sideways. Every
-piece keeps a loose memory of its naturally even first-spawn lane, so repeat
-flips can gently restore a full-width curtain without teleporting glitter or
-locking it into rigid columns. Only the extreme glass corners receive an
-extra inward correction. The heavier cut foil falls a little faster than
+Once a real face-over-face reversal completes, the released resting bed is
+sorted left-to-right and assigned evenly spaced, order-preserving fall lanes
+across the usable width. That turns a corner pile or uneven settled patch back
+into a broad curtain without particles crossing, teleporting, or stacking in
+one traffic jam. A five-second cross-gravity damper makes the initial release
+clean, then a much weaker lane memory remains so residual fluid circulation
+cannot slowly bank the fine glitter against a side wall. Suspended pieces keep
+the lane they already occupy. The heavier cut foil falls a little faster than
 before, while the fine glitter retains a wider, slower tail.
 
 The residual also passes through a 0.045g radial dead zone before it reaches
@@ -672,6 +683,15 @@ area: each frame clips the liquid polygon against the container, measures the
 area, and nudges the surface level toward the target. It settles in a few
 frames and costs one shoelace sum.
 
+The visible level is measured in pixels along the rotating gravity axis, whose
+half-extent is about 422px upright but only 195px sideways on the phone-shaped
+test canvas. Its position and velocity are rescaled with that axis before the
+volume correction is damped. Previously the old upright level could remain
+outside the sideways chamber for several frames, briefly erasing the air
+boundary and returning it as a pale flash. Caustics now use the same damped
+display basis and sampled surface as the blue fill, so the lighting cannot
+snap across a gradient that is still easing through the turn.
+
 **The headspace behaves as one trapped surface bubble.** Its wetting points
 remain attached to the glass, but tangential acceleration displaces the
 deepest part of the lens along the surface. A lightly underdamped spring gives
@@ -704,7 +724,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `stars` | `1650` | Medium and hero glitter count |
 | `micro` | `17850` | Cached microglitter count; with `stars`, 19,500 visible pieces |
 | `bubbles` | `112` | Persistent air-bubble count; shake-generated fizz is separate |
-| `fizz` | `180` | Ceiling on the short-lived fine fizz spawned by strong vortices |
+| `fizz` | `12` | Ceiling on the sparse, sub-second pin fizz spawned by strong vortices |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
