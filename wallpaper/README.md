@@ -170,11 +170,13 @@ vessel shows up in the curls rather than evenly through the volume. So it is
 seeded by vorticity: sample eight points, take the one sitting in the
 strongest swirl, and only while there is agitation to produce it. The current
 mix deliberately keeps that signal restrained: no fizz at all while still,
-one pin bubble per emission during a real shake, and a hard ceiling of 24.
-A 0.16g threshold means ordinary turning does not emit any, while the
+one pin bubble per emission during a real shake, and a hard ceiling of 12.
+A 0.18g threshold means ordinary turning does not emit any, while the
 0.45–1.0 second lifetime erases a violent-shake trail promptly instead of
 leaving a second field of glitter. The fizz pass sits behind the front foil,
 so its pale sprites cannot overwrite glitter as continuous white streaks.
+The remaining bubbles are about 75% larger than the former dust-sized fizz,
+so each one reads clearly even though the population is much smaller.
 
 It is a separate population from the ordinary bubbles, not more of them. A
 bubble in the main pool is a persistent object with a size, a film and a
@@ -722,7 +724,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `stars` | `1650` | Medium and hero glitter count |
 | `micro` | `17850` | Cached microglitter count; with `stars`, 19,500 visible pieces |
 | `bubbles` | `112` | Persistent air-bubble count; shake-generated fizz is separate |
-| `fizz` | `24` | Ceiling on the sparse, sub-second pin fizz spawned by strong vortices |
+| `fizz` | `12` | Ceiling on the sparse, sub-second pin fizz spawned by strong vortices |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
