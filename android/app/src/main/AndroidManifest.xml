@@ -12,19 +12,40 @@
         android:allowBackup="false"
         android:supportsRtl="true">
 
-        <!-- A WallpaperService is selectable but not launchable. This entry
-             makes an installed APK open the system preview/apply screen. -->
+        <!-- A WallpaperService is selectable but not launchable. These entries
+             make an installed APK open the system preview/apply screen — one
+             per wallpaper, because the preview intent names a component and
+             the APK now carries two of them. The alias is what puts both in
+             the app drawer without a second activity to maintain. -->
         <activity
             android:name=".LauncherActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:label="@string/app_name"
+            android:label="@string/wallpaper_name"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="com.hkcm.liquidshaker.wallpaper"
+                android:value=".ShakerWallpaperService" />
         </activity>
+
+        <activity-alias
+            android:name=".FerrofluidLauncherActivity"
+            android:targetActivity=".LauncherActivity"
+            android:exported="true"
+            android:icon="@drawable/ferrofluid_thumb"
+            android:label="@string/ferrofluid_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data
+                android:name="com.hkcm.liquidshaker.wallpaper"
+                android:value=".FerrofluidWallpaperService" />
+        </activity-alias>
 
         <service
             android:name=".ShakerWallpaperService"
@@ -37,6 +58,19 @@
             <meta-data
                 android:name="android.service.wallpaper"
                 android:resource="@xml/wallpaper" />
+        </service>
+
+        <service
+            android:name=".FerrofluidWallpaperService"
+            android:exported="true"
+            android:label="@string/ferrofluid_name"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/ferrofluid" />
         </service>
     </application>
 </manifest>

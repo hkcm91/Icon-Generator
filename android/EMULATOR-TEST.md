@@ -6,14 +6,21 @@ to find out.
 
 ## What it is
 
-A live wallpaper that hosts a web page rather than reimplementing it. The
-page — `wallpaper/index.html` — is a liquid glitter shaker: a fluid solver, a
-free surface, buoyant glitter, bubbles with real optics. It is about 3,000
-lines and it is where all the behaviour lives. The Android side
-(`android/app/src/main/java/com/hkcm/liquidshaker/ShakerWallpaperService.java`,
-~300 lines) does only what a browser tab cannot: get a view hierarchy into the
-wallpaper surface, feed it the sensors, and stop it when the wallpaper is not
-on screen.
+Live wallpapers that host web pages rather than reimplementing them. There are
+two, in one APK:
+
+- **Liquid Shaker** — `wallpaper/index.html`, a liquid glitter shaker: a fluid
+  solver, a free surface, buoyant glitter, bubbles with real optics.
+- **Ferrofluid** — `wallpaper/ferrofluid.html`, black liquid on white paper: a
+  particle liquid with cohesion, and magnets that drag it into Rosensweig
+  spikes. Newer, and the less tested of the two.
+
+Each page is where all of its own behaviour lives. The Android side
+(`android/app/src/main/java/com/hkcm/liquidshaker/WebWallpaperService.java`,
+~360 lines, plus a dozen lines per wallpaper) does only what a browser tab
+cannot: get a view hierarchy into the wallpaper surface, feed it the sensors,
+and stop it when the wallpaper is not on screen. It holds no opinion about
+which page it is showing.
 
 Repository: `hkcm91/Icon-Generator`, branch
 `claude/blender-liquid-shaker-wallpaper-uvjkoy`.
@@ -31,22 +38,37 @@ tools/build-apk.sh
 adb install -r build/liquid-shaker-debug.apk
 ```
 
-Set it: **Settings → Wallpaper → Live Wallpapers → Liquid Shaker**, or
-long-press the home screen. This may also work depending on the image:
+Set one: **Settings → Wallpaper → Live Wallpapers → Liquid Shaker** (or
+**Ferrofluid**), or long-press the home screen, or open either of the two app
+drawer entries. This may also work depending on the image:
 
 ```bash
 adb shell am start -a android.service.wallpaper.CHANGE_LIVE_WALLPAPER \
   -e android.service.wallpaper.extra.LIVE_WALLPAPER_COMPONENT \
   com.hkcm.liquidshaker/.ShakerWallpaperService
+# ...or .FerrofluidWallpaperService
 ```
 
-Watch it with `adb logcat -s LiquidShaker:V chromium:V`. A debuggable build
+Both should be listed by the picker, each with its own thumbnail. If only one
+appears, that is worth reporting on its own — it means `aapt` or the manifest
+merge dropped a component.
+
+Watch it with `adb logcat -s LiquidShaker:V Ferrofluid:V chromium:V` — the two
+wallpapers use separate tags precisely so they stay separable. A debuggable build
 forwards the page's console into logcat and turns on frame timing, so you
 should see a line every two seconds:
 
 ```
 I/LiquidShaker: shaker fps=58.2 js=6.4ms canvas=1080x2400 stars=1650 micro=17850 bubbles=112 fizz=0
+I/Ferrofluid:  ferrofluid fps=58.9 js=4.1ms canvas=1080x2400 drops=1000 grid=112x212 loops=9 poles=2
 ```
+
+The `js=` figure is the one number worth having from real hardware. Every
+measurement so far is a software rasteriser in a container, which is the wrong
+machine in both directions — slower than a phone's GPU at the drawing, faster
+than a phone's CPU at the arithmetic. If the ferrofluid cannot hold a frame
+rate, `ferrofluid.html?drops=700` is the dial: the solver is most of its cost
+and it is linear in the drop count.
 
 ## What to find out, in order
 
@@ -90,11 +112,20 @@ new gravity within a second or two, and the glitter should drift toward what
 is now the top over about thirty seconds.
 
 **5. The wallpaper-only interactions.** Swiping between home screens should
-tilt the liquid and set it sloshing. A tap on the home screen should drive a
-visible jet into the liquid under the finger. Opening an app and coming back
-should not leave it frozen — and while an app is in front, the wallpaper
-should stop simulating entirely, which you can confirm by the `shaker fps=`
-lines stopping.
+set the liquid sloshing in either wallpaper. A tap on the home screen should
+drive a visible jet into the shaker's liquid, and in the ferrofluid should set
+a magnet down under the finger — a ring where you touched, and the liquid
+reaching toward it if it is anywhere near. Opening an app and coming back
+should not leave either frozen; and while an app is in front, the wallpaper
+should stop simulating entirely, which you can confirm by the `fps=` lines
+stopping.
+
+**5b. The ferrofluid, specifically.** Left alone, the pool at the bottom
+should never be still for long: crests rising and falling, beads thrown clear
+and pulled back. If it lies flat as a black bar for thirty seconds at a time,
+the magnets are not reaching it. If it boils into a spray of droplets that
+never recombines, a stability guard has failed — which of the three is in
+`wallpaper/FERROFLUID.md` under *Fixed timestep*.
 
 **6. Does it survive a rotation?** That destroys and recreates the surface.
 Watch for a crash, a leak, or a black wallpaper afterwards.
@@ -113,25 +144,29 @@ Watch for a crash, a leak, or a black wallpaper afterwards.
   wallpaper will be cropped or letterboxed.
 - **The fallback's clock.** An unattached WebView has no vsync, so
   `requestAnimationFrame` may never fire. The engine takes the clock over
-  (`__shaker.drive()` / `tick()`) for exactly that reason, but if the page is
+  (`__wallpaper.drive()` / `tick()`) for exactly that reason, but if the page is
   visibly frozen while frames are being drawn, that handover is where to look.
 
 ## Already verified — no need to redo
 
 - The APK builds, is signed v1+v2+v3, and installs from Android 5 up.
 - `assets/index.html` inside the APK is byte-identical to
-  `wallpaper/index.html`.
-- The dex carries the service and all seven `window.__shaker` call sites, and
+  `wallpaper/index.html`. (This check predates the ferrofluid; the same should
+  hold for `assets/ferrofluid.html`.)
+- The dex carries the service and all seven `window.__wallpaper` call sites, and
   they match the seven the page exposes.
 - `aapt` reports the wallpaper component, so the picker will list it.
+- The Java compiles clean against API 30 and against the API 23 the offline
+  build uses, with both wallpapers in it.
 - The page-side interface is exercised in a headless browser with the exact
   values and units the service sends. Rolling 90 degrees produces an identical
   gravity vector whether it arrives through the browser's `devicemotion` or
-  through `__shaker.motion()`.
+  through `__wallpaper.motion()`.
 
 ## The interface between the two halves
 
-`window.__shaker`, called from the service by `evaluateJavascript`:
+`window.__wallpaper` (aliased as `window.__shaker`), called from the service
+by `evaluateJavascript`:
 
 | Call | What it is |
 | --- | --- |
@@ -147,7 +182,8 @@ Watch for a crash, a leak, or a black wallpaper afterwards.
 Fix anything small and local — a wrong flag, a missing null check, a layout
 that needs a measure pass. Do not rewrite the page's physics or its rendering
 to chase a frame rate; that code is heavily measured and the numbers behind
-each decision are in `wallpaper/README.md`. If the answer turns out to be
+each decision are in `wallpaper/README.md` and `wallpaper/FERROFLUID.md`. If
+the answer turns out to be
 "the whole hosting approach is wrong on this platform", say so with the
 evidence rather than building around it.
 

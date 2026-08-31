@@ -8,6 +8,13 @@ This is the half that reacts. The [Blender pipeline](../blender) bakes the
 hero loop at full render quality, but a baked loop plays back identically no
 matter how hard you shake the phone — the two are complementary.
 
+There is a second wallpaper in this folder now:
+[**Ferrofluid**](FERROFLUID.md), black liquid on white paper, spiking toward
+magnets you cannot see. It is a different simulation end to end, but the same
+shape of thing — one self-contained page, no build step — and it exposes the
+same host interface, so [the Android service](../android) hosts either one
+without knowing which it has.
+
 ## Try it
 
 Open `index.html` in a browser. On a phone it uses the real sensors; on a
@@ -724,9 +731,8 @@ WebView hosts do not, and the wallpaper falls back to a static tilt.
 
 **Interactive, via your own `WallpaperService`.** The robust version: a small
 Android app with a `WallpaperService` hosting a `WebView` pointed at this
-file in `assets/`. Roughly a hundred lines of Kotlin and it behaves exactly
-like a first-class live wallpaper. This repo ships the render layer, not an
-APK.
+file in `assets/`. That app is now in this repository — see
+[`../android`](../android) — and it carries both wallpaper pages.
 
 **Pre-rendered, via a video wallpaper app.** Render `shaker_loop.mp4` from
 the Blender pipeline and set it with a video-live-wallpaper app. Highest

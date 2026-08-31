@@ -1,14 +1,26 @@
-# Liquid shaker — Android live wallpaper
+# Physics live wallpapers — Android
 
-Wraps [`../wallpaper/index.html`](../wallpaper) in a `WallpaperService`, so the
-thing you set from the wallpaper picker is the page you have been testing in a
-browser — not a reimplementation of it.
+Wraps the pages in [`../wallpaper`](../wallpaper) in `WallpaperService`s, so
+the thing you set from the wallpaper picker is the page you have been testing
+in a browser — not a reimplementation of it.
 
 That is the whole design intent. The physics, the optics and the look took a
-long time to get right and they all live in the page; porting them to Kotlin
+long time to get right and they all live in the pages; porting them to Kotlin
 would mean maintaining two of everything and having them disagree. The service
 is thin, and does only the three things a `WallpaperService` can do that a
 browser tab cannot.
+
+Two wallpapers ship in the one APK, and the picker lists them separately:
+
+| Picker entry | Page | What it is |
+| --- | --- | --- |
+| **Liquid Shaker** | `index.html` | Tilt to pour it, shake to throw the glitter |
+| **Ferrofluid** | `ferrofluid.html` | Black liquid on white paper, spiking toward magnets you cannot see |
+
+`WebWallpaperService` is all of the work and holds no opinion about which page
+it is showing; a subclass is a page, a colour to paint until that page loads,
+and a log tag. Both pages expose the same `window.__wallpaper` table, so the
+host never has to know which one it has.
 
 ## Build it
 
@@ -47,15 +59,20 @@ software fallback locks a normal canvas rather than `lockHardwareCanvas()`,
 which is API 26. Nothing is lost by that, since a detached WebView renders in
 software either way.
 
-Then either open **Liquid Shaker** from the app launcher to jump directly to
-Android's preview/apply screen, choose **Settings → Wallpaper → Live
-Wallpapers → Liquid Shaker**, or long-press the home screen. The launcher entry
-falls back to the general live-wallpaper chooser on vendor builds that do not
-support the component-specific preview intent.
+Then either open **Liquid Shaker** or **Ferrofluid** from the app launcher to
+jump directly to Android's preview/apply screen for that one, choose
+**Settings → Wallpaper → Live Wallpapers**, or long-press the home screen. The
+two launcher entries are one activity behind an `activity-alias`, because the
+preview intent names a component and the APK now carries two of them; which
+one was tapped is read back from the alias's own manifest metadata, since the
+launcher starts these with a bare `MAIN` intent and there is nowhere for an
+extra to come from. Both entries fall back to the general live-wallpaper
+chooser on vendor builds that do not support the component-specific preview
+intent.
 
-The page is not duplicated into the app. Both builds copy it out of
-`../wallpaper/index.html`, so there is one copy of it in the repository and the
-APK cannot drift from what you tested in a browser.
+The pages are not duplicated into the app. Both builds copy them out of
+`../wallpaper`, so there is one copy of each in the repository and the APK
+cannot drift from what you tested in a browser.
 
 ## What the service actually does
 
@@ -73,7 +90,7 @@ WebView drawn into a canvas it is not attached to renders in software.
 The fallback also takes over the page's clock. An unattached WebView has no
 vsync to hang `requestAnimationFrame` off, so the page's loop either throttles
 hard or never runs; the engine is already waking once a frame to draw, so it
-steps the simulation itself through `__shaker.tick()`.
+steps the simulation itself through `__wallpaper.tick()`.
 
 **It feeds the sensors in directly.** The page cannot get `devicemotion` here:
 there is no browsing context delivering it and no secure origin to gate it on.
@@ -88,15 +105,19 @@ converted from radians to the degrees per second the web event uses.
 drawer or a full-screen app the wallpaper is not composited at all, and a
 wallpaper that keeps simulating there is a battery leak.
 
-Two extras that only exist because it is a wallpaper: swiping between home
-screens tilts the liquid, through the same surface-tilt path that turning the
-phone uses, so the sloshing that follows is the wave dynamics rather than an
-animation; and a tap on the home screen drives a jet into the liquid under the
-finger.
+Two extras exist only because it is a wallpaper, and each page answers them in
+its own terms rather than being handed an effect. Swiping between home screens
+enters as motion the liquid does not have yet: the shaker tilts its surface,
+and the ferrofluid gets the velocity a cell of liquid slid sideways is left
+without — the slosh that follows is each solver doing what it already does. A
+tap on the home screen drives a jet into the shaker's liquid, and sets a
+magnet down under the finger in the ferrofluid.
 
 ## The interface between the two halves
 
-The page exposes `window.__shaker`:
+Each page exposes `window.__wallpaper`, and `window.__shaker` as an alias —
+that was the name before there was a second wallpaper to host, and keeping it
+means a host built against the older page still drives either of them:
 
 | Call | What it is |
 | --- | --- |
@@ -106,17 +127,23 @@ The page exposes `window.__shaker`:
 | `pause()` / `resume()` | Stop and start the page's own loop |
 | `drive()` / `tick()` | Hand the clock to the host, then step it |
 
-Everything on that table is exercised from the browser in the repository's test
-harness, against the same values the service sends.
+Everything on that table is exercised from the browser against the same values
+the service sends, for both pages.
 
 ## What is built, and what is still untested
 
 The APK builds and is signed with v1, v2 and v3 schemes, so it installs on
-anything from Android 5 upwards. Checked on the way out: the page inside the
-APK is byte-identical to `../wallpaper/index.html`; the dex contains the
-service and every one of the seven `window.__shaker` call sites, which match
-the seven the page exposes; and `aapt` reports the wallpaper component, so the
-picker will list it.
+anything from Android 5 upwards. Checked on the way out: the pages inside the
+APK are byte-identical to the ones in `../wallpaper`; the dex contains the
+services and every `window.__wallpaper` call site, which match the table the
+pages expose; and `aapt` reports both wallpaper components, so the picker will
+list them.
+
+The ferrofluid was added after that check was last run. Its Java compiles
+clean against both API 30 and the API 23 the offline build uses, and its page
+is exercised headlessly through the whole host table — but the APK itself has
+not been rebuilt here, because this environment has neither `dl.google.com`
+nor Debian's Android packages.
 
 **It has never run on a handset.** There is no device or emulator here, so
 "it builds, it is signed, and it contains what it should" is the whole of the
