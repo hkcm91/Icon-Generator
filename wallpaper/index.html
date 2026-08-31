@@ -71,23 +71,18 @@ const CONFIG = {
    * the surface can sit in the corner arc — or press against the ceiling —
    * and still terminate correctly, so the container can be properly full. */
   fill: num("fill", 0.98),
-  /* How large the suspension is against its vessel. One flake diameter is a
-   * fixed fraction of a phone screen, which is right for a wallpaper and
-   * wrong for anything small: a shaker drawn at 48dp with wallpaper-sized
-   * glitter is a field of sub-pixel speckle that reads as blue noise. Raising
-   * this renders a physically smaller vessel — fewer flake-diameters across —
-   * rather than magnifying a picture of a big one, so the flakes get their
-   * own drag, terminal velocity and mass at the new size. */
+  /* Dense toy-grade fill. The micro layer remains batched and only advances
+   * at 15 Hz, so substantially more visible glitter does not multiply the
+   * full simulation/render cost at the phone's display rate. */
   zoom: num("zoom", 1),
-  // The visible glitter population is doubled again, but most of that density
-  // remains in the batched micro layer so it still reads as suspended foil
-  // instead of 19,500 individually drawn sprites.
-  stars: num("stars", 1650),
-  micro: num("micro", 17850),
-  bubbles: num("bubbles", 112),
-  fizz: num("fizz", 180),
+  stars: num("stars", 2000),
+  micro: num("micro", 20000),
+  bubbles: num("bubbles", 84),
+  fizz: num("fizz", 4),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
-  columns: 96,
+  // 80 columns keeps the soft dye/flow field visually continuous while
+  // removing roughly thirty per cent of the grid work done every fixed tick.
+  columns: 80,
   /* Blue-dominant. The green-teal is not in this ramp: it comes from the
    * denser second phase settling out, so the colour is a consequence of
    * stratification rather than a painted gradient.
@@ -175,7 +170,12 @@ function resize() {
   // produces a zero span, and the first simulation step permanently poisons
   // the height field with NaN values. Wait for a real surface instead.
   if (nextW < 2 || nextH < 2) return false;
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  /* The wallpaper is continuously moving behind launcher UI; 1.5 device
+   * pixels per CSS pixel remains sharper than the browser-sized reference
+   * while cutting full-screen compositing by 44% versus the old 2x backing
+   * store. On the S24 that work sat outside the physics budget and forced the
+   * otherwise sub-16ms simulation onto every second display frame. */
+  DPR = Math.min(window.devicePixelRatio || 1, 1.5);
   W = nextW;
   H = nextH;
   canvas.width = Math.floor(W * DPR);
@@ -1083,6 +1083,48 @@ function scatterForce(x, y, fx, fy) {
 const fizz = [];
 let fizzDebt = 0;
 
+/* Surface foam is deliberately separate from the suspended fizz. A shaken
+ * glycerol toy briefly gathers a few larger, soft-edged cells where the air
+ * pocket meets the liquid; it does not fill the body with a white bubble
+ * trail. Keeping these bubbles attached to the visible interface also means
+ * they cannot collide with, or leave streaks through, the glitter solver. */
+const surfaceFoam = [];
+let surfaceFoamDebt = 0;
+
+function spawnSurfaceFoam() {
+  if (surfaceFoam.length >= 18) return;
+  const centre = displayBubbleOffset * 2;
+  const spread = 0.10 + Math.random() * 0.18;
+  surfaceFoam.push({
+    s: Math.max(-0.84, Math.min(0.84,
+      centre + (Math.random() + Math.random() - 1) * spread)),
+    r: (3.2 + Math.pow(Math.random(), 0.7) * 5.8) * bubbleUnit,
+    life: 0,
+    span: 1.4 + Math.random() * 1.7,
+    drift: (Math.random() - 0.5) * 0.035,
+    phase: Math.random() * Math.PI * 2,
+  });
+}
+
+function stepSurfaceFoam(dt) {
+  const raw = Math.hypot(accel.x, accel.y, accel.z);
+  // It takes an intentional shake to make foam. A turn or sensor residue does
+  // not, and the low emission rate keeps this as a detail around the pocket.
+  const agitation = Math.max(0, Math.min(1, (raw - 0.34) / 0.95));
+  surfaceFoamDebt += agitation * agitation * 8 * dt;
+  while (surfaceFoamDebt >= 1) {
+    spawnSurfaceFoam();
+    surfaceFoamDebt -= 1;
+  }
+  for (let i = surfaceFoam.length - 1; i >= 0; i--) {
+    const p = surfaceFoam[i];
+    p.life += dt;
+    if (p.life >= p.span) { surfaceFoam.splice(i, 1); continue; }
+    p.s = Math.max(-0.88, Math.min(0.88,
+      p.s + (p.drift + displayBubbleVelocity * 0.16) * dt));
+  }
+}
+
 /* Emitted in puffs, not one at a time. Cavitation follows a vortex line, so
  * the gas comes out along it in a cluster and you see a streak of fizz
  * curling with the eddy — spawning singly gave an even dust that read as
@@ -1097,16 +1139,17 @@ function spawnFizz() {
     if (w > best) { best = w; bx = x; by = y; }
   }
   if (best < 0 || CONFIG.fizz < 1) return;
-  const spread = Math.min(RX, RY) * 0.045;
-  const n = 3 + ((Math.random() * 3) | 0);
+  const spread = Math.min(RX, RY) * 0.035;
+  const n = 2 + ((Math.random() * 2) | 0);
   for (let i = 0; i < n; i++) {
     const p = fizz.length < CONFIG.fizz ? {} : fizz[(Math.random() * fizz.length) | 0];
     p.x = bx + (Math.random() * 2 - 1) * spread;
     p.y = by + (Math.random() * 2 - 1) * spread;
-    p.r = (1.2 + Math.random() * 2.0) * bubbleUnit;
+    // Fewer, readable pin bubbles instead of sub-pixel white dust/streaks.
+    p.r = (1.8 + Math.random() * 1.4) * bubbleUnit;
     p.vx = 0; p.vy = 0; p.zv = 0;
     p.life = 0;
-    p.span = 0.9 + Math.random() * 1.0;
+    p.span = 0.7 + Math.random() * 0.65;
     p.z = Math.random() * 2 - 1;
     if (fizz.length < CONFIG.fizz) fizz.push(p);
   }
@@ -1115,8 +1158,10 @@ function spawnFizz() {
 function stepFizz(dt) {
   /* How much gas is being driven out of solution. No agitation, no fizz —
    * a shaker sitting still does not sparkle, it just sits there. */
-  const agit = Math.min(1.4, Math.hypot(accel.x, accel.y, accel.z) * 1.2);
-  fizzDebt += agit * agit * 78 * dt;
+  const rawAgit = Math.min(1.4, Math.hypot(accel.x, accel.y, accel.z) * 1.2);
+  // Sensor residue and a gentle turn should not nucleate a white cloud.
+  const agit = Math.max(0, rawAgit - 0.18) / 1.22;
+  fizzDebt += agit * agit * 1.35 * dt;
   while (fizzDebt >= 1) { spawnFizz(); fizzDebt -= 1; }
 
   for (let i = fizz.length - 1; i >= 0; i--) {
@@ -1144,7 +1189,7 @@ function drawFizz() {
     const a = Math.min(1, t * 6) * (1 - t * t);
     if (a < 0.03) continue;
     const r = p.r * (1 + p.z * 0.3) * (0.6 + 0.4 * Math.min(1, t * 5));
-    ctx.globalAlpha = a * (0.45 + 0.55 * (p.z + 1) * 0.5);
+    ctx.globalAlpha = a * 0.58 * (0.50 + 0.50 * (p.z + 1) * 0.5);
     ctx.drawImage(fizzSprite, projectedX(p.x, p.z) - r,
       projectedY(p.y, p.z) - r, r * 2, r * 2);
   }
@@ -1401,6 +1446,12 @@ function stepWaves(dt) {
 
 const stars = [], microGlitter = [], bubbles = [];
 let bubbleUnit = 1, maxBubble = 1;
+/* A settled glitter bed is granular, not a zero-thickness line painted on the
+ * downhill wall. This state grows from the number of dense hero flakes that
+ * are actually at rest, then supplies an angle-of-repose envelope to both
+ * glitter populations. It collapses on a flip so the bed releases as a broad
+ * curtain and can build again on the new floor. */
+let pileFill = 0;
 
 /* Sizes. The shaker is seeded with a spread including the large trapped-air
  * bubbles it starts with, but a *new* bubble nucleates small and grows only
@@ -1413,11 +1464,11 @@ let bubbleUnit = 1, maxBubble = 1;
  * fast enough — median 21px and 194 interpenetrating pairs. Small births
  * plus a rise slow enough for them to survive and merge is the balance.
  */
-function bubbleSeedRadius() {
-  const bt = Math.random();
-  return (bt < 0.82
-    ? 2.8 + bt * 5.6
-    : 7.5 + ((bt - 0.82) / 0.18) * 12.5) * bubbleUnit;
+function bubbleSeedRadius(allowLarge) {
+  if (allowLarge && Math.random() < 0.075) {
+    return (10 + Math.random() * 9) * bubbleUnit;
+  }
+  return (2.8 + Math.pow(Math.random(), 1.35) * 6.7) * bubbleUnit;
 }
 
 function bubbleBirthRadius() {
@@ -1425,7 +1476,15 @@ function bubbleBirthRadius() {
    * bubbles coalesce. Bias replacement bubbles toward that larger tail only
    * while the phone is moving; at rest, nucleation stays fine and restrained. */
   const agit = Math.min(1, Math.hypot(accel.x, accel.y, accel.z) * 1.35);
-  if (Math.random() < 0.04 + agit * 0.26) {
+  /* Keep the large visible population finite. Coalescence is still allowed
+   * to make hero bubbles, but replacement births must not manufacture a wall
+   * full of them after repeated shakes. */
+  let large = 0;
+  const largeThreshold = 10 * bubbleUnit;
+  for (const b of bubbles) {
+    if (!b.fading && b.alpha > 0.35 && b.r >= largeThreshold) large++;
+  }
+  if (large < 5 && Math.random() < 0.025 + agit * 0.13) {
     return (6.5 + Math.random() * (4.5 + agit * 5)) * bubbleUnit;
   }
   return (2.8 + Math.random() * 4.4) * bubbleUnit;
@@ -1498,7 +1557,8 @@ function respawnBubble(b) {
   b.drain = 0.78 + Math.random() * 0.44;
   const agit = Math.min(1, Math.hypot(accel.x, accel.y, accel.z) * 1.4);
   if (Math.random() < 0.2 + 0.75 * agit) {
-    const s = (Math.random() * 2 - 1) * span * 0.95;
+    const size = Math.min(1, b.r / Math.max(1, maxBubble));
+    const s = (Math.random() * 2 - 1) * span * (0.78 - size * 0.18);
     const lift = level + surfaceAt(s) - b.r * (1.5 + Math.random() * 4);
     b.x = CX + tan.x * s + up.x * lift;
     b.y = CY + tan.y * s + up.y * lift;
@@ -1506,12 +1566,21 @@ function respawnBubble(b) {
     b.vx = -up.x * plunge; b.vy = -up.y * plunge;
   } else {
     const a = Math.random() * Math.PI * 2;
-    const k = 0.80 + Math.random() * 0.13;
+    // Nucleate just off the glass, not inside its boundary layer. Starting
+    // on the wall made the same bubbles remain perimeter-biased for life.
+    const size = Math.min(1, b.r / Math.max(1, maxBubble));
+    const k = 0.70 + Math.random() * (0.14 - size * 0.05);
     let dx = Math.cos(a) * RX * k, dy = Math.sin(a) * RY * k;
     // Nucleation sites are all over the glass, but the ones that matter are
     // the submerged ones — reflect a point that landed in the headspace.
     if (dx * gDir.x + dy * gDir.y < 0) { dx = -dx; dy = -dy; }
     b.x = CX + dx; b.y = CY + dy;
+    // Detachment impulse: a nucleated bubble leaves the glass instead of
+    // spending its whole lifetime riding the same side boundary.
+    const dl = Math.hypot(dx, dy) || 1;
+    const detach = 12 + size * 22;
+    b.vx = -dx / dl * detach;
+    b.vy = -dy / dl * detach;
     const d = depthOf(b.x, b.y);
     if (d > -b.r * 3) {
       const drop = d + b.r * 3;
@@ -1580,6 +1649,7 @@ function settleSpawn(out, pad, cluster) {
 function seed() {
   stars.length = 0; microGlitter.length = 0;
   bubbles.length = 0; fizz.length = 0; fizzDebt = 0;
+  surfaceFoam.length = 0; surfaceFoamDebt = 0; pileFill = 0;
   const unit = Math.min(W, H) / 720 * CONFIG.zoom;
   for (let i = 0; i < CONFIG.stars; i++) {
     // Medium foil plus a restrained scatter of hero cuts. Fine glitter has a
@@ -1682,12 +1752,17 @@ function seed() {
     const z = Math.random() * 2 - 1;
     const p = {
       x: 0, y: 0, vx: 0, vy: 0,
-      r: (0.55 + Math.random() * 1.25) * unit,
+      // Slightly fuller grains preserve the old projected coverage with far
+      // fewer physics/path entries.
+      r: (0.70 + Math.random() * 1.35) * unit,
       hueIdx: (Math.random() * FLAKE_COLOURS.length) | 0,
       phase: Math.random() * Math.PI * 2,
-      terminal: (8 + Math.random() * 16) * unit,
-      // Dust-size flecks remain suspended behind the heavier cut foil.
-      settleScale: 0.52 + Math.random() * 0.30,
+      /* Fine foil is slower than the hero cuts, but it must visibly leave an
+       * inverted bed. The former 8-24px/s range barely moved it before the
+       * cascade drive decayed, leaving a sparkling shelf stuck to the old
+       * top and corners for most of a minute. */
+      terminal: (20 + Math.random() * 34) * unit,
+      settleScale: 0.64 + Math.random() * 0.28,
       density: Math.random() < 0.96 ? 1 : (Math.random() < 0.84 ? 0.10 : -0.26),
       z, zHome: z, zv: 0,
     };
@@ -1698,13 +1773,15 @@ function seed() {
   }
   bubbleUnit = unit;
   maxBubble = Math.min(RX, RY) * 0.065;
+  let seededLargeBubbles = 0;
   for (let i = 0; i < CONFIG.bubbles; i++) {
     /* Skewed: mostly fine fizz, plus the large trapped-air bubbles a sealed
      * shaker genuinely starts with. Leaving coalescence as their only source
      * was a mistake — it made every bubble tiny and they all but vanished,
      * because merging only just keeps pace with popping. Coalescence now
      * adds to this population rather than being the whole of it. */
-    const r = bubbleSeedRadius();
+    const r = bubbleSeedRadius(seededLargeBubbles < 5);
+    if (r >= 10 * unit) seededLargeBubbles++;
     const z = Math.random() * 2 - 1;
     const b = {
       x: 0, y: 0,
@@ -2515,7 +2592,10 @@ function updateBasis() {
   while (d < -Math.PI) d += Math.PI * 2;
   if (basisReady && d !== 0) {
     basisKick = Math.max(basisKick, Math.min(1, Math.abs(d) * 18));
-    if (Math.abs(d) > Math.PI * 0.72) inversionGuard = 1;
+    if (Math.abs(d) > Math.PI * 0.72) {
+      inversionGuard = 1;
+      pileFill *= 0.08;
+    }
     /* The old `d * s` term is only the small-angle approximation to a
      * rotated plane. It becomes catastrophically wrong at an inversion:
      * d=pi injected the largest possible diagonal ramp even though the
@@ -2582,6 +2662,66 @@ function clampUnderSurface(p, clearance) {
   if (vn > 0) {
     p.vx -= up.x * vn;
     p.vy -= up.y * vn;
+  }
+  return true;
+}
+
+/* Height of the loose glitter bed at a tangent position. A broad parabolic
+ * dome approximates a shallow angle-of-repose mound without imposing a rigid
+ * central column: flakes still land across nearly the whole floor, then the
+ * contacted grains avalanche gently inward as the bed deepens. */
+function pileLiftAt(along, clearance, layer) {
+  const f = Math.max(0, Math.min(N - 1,
+    Math.round((along + span) / (2 * span) * (N - 1))));
+  const halfWidth = Math.max(1, span * 0.76);
+  const q = Math.min(1, Math.abs(along) / halfWidth);
+  const dome = Math.pow(Math.max(0, 1 - q * q), 1.22);
+  const height = Math.min(RX, RY) * 0.23 * pileFill * dome * layer;
+  return surfaceFloor[f] + clearance + height;
+}
+
+function clampAbovePile(p, clearance, dt) {
+  if (p.density <= 0) return false;
+  /* A mound has volume. Supporting every grain on the same outer envelope
+   * made a bright arch with a blue, bubble-like void underneath. Give each
+   * grain a stable packing layer so the entire volume from the glass to the
+   * angle-of-repose surface is occupied. A slight base bias mimics compaction
+   * while still leaving plenty of flakes defining the crown. */
+  if (!Number.isFinite(p.pileLayer)) {
+    p.pileLayer = Math.pow(Math.random(), 1.12);
+  }
+  const dx = p.x - CX, dy = p.y - CY;
+  const along = dx * tan.x + dy * tan.y;
+  const lift = dx * up.x + dy * up.y;
+  const bed = pileLiftAt(along, clearance, p.pileLayer);
+  // Include a small capture band so a grain already supported by the bed is
+  // counted as settled even between low-rate microglitter updates.
+  if (lift > bed + Math.max(1.2, p.r * 0.35)) return false;
+  if (lift < bed) {
+    const correction = bed - lift;
+    p.x += up.x * correction;
+    p.y += up.y * correction;
+  }
+  const vn = p.vx * up.x + p.vy * up.y;
+  if (vn < 0) {
+    p.vx -= up.x * vn;
+    p.vy -= up.y * vn;
+  }
+  // Dry-looking avalanching over the viscous carrier: extremely gentle at
+  // rest, stronger only while a grain is arriving, and always toward the
+  // crown. This builds a mound without making the whole pile visibly crawl.
+  const quiet = Math.max(0, 1 - motionActivity * 1.8);
+  const avalanche = along * (0.18 + 0.32 * pileFill) * quiet * dt;
+  p.vx -= tan.x * avalanche;
+  p.vy -= tan.y * avalanche;
+  // Rounded glass makes its lowest visible corners attractive numerical
+  // resting points. Grains in that last shoulder have no stable support in a
+  // real loose bed; let them creep off the curved wall into the broad pile.
+  const shoulder = Math.max(0, Math.abs(along) - span * 0.68);
+  if (shoulder > 0) {
+    const slide = Math.sign(along) * shoulder * (0.28 + pileFill * 0.24) * quiet * dt;
+    p.x -= tan.x * slide;
+    p.y -= tan.y * slide;
   }
   return true;
 }
@@ -3111,9 +3251,9 @@ function drawMicro(front) {
  * the glass layer's knockout trims them a moment later. Outermost band
  * first, so no band ever samples a region another band has already rewritten.
  */
-const BEZEL_BANDS = 6;
+const BEZEL_BANDS = 4;
 const BEZEL_T = 0.075;     // wall thickness, as a fraction of the short half-axis
-const BEZEL_REACH = 2.6;   // how many wall-thicknesses deep the rim reaches for its sample
+const BEZEL_REACH = 1.8;   // restrained refraction: no repeated white edge streaks
 
 /* Destination offset from the silhouette -> the offset it samples from.
  *
@@ -3159,7 +3299,6 @@ function bezelBlit(dx, dy, dw, dh, sx, sy, sw, sh) {
 
 function drawBezel() {
   const T = Math.min(RX, RY) * BEZEL_T;
-  bezelCapture(T);
   const x0 = CX - RX, x1 = CX + RX, y0 = CY - RY, y1 = CY + RY;
   const wide = x1 - x0;
   for (let k = 0; k < BEZEL_BANDS; k++) {
@@ -3168,7 +3307,7 @@ function drawBezel() {
     const Da = bezelDepth(a, T), Db = bezelDepth(b, T);
     const sh = Da - Db;                       // deeper than the band is thick
     const u = 1 - (k + 0.5) / BEZEL_BANDS;    // 1 at the silhouette
-    ctx.globalAlpha = 0.14 + 0.8 * u * u;
+    ctx.globalAlpha = 0.08 + 0.42 * u * u;
 
     bezelBlit(x0, y0 + a, wide, h, x0, y0 + Db, wide, sh);
     bezelBlit(x0, y1 - b, wide, h, x0, y1 - Da, wide, sh);
@@ -3484,22 +3623,69 @@ function paintSurfaceBubbleGlint(poly) {
   }
   const depth = displayLevel - minLift;
   if (depth < 4) return;
-  const r = Math.min(34, Math.max(15, displaySpan * 0.085));
-  const x = peak.x + displayUp.x * depth * 0.50;
-  const y = peak.y + displayUp.y * depth * 0.50;
+  const rx = Math.min(displaySpan * 0.38, Math.max(48, depth * 4.2));
+  const ry = Math.max(12, Math.min(rx * 0.34, depth * 1.25 + 8));
+  const x = peak.x + displayUp.x * depth * 0.46;
+  const y = peak.y + displayUp.y * depth * 0.46;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(Math.atan2(displayTan.y, displayTan.x));
-  ctx.scale(1, Math.max(0.16, Math.min(0.34, depth / r * 0.48)));
-  const glow = ctx.createRadialGradient(-r * 0.24, -r * 0.18, 0,
-    -r * 0.06, 0, r);
+  const glow = ctx.createRadialGradient(-rx * 0.28, -ry * 0.34, 0,
+    0, 0, rx);
   glow.addColorStop(0, "rgba(255,255,255,.42)");
-  glow.addColorStop(0.34, "rgba(255,255,255,.16)");
-  glow.addColorStop(1, "rgba(255,255,255,0)");
+  glow.addColorStop(0.30, "rgba(255,255,255,.15)");
+  glow.addColorStop(0.78, "rgba(169,224,255,.06)");
+  glow.addColorStop(1, "rgba(91,166,225,0)");
   ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
   ctx.fill();
+  // A complete film outline, bright upper arc and cool lower refraction make
+  // this read as one trapped bubble instead of a smooth dent in the waterline.
+  ctx.lineCap = "round";
+  ctx.lineWidth = Math.max(1, bubbleUnit * 0.9);
+  ctx.strokeStyle = "rgba(220,245,255,.38)";
+  ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.lineWidth = Math.max(1.4, bubbleUnit * 1.35);
+  ctx.strokeStyle = "rgba(255,255,255,.67)";
+  ctx.beginPath(); ctx.ellipse(0, 0, rx * 0.91, ry * 0.76, 0,
+    Math.PI * 1.08, Math.PI * 1.78); ctx.stroke();
+  ctx.lineWidth = Math.max(1, bubbleUnit);
+  ctx.strokeStyle = "rgba(42,126,205,.28)";
+  ctx.beginPath(); ctx.ellipse(0, ry * 0.08, rx * 0.94, ry * 0.83, 0,
+    0.12 * Math.PI, 0.88 * Math.PI); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.62)";
+  ctx.beginPath();
+  ctx.ellipse(-rx * 0.31, -ry * 0.28, Math.max(2.2, rx * 0.075),
+    Math.max(1.2, ry * 0.14), -0.22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSurfaceFoam(poly) {
+  if (!surfaceFoam.length) return;
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const p of surfaceFoam) {
+    const f = Math.max(0, Math.min(DISPLAY_SURFACE_STEPS,
+      (p.s + 1) * 0.5 * DISPLAY_SURFACE_STEPS));
+    const i = Math.min(DISPLAY_SURFACE_STEPS - 1, Math.floor(f));
+    const q = f - i;
+    const sx = poly[i].x * (1 - q) + poly[i + 1].x * q;
+    const sy = poly[i].y * (1 - q) + poly[i + 1].y * q;
+    const t = p.life / p.span;
+    const alpha = Math.min(1, t * 8) * Math.pow(1 - t, 0.72);
+    const breathe = 1 + Math.sin(p.phase + p.life * 4.2) * 0.035;
+    const r = p.r * breathe;
+    const x = sx + displayUp.x * r * 0.08;
+    const y = sy + displayUp.y * r * 0.08;
+    ctx.fillStyle = `rgba(237,250,255,${alpha * 0.18})`;
+    ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.62})`;
+    ctx.lineWidth = Math.max(0.8, bubbleUnit * 0.8);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = `rgba(105,181,230,${alpha * 0.23})`;
+    ctx.beginPath(); ctx.arc(x, y, r * 0.72, 0.08 * Math.PI, 0.92 * Math.PI); ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -3571,6 +3757,12 @@ function render(time) {
   ctx.globalAlpha = 1;
 
   paintHeadspace(poly);
+
+  /* Capture the liquid itself for the glass rim before any particles are
+   * painted. Sampling the completed glitter frame copied every bright flake
+   * into four compressed bezel bands, creating the vertical white flashes
+   * seen on the phone whenever a dense cloud reached an edge. */
+  bezelCapture(Math.min(RX, RY) * BEZEL_T);
 
   const menisc = meniscus(poly, 64);   // array of interface segments
 
@@ -3655,8 +3847,8 @@ function render(time) {
     const shimmer = 0.032 * Math.sin(time * 0.41 + i * 0.29)
                   + 0.022 * Math.sin(time * 0.23 - i * 0.73);
     const amb = 0.052 + shimmer * motionActivity;
-    const a = Math.max(0, Math.min(0.24,
-      amb + curv * 0.010 * motionActivity));
+    const a = Math.max(0, Math.min(0.16,
+      amb * 0.72 + curv * 0.007 * motionActivity));
     if (a < 0.012) continue;
     const w = pitch * (5 + jitter * 7);
     const sx = -span + 2 * span * (i / (N - 1)) + (jitter - 0.5) * pitch * 4;
@@ -3680,7 +3872,7 @@ function render(time) {
     CX + displayUp.x * displayLevel, CY + displayUp.y * displayLevel,
     CX + displayUp.x * (displayLevel - displayUpExtent * 0.55),
     CY + displayUp.y * (displayLevel - displayUpExtent * 0.55));
-  under.addColorStop(0, "rgba(255,255,255,.30)");
+  under.addColorStop(0, "rgba(255,255,255,.20)");
   under.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = under;
   ctx.fillRect(0, 0, W, H);
@@ -3697,6 +3889,7 @@ function render(time) {
    * glitter pixel is allowed to flash through the headspace. */
   paintHeadspace(poly);
   paintSurfaceBubbleGlint(poly);
+  drawSurfaceFoam(poly);
 
   /* Meniscus. Three passes: a soft glow bleeding down into the liquid, the
    * bright surface line itself, and a thin darker line above it. One flat
@@ -3736,7 +3929,7 @@ function render(time) {
       appendSmooth(seg, 0, false, true, rearX, rearY);
       appendSmooth(seg, 0, true, false);
       ctx.closePath();
-      ctx.fillStyle = "rgba(220,246,255,.20)";
+      ctx.fillStyle = "rgba(220,246,255,.14)";
       ctx.fill();
       ctx.strokeStyle = "rgba(120,183,215,.26)";
       ctx.lineWidth = Math.max(1, RX * 0.003);
@@ -3751,19 +3944,19 @@ function render(time) {
     const mid = seg[(seg.length / 2) | 0];
     const g = ctx.createLinearGradient(
       mid.x, mid.y, mid.x - displayUp.x * band, mid.y - displayUp.y * band);
-    g.addColorStop(0, "rgba(255,255,255,.72)");
-    g.addColorStop(0.45, "rgba(214,244,255,.34)");
+    g.addColorStop(0, "rgba(255,255,255,.54)");
+    g.addColorStop(0.45, "rgba(214,244,255,.26)");
     g.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = g;
     ctx.fill();
 
     // Soft bloom above, into the air.
-    ctx.strokeStyle = "rgba(255,255,255,.30)";
+    ctx.strokeStyle = "rgba(255,255,255,.18)";
     ctx.lineWidth = band * 0.9;
     path(band * 0.45); ctx.stroke();
 
     // The bright rim itself, and a thin shaded edge just above it.
-    ctx.strokeStyle = "rgba(255,255,255,.95)";
+    ctx.strokeStyle = "rgba(255,255,255,.76)";
     ctx.lineWidth = Math.max(1.4, RX * 0.006);
     path(0); ctx.stroke();
 
@@ -3795,7 +3988,13 @@ function render(time) {
  * is the only thing that actually fixes it. The cap keeps a stalled tab from
  * trying to catch up across a huge gap.
  */
-const FIXED_DT = 1 / 60;
+/* The carrier is intentionally viscous, so its response bandwidth is well
+ * below 30Hz. At 45Hz on the S24, one missed presentation frame accumulated
+ * a second physics tick; that catch-up work then missed the next frame and
+ * locked the otherwise 60Hz compositor into a 30Hz cycle. A fixed 30Hz
+ * solver with 60Hz presentation alternates a 13ms physics+render frame with
+ * a 6ms render-only frame and remains deterministic. */
+const FIXED_DT = 1 / 30;
 let accumulator = 0;
 let simTime = 0;
 let microTick = 0;
@@ -3839,6 +4038,7 @@ function fixedStep(dt, time) {
   } else if (flipArmed && faceOn < 0.22 && gMag > 0.62) {
     if (gDir.x * flipStartX + gDir.y * flipStartY < -0.45) {
       inversionGuard = 1;
+      pileFill *= 0.08;
       cascadeSpreadHold = 1;
       cascadeLanePolarity *= -1;
     }
@@ -3856,7 +4056,10 @@ function fixedStep(dt, time) {
   if (cascadeActivity < 0.004) cascadeActivity = 0;
   basisKick *= 0.74;
   inversionGuard *= Math.exp(-dt / 2.4);
-  cascadeSpreadHold *= Math.exp(-dt / 5.2);
+  // Preserve each flake's broad release lane for most of its fall. Five
+  // seconds expired while the cloud was still near the old floor, allowing
+  // residual cross-flow to sweep the rest into the two corners.
+  cascadeSpreadHold *= Math.exp(-dt / 15);
   fluidStep(dt);
   stepWaves(dt);
 
@@ -3869,7 +4072,7 @@ function fixedStep(dt, time) {
    * before the controller catches up. Ceiling-contact columns remain pinned
    * to the glass; only the exposed air-liquid lens moves. Its tangent width
    * is the derivative d(area)/d(level), so this is a small Newton solve. */
-  for (let solve = 0; solve < 5; solve++) {
+  for (let solve = 0; solve < 3; solve++) {
     const clipped = clipToContainer(liquidPolygon());
     if (clipped.length < 3) break;
     const error = polygonArea(clipped) - targetArea;
@@ -3896,6 +4099,10 @@ function fixedStep(dt, time) {
   }
 
   const pad = Math.min(RX, RY) * 0.03;
+  // Glitter lives in the liquid, not inside the thick refractive rim. Keep
+  // its centres just beyond that optical boundary so a settled bed remains a
+  // soft layer instead of becoming a one-pixel white seam on the glass.
+  const glitterPad = Math.min(RX, RY) * 0.082;
 
   /* Wall response. Reflecting the inward correction and keeping the
    * tangential component lets flakes slide along the glass; the old blanket
@@ -3944,6 +4151,7 @@ function fixedStep(dt, time) {
   // turning sensor noise back into visible jitter.
   const settleRate = 0.12 + 0.88 * cascadeActivity;
 
+  let settledHeroes = 0;
   for (const p of stars) {
     sampleFlow(p.x, p.y, flow);
     /* A face-over-face inversion leaves the old convection field expressed
@@ -3951,7 +4159,8 @@ function fixedStep(dt, time) {
      * parallel to the new fall continue carrying flakes, but fade the stale
      * cross-flow briefly; otherwise opening particle coupling on the flip
      * sweeps the whole suspension sideways before it can fall. */
-    const crossKeep = (1 - inversionGuard) * (1 - inversionGuard);
+    const crossKeep = (1 - inversionGuard) * (1 - inversionGuard) *
+      (1 - 0.86 * cascadeSpreadHold);
     let fallX = gDir.x, fallY = gDir.y;
     // Once an inversion has landed nearly upright, discard the last few
     // degrees of cross-axis filter residue instead of letting it pull the
@@ -4054,13 +4263,13 @@ function fixedStep(dt, time) {
      * Pulling position toward the centre made repeat flips collapse into one
      * narrow stream even though a fresh seed correctly covered the glass. */
     const cascadeStraighten = cascadeSpreadHold *
-      (p.density > 0 ? 0.82 : 0.62);
+      (p.density > 0 ? 0.96 : 0.78);
     const cascadeCross = tx * tan.x + ty * tan.y;
     tx -= tan.x * cascadeCross * cascadeStraighten;
     ty -= tan.y * cascadeCross * cascadeStraighten;
     const laneError = along - p.releaseLane * cascadeLanePolarity * span;
     const laneReturn = laneError * cascadeSpreadHold *
-      (p.density > 0 ? 0.16 : 0.08);
+      (p.density > 0 ? 0.32 : 0.15);
     tx -= tan.x * laneReturn;
     ty -= tan.y * laneReturn;
     /* At rest only discourage flakes from entering the last sliver against
@@ -4068,11 +4277,11 @@ function fixedStep(dt, time) {
      * this return zone, preventing the stale cross-flow from sweeping the
      * whole population onto the side walls. Keeping the old wide zone active
      * at rest squeezed every fresh spawn into a central column. */
-    const sideStart = span * (0.92 - 0.06 * inversionGuard);
+    const sideStart = span * (0.86 - 0.04 * inversionGuard);
     const sideDepth = Math.max(0, Math.abs(along) - sideStart);
     if (sideDepth > 0) {
       const wallReturn = Math.sign(along) * sideDepth *
-        (0.35 + 1.1 * inversionGuard);
+        (0.90 + 1.25 * motionActivity + 1.6 * inversionGuard);
       tx -= tan.x * wallReturn;
       ty -= tan.y * wallReturn;
     }
@@ -4103,20 +4312,30 @@ function fixedStep(dt, time) {
     // and a small suspended particle simply goes with it.
     p.spin += (0.5 * sampleCurl(p.x, p.y) * particleFlow +
                p.spinRate * 6 * flutterDrive) * dt;
-    if (clampInside(p, pad)) hitWall(p, attemptedX, attemptedY);
-    if (clampUnderSurface(p, Math.max(0.5, p.r * 0.35))) clampInside(p, pad);
+    if (clampInside(p, glitterPad)) hitWall(p, attemptedX, attemptedY);
+    if (clampUnderSurface(p, Math.max(0.5, p.r * 0.35))) clampInside(p, glitterPad);
+    if (clampAbovePile(p, glitterPad + p.r * 0.22, dt)) settledHeroes++;
     stepDepth(p, dt, 0.82);
   }
 
-  /* The micro layer runs at 20 Hz. Its grains are sub-pixel flecks with short
-   * response times, so display interpolation hides the third-rate step. That
-   * makes room for twice the visible glitter without doubling fluid samples. */
+  // Grow only from grains that really reached support. The slow attack makes
+  // incoming flakes accumulate layer by layer; the quicker release prevents a
+  // stale invisible mound from holding them up after the bed is disturbed.
+  const settledFraction = settledHeroes / Math.max(1, stars.length);
+  const pileTarget = Math.max(0, Math.min(1,
+    (settledFraction - 0.008) / 0.13));
+  const pileTau = pileTarget > pileFill ? 1.35 : 0.48;
+  pileFill += (pileTarget - pileFill) * (1 - Math.exp(-dt / pileTau));
+
+  /* The micro layer runs at 15 Hz. Its grains are sub-pixel flecks with short
+   * response times, so display interpolation hides the reduced physics rate. */
   microTick++;
-  if (microTick % 3 === 0) {
-    const mdt = dt * 3;
+  if (microTick % 2 === 0) {
+    const mdt = dt * 2;
     for (const p of microGlitter) {
       sampleFlow(p.x, p.y, flow);
-      const crossKeep = (1 - inversionGuard) * (1 - inversionGuard);
+      const crossKeep = (1 - inversionGuard) * (1 - inversionGuard) *
+        (1 - 0.90 * cascadeSpreadHold);
       let fallX = gDir.x, fallY = gDir.y;
       if (Math.abs(fallX) < 0.12 && Math.abs(fallY) > 0.88) {
         fallX = 0; fallY = Math.sign(fallY);
@@ -4133,20 +4352,20 @@ function fixedStep(dt, time) {
       ty += gasAvoid.y * voidSlip;
       const along = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
       const cascadeStraighten = cascadeSpreadHold *
-        (p.density > 0 ? 0.88 : 0.68);
+        (p.density > 0 ? 0.985 : 0.84);
       const cascadeCross = tx * tan.x + ty * tan.y;
       tx -= tan.x * cascadeCross * cascadeStraighten;
       ty -= tan.y * cascadeCross * cascadeStraighten;
       const laneError = along - p.releaseLane * cascadeLanePolarity * span;
       const laneReturn = laneError * cascadeSpreadHold *
-        (p.density > 0 ? 0.19 : 0.09);
+        (p.density > 0 ? 0.45 : 0.20);
       tx -= tan.x * laneReturn;
       ty -= tan.y * laneReturn;
-      const sideStart = span * (0.92 - 0.06 * inversionGuard);
+      const sideStart = span * (0.86 - 0.04 * inversionGuard);
       const sideDepth = Math.max(0, Math.abs(along) - sideStart);
       if (sideDepth > 0) {
         const wallReturn = Math.sign(along) * sideDepth *
-          (0.35 + 1.1 * inversionGuard);
+          (0.90 + 1.25 * motionActivity + 1.6 * inversionGuard);
         tx -= tan.x * wallReturn;
         ty -= tan.y * wallReturn;
       }
@@ -4160,8 +4379,9 @@ function fixedStep(dt, time) {
       p.vy += (ty - p.vy) * k;
       p.x += p.vx * mdt; p.y += p.vy * mdt;
       const attemptedX = p.x, attemptedY = p.y;
-      if (clampInside(p, pad)) hitWall(p, attemptedX, attemptedY);
-      if (clampUnderSurface(p, Math.max(0.35, p.r * 0.30))) clampInside(p, pad);
+      if (clampInside(p, glitterPad)) hitWall(p, attemptedX, attemptedY);
+      if (clampUnderSurface(p, Math.max(0.35, p.r * 0.30))) clampInside(p, glitterPad);
+      clampAbovePile(p, glitterPad + p.r * 0.18, mdt);
       stepDepth(p, mdt, 0.55);
     }
     microPathsDirty = true;
@@ -4234,14 +4454,14 @@ function fixedStep(dt, time) {
     const approach = depthOf(b.x, b.y);
     const size = Math.min(1, b.r / Math.max(1, maxBubble));
     const along = (b.x - CX) * tan.x + (b.y - CY) * tan.y;
-    const freeSpan = span * (0.82 - size * 0.22);
+    const freeSpan = span * (0.68 - size * 0.24);
     const shoulder = Math.max(0, Math.abs(along) - freeSpan);
     if (shoulder > 0) {
       /* Wall-induced lift acts during the whole ascent; pressure on the narrow
        * wall-side gap pushes a rising bubble back into the body. It strengthens
        * further when that bubble reaches the curved surface shoulder. */
       const nearSurface = approach > -b.r * 3.2;
-      const returnGain = (0.55 + size * 1.20) * (nearSurface ? 1.65 : 1);
+      const returnGain = (1.05 + size * 2.15) * (nearSurface ? 1.55 : 1);
       const returnSpeed = Math.sign(along) * shoulder * returnGain;
       tx -= tan.x * returnSpeed;
       ty -= tan.y * returnSpeed;
@@ -4333,6 +4553,7 @@ function fixedStep(dt, time) {
   // Every other step: merging is a slow process and the pair loop is the
   // most expensive thing the bubbles do.
   stepFizz(dt);
+  stepSurfaceFoam(dt);
 
   // Z motion changes draw order. Resort a few times a second rather than
   // every frame; the depth movement is deliberately slow and continuous.
@@ -4393,6 +4614,11 @@ function separateBubblePair(a, b, dx, dy, dz, d, planarD, touch, dt, zScale) {
 }
 
 function coalesce(dt) {
+  const largeThreshold = 10 * bubbleUnit;
+  let largeCount = 0;
+  for (const b of bubbles) {
+    if (!b.fading && b.alpha > 0.35 && b.r >= largeThreshold) largeCount++;
+  }
   for (let i = 0; i < bubbles.length; i++) {
     const a = bubbles[i];
     if (a.fading || a.alpha < 0.9) continue;
@@ -4456,12 +4682,16 @@ function coalesce(dt) {
 
       // Spheres: volumes add, so radii add in cube.
       const merged = Math.cbrt(a.r * a.r * a.r + b.r * b.r * b.r);
+      const largeBefore = (a.r >= largeThreshold ? 1 : 0) +
+                          (b.r >= largeThreshold ? 1 : 0);
       /* Contact is not instant coalescence. The carrier's surfactant film has
        * to drain between the bubbles; most brief collisions separate again,
        * especially in a moving shaker. This prevents rapid merge-respawn
        * cycles from manufacturing a raft of cap-sized bubbles. */
       const mergeChance = 1 - Math.exp(-dt * (0.05 + motionActivity * 0.35));
-      if (merged > maxBubble || Math.random() > mergeChance) {
+      if (merged > maxBubble ||
+          (merged >= largeThreshold && largeBefore === 0 && largeCount >= 5) ||
+          Math.random() > mergeChance) {
         /* A film that has not drained, or a pair already too large to merge,
          * separates instead. Otherwise cap-sized neighbours can remain
          * interpenetrated and render as stacked rings. */
@@ -4476,6 +4706,7 @@ function coalesce(dt) {
       a.vy = (a.vy * wa + b.vy * wb) / wt;
       a.z = (a.z * wa + b.z * wb) / wt;
       setBubbleSize(a, merged);
+      largeCount += (merged >= largeThreshold ? 1 : 0) - largeBefore;
       clampInside(a, Math.max(Math.min(RX, RY) * 0.03, a.r * 1.08));
       mergeCount++;
 
@@ -4535,8 +4766,13 @@ function advance(now) {
   const t0 = diagOn ? performance.now() : 0;
   // Render on simulation time, not wall time, so the specular flashes stay
   // in step with the physics they belong to.
-  render(step(dt));
-  if (diagOn) diagSample(now, performance.now() - t0);
+  const sim = step(dt);
+  const t1 = diagOn ? performance.now() : 0;
+  render(sim);
+  if (diagOn) {
+    const t2 = performance.now();
+    diagSample(now, t2 - t0, t1 - t0, t2 - t1);
+  }
 }
 
 /* Frame timing, reported to the console.
@@ -4546,20 +4782,25 @@ function advance(now) {
  * actually matters there — whether this holds a frame rate on real hardware,
  * which every measurement so far has been a software rasteriser in a
  * container — has to come out through the console and into logcat. */
-let diagOn = false, diagFrames = 0, diagJs = 0, diagSince = 0;
+let diagOn = false, diagFrames = 0, diagJs = 0, diagSim = 0,
+    diagRender = 0, diagSince = 0;
 
-function diagSample(now, js) {
+function diagSample(now, js, sim, renderMs) {
   diagFrames++;
   diagJs += js;
+  diagSim += sim;
+  diagRender += renderMs;
   if (now - diagSince < 2000) return;
   const fps = diagFrames * 1000 / (now - diagSince);
   console.log("shaker fps=" + fps.toFixed(1) +
               " js=" + (diagJs / diagFrames).toFixed(1) + "ms" +
+              " sim=" + (diagSim / diagFrames).toFixed(1) + "ms" +
+              " render=" + (diagRender / diagFrames).toFixed(1) + "ms" +
               " canvas=" + canvas.width + "x" + canvas.height +
               " stars=" + stars.length + " micro=" + microGlitter.length +
               " bubbles=" + bubbles.length +
               " fizz=" + fizz.length);
-  diagFrames = 0; diagJs = 0; diagSince = now;
+  diagFrames = 0; diagJs = 0; diagSim = 0; diagRender = 0; diagSince = now;
 }
 
 function frame(now) {
@@ -4799,7 +5040,41 @@ window.__shaker = {
   tick() { advance(performance.now()); },
 
   /** Frame timing to the console, for a host that has no other way to see it. */
-  diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; diagJs = 0; },
+  diag(on) {
+    diagOn = !!on; diagSince = performance.now();
+    diagFrames = 0; diagJs = 0; diagSim = 0; diagRender = 0;
+  },
+
+  /** Compact read-only state for repeatable browser and handset audits. */
+  stats() {
+    let glitterSides = 0, glitterCorners = 0, glitterCentre = 0;
+    const countGlitter = (p) => {
+      const along = ((p.x - CX) * tan.x + (p.y - CY) * tan.y) / span;
+      const vertical = ((p.x - CX) * up.x + (p.y - CY) * up.y) / upExtent;
+      if (Math.abs(along) > 0.86) glitterSides++;
+      if (Math.abs(along) > 0.82 && Math.abs(vertical) > 0.82) glitterCorners++;
+      if (Math.abs(along) < 0.33) glitterCentre++;
+    };
+    for (const p of stars) countGlitter(p);
+    for (const p of microGlitter) countGlitter(p);
+    const glitterTotal = stars.length + microGlitter.length;
+    let largeBubbles = 0, edgeBubbles = 0;
+    for (const b of bubbles) {
+      if (b.fading || b.alpha < 0.35) continue;
+      if (b.r >= 10 * bubbleUnit) largeBubbles++;
+      const along = ((b.x - CX) * tan.x + (b.y - CY) * tan.y) / span;
+      if (Math.abs(along) > 0.72) edgeBubbles++;
+    }
+    return {
+      stars: stars.length, micro: microGlitter.length,
+      bubbles: bubbles.length, largeBubbles, edgeBubbles, fizz: fizz.length,
+      surfaceFoam: surfaceFoam.length, pileFill,
+      glitterSideFraction: glitterSides / Math.max(1, glitterTotal),
+      glitterCornerFraction: glitterCorners / Math.max(1, glitterTotal),
+      glitterCentreFraction: glitterCentre / Math.max(1, glitterTotal),
+      motionActivity, cascadeSpreadHold,
+    };
+  },
 
   /** A picture of the container as it stands right now, clipped to its own
    *  boundary and returned as a PNG data URL. This is what the icon renderer

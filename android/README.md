@@ -1,8 +1,9 @@
-# Liquid shaker — Android live wallpaper
+# Shaker toys — Android live wallpapers
 
-Wraps [`../wallpaper/index.html`](../wallpaper) in a `WallpaperService`, so the
-thing you set from the wallpaper picker is the page you have been testing in a
-browser — not a reimplementation of it.
+Wraps the interactive [`Liquid Shaker`](../wallpaper) and
+[`Water Ring Toy`](../water-toy) pages in two `WallpaperService` entries, so
+the thing selected from Android's wallpaper picker is the same page tested in
+a browser — not a reimplementation of it.
 
 That is the whole design intent. The physics, the optics and the look took a
 long time to get right and they all live in the page; porting them to Kotlin
@@ -47,15 +48,23 @@ software fallback locks a normal canvas rather than `lockHardwareCanvas()`,
 which is API 26. Nothing is lost by that, since a detached WebView renders in
 software either way.
 
-Then either open **Liquid Shaker** from the app launcher to jump directly to
-Android's preview/apply screen, choose **Settings → Wallpaper → Live
-Wallpapers → Liquid Shaker**, or long-press the home screen. The launcher entry
-falls back to the general live-wallpaper chooser on vendor builds that do not
-support the component-specific preview intent.
+The APK adds two launcher icons. Open **Liquid Shaker** or **Water Ring Toy**
+to jump directly to that wallpaper's preview/apply screen, choose either under
+**Settings → Wallpaper → Live Wallpapers**, or long-press the home screen.
+Liquid Shaker is declared first and Water Ring Toy immediately after it;
+pickers that preserve manifest order therefore show the toy beneath the
+existing wallpaper. Android launchers ultimately control app-drawer and home
+screen placement. Both entries fall back to the general live-wallpaper chooser
+on vendor builds that omit the component-specific preview intent.
 
-The page is not duplicated into the app. Both builds copy it out of
-`../wallpaper/index.html`, so there is one copy of it in the repository and the
-APK cannot drift from what you tested in a browser.
+The pages are not duplicated into the app. The build copies them from
+`../wallpaper/index.html` and `../water-toy/index.html`, so the APK cannot drift
+from what was tested in a browser.
+
+The water toy uses the same host bridge and adds its own simulation: two touch
+pumps produce water jets and bubbles, rings collide with one another and the
+glass, slow rings can settle onto pegs, a press releases them, and phone tilt,
+shake, and launcher-page swipes feed the fluid motion.
 
 ## What the service actually does
 

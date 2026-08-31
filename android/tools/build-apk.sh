@@ -14,6 +14,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 app="$here/../app/src/main"
 page="$here/../../wallpaper/index.html"
+water_toy_page="$here/../../water-toy/index.html"
 out="${1:-$here/../build}"
 android_jar="${ANDROID_JAR:-/usr/lib/android-sdk/platforms/android-23/android.jar}"
 
@@ -29,6 +30,7 @@ mkdir -p "$out/classes" "$out/assets"
 
 # One copy of the page in the repository; the APK cannot drift from it.
 cp "$page" "$out/assets/index.html"
+cp "$water_toy_page" "$out/assets/water_toy.html"
 
 # aapt wants the package name and the sdk versions in the manifest itself.
 # Gradle supplies both from the DSL (`namespace`, `defaultConfig`), so they are
