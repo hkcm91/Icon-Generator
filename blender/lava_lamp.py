@@ -74,7 +74,7 @@ LOOKS = {
     "lamp": {},
     "bubbles": {
         "palette": "bubblegum", "no_pool": True,
-        "blobs": 46, "droplets": 28, "blob_size": 0.10, "size_spread": 1.1,
+        "blobs": 68, "droplets": 40, "blob_size": 0.13, "size_spread": 1.1,
         "threshold": 1.0, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
         "glow": 1.35, "glow_reach": 1.0, "bulb": 0.0, "crown": 700.0,
         "env": 0.15, "haze": 0.8, "density": 1.6,
@@ -1115,7 +1115,15 @@ def blob_specs(args, unit: float) -> list[dict]:
             "azimuth": 2.0 * math.pi * jitter(j, 6),
             # Where in the bottle this blob lives, as a fraction of the
             # interior radius. See blob_state for why it needs one.
-            "station": 0.10 + 0.66 * jitter(j, 7),
+            #
+            # Square-rooted because the bottle is round: a station drawn flat
+            # over the radius puts as many blobs in the middle centimetre as
+            # in the outermost, and the outermost is an annulus with many
+            # times the area. The result is a crowd on the axis, which shows
+            # up as blobs fusing into a mass down the centre of the frame
+            # while the sides stay empty. The square root spreads them evenly
+            # per unit of area instead.
+            "station": 0.06 + 0.82 * math.sqrt(jitter(j, 7)),
             "drift": sum(row[1] for row in table) / len(table),
         })
     return specs
