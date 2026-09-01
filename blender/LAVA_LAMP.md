@@ -84,6 +84,11 @@ Raising `--blob-size` on its own runs into the wall that table describes: past
 about 0.17 at a threshold of 1.0 the field stops being bubbles and becomes a
 few fused masses.
 
+**`--gloss`** takes the wax from matte to a polished shell — hard specular, a
+full coat, and a highlight where the light above it lands. It also un-hides
+that light from glossy rays, which is the part worth knowing: a glossy surface
+with nothing to reflect does not look shinier, it looks darker.
+
 **`--dof`** is what turns a field of blobs into a field with depth in it. Focus
 sits on the vessel's axis, so wax at the front and wax at the back both go soft
 while the middle stays sharp. The useful range is narrow and not where you would

@@ -74,9 +74,9 @@ LOOKS = {
     "lamp": {},
     "bubbles": {
         "palette": "bubblegum", "no_pool": True,
-        "blobs": 64, "droplets": 40, "blob_size": 0.135, "size_spread": 1.1,
-        "threshold": 0.35, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
-        "accent": "1.0,0.34,0.02",
+        "blobs": 32, "droplets": 18, "blob_size": 0.20, "size_spread": 1.1,
+        "threshold": 0.32, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
+        "accent": "1.0,0.34,0.02", "gloss": 0.85,
         "glow": 1.0, "glow_reach": 1.0, "bulb": 0.0, "crown": 300.0,
         "env": 0.15, "haze": 0.15, "density": 3.0, "dof": 4.0,
         "view_transform": "Standard",
@@ -209,6 +209,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                      help="override the palette's medium as r,g,b in 0-1")
     wax.add_argument("--metal-colour", default="",
                      help="override the palette's metal as r,g,b in 0-1")
+    wax.add_argument("--gloss", type=float, default=0.0,
+                     help="0 leaves the wax matte, as wax is. 1 makes it a "
+                          "polished shell: hard specular, a full coat, and a "
+                          "highlight where the light above it lands. Note it "
+                          "also un-hides that light from glossy rays, because "
+                          "a glossy surface with nothing to reflect just "
+                          "looks darker rather than shinier")
     wax.add_argument("--accent", default="",
                      help="a second colour for the floor of the vessel, as "
                           "r,g,b in 0-1. Given one, both the wax and the "
@@ -786,7 +793,7 @@ def height_ramp(tree, reference: bpy.types.Object, height: float,
 
 def wax_material(reference: bpy.types.Object, height: float, colour,
                  glow: float, heat: float, blob: float,
-                 accent=None) -> bpy.types.Material:
+                 accent=None, gloss: float = 0.0) -> bpy.types.Material:
     """Translucent wax, hot at the floor and cooling as it climbs.
 
     Two things make wax read as wax rather than as plastic. The first is
@@ -812,8 +819,8 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     if accent is not None:
         grade = height_ramp(tree, reference, height, accent, colour, -640)
         tree.links.new(grade.outputs["Color"], bsdf.inputs["Base Color"])
-    put(bsdf, ("Roughness",), 0.24)
-    put(bsdf, ("IOR",), 1.45)
+    put(bsdf, ("Roughness",), 0.24 - 0.19 * gloss)
+    put(bsdf, ("IOR",), 1.45 + 0.05 * gloss)
     put(bsdf, ("Subsurface Weight", "Subsurface"), 0.7)
     # Scattering distance is measured against the blob, which is why it is
     # passed in rather than guessed from the bottle. Set it to the blob radius
@@ -824,8 +831,8 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     # the thick middle holds its hue, which is what wax over a bulb does.
     put(bsdf, ("Subsurface Scale",), blob * 0.34)
     put(bsdf, ("Subsurface Radius",), (1.0, 0.45, 0.22))
-    put(bsdf, ("Coat Weight", "Clearcoat"), 0.35)
-    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.12)
+    put(bsdf, ("Coat Weight", "Clearcoat"), 0.35 + 0.65 * gloss)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.12 - 0.10 * gloss)
     try:
         bsdf.subsurface_method = "RANDOM_WALK"
     except TypeError:
@@ -1410,7 +1417,7 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
     # the largest: the spread runs 0.85 to 1.20 of --blob-size.
     typical = unit * args.blob_size * surface_fraction(args.threshold)
     wax = wax_material(basis, height, args.wax_rgb, args.glow,
-                       args.glow_reach, typical, args.accent_rgb)
+                       args.glow_reach, typical, args.accent_rgb, args.gloss)
     # Only the basis's material is used for the whole family; assigning to the
     # members as well would be dead data.
     basis.data.materials.append(wax)
@@ -1725,7 +1732,11 @@ def build_lighting(args, height: float, r_max: float, centre: float,
         # top of a blob the way daylight lights the top of a cloud.
         crown = area("Crown", (0.0, 0.0, height * 1.06), (0.0, 0.0, 0.0),
                      ortho * 0.5, args.crown, (0.86, 0.89, 1.0))
-        hide_from_glossy(crown)
+        # Kept out of reflections only while the wax is matte, where all it
+        # would add is a broad sheen on the glass. Glossy wax needs it: the
+        # highlight it puts on the crown of every bubble is the entire read.
+        if args.gloss <= 0.0:
+            hide_from_glossy(crown)
     else:
         # Key: low and camera-left, cool against the bulb's warmth.
         area("Key", (-reach * 0.55, -reach * 0.42, centre + height * 0.12),
