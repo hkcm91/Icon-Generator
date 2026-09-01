@@ -76,6 +76,7 @@ LOOKS = {
         "palette": "bubblegum", "no_pool": True,
         "blobs": 64, "droplets": 40, "blob_size": 0.135, "size_spread": 1.1,
         "threshold": 0.35, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
+        "accent": "1.0,0.34,0.02",
         "glow": 1.0, "glow_reach": 1.0, "bulb": 0.0, "crown": 300.0,
         "env": 0.15, "haze": 0.15, "density": 3.0, "dof": 4.0,
         "view_transform": "Standard",
