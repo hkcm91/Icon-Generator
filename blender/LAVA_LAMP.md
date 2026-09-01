@@ -84,6 +84,13 @@ Raising `--blob-size` on its own runs into the wall that table describes: past
 about 0.17 at a threshold of 1.0 the field stops being bubbles and becomes a
 few fused masses.
 
+**The ground's brightness is set by `--haze`, not by any light.** The bubbles
+are self-luminous and they sit inside the medium, so what lights the violet is
+their own emission scattering in it. Turning `--crown` down from 700 to 220
+barely moved it; taking `--haze` from 0.8 to 0.15 took the top of the frame from
+0.47 to 0.30 and gave the bubbles something dark to be bright against. It is
+also most of the render cost, so the deep version is the fast one.
+
 **`--accent`** gives the vessel a second colour at its floor, and grades the wax,
 the medium's absorption and its scattering from that colour up to the palette's
 own. All three, because grading only some of them is what makes a scene look

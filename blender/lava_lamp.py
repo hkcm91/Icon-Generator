@@ -74,11 +74,10 @@ LOOKS = {
     "lamp": {},
     "bubbles": {
         "palette": "bubblegum", "no_pool": True,
-        "blobs": 46, "droplets": 28, "blob_size": 0.21, "size_spread": 1.1,
-        "threshold": 0.30, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
-        "accent": "1.0,0.35,0.03",
-        "glow": 1.05, "glow_reach": 1.0, "bulb": 0.0, "crown": 700.0,
-        "env": 0.15, "haze": 0.8, "density": 1.6,
+        "blobs": 64, "droplets": 40, "blob_size": 0.135, "size_spread": 1.1,
+        "threshold": 0.35, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
+        "glow": 1.0, "glow_reach": 1.0, "bulb": 0.0, "crown": 300.0,
+        "env": 0.15, "haze": 0.15, "density": 3.0,
         "view_transform": "Standard",
     },
 }
