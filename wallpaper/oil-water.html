@@ -345,7 +345,33 @@ const grav = { x: 0, y: 1 };
 const gDir = { x: 0, y: 1 };
 let gMag = 1, haveAccelGravity = false;
 
-function filterAcceleration(x, y, z) {
+/* Every filter on the accelerometer is written as a time constant and turned
+ * into a coefficient with the interval between events, not as a fixed
+ * per-event coefficient.
+ *
+ * That is not pedantry. `devicemotion` fires at whatever rate the device's
+ * sensor reports — 60Hz on most handsets, but 100Hz and 120Hz are both common
+ * and the spec promises nothing. A fixed per-event coefficient makes the
+ * cut-off frequency of the gravity/acceleration split a property of the
+ * hardware, so the same shake on a 120Hz sensor arrives as a sharper, larger
+ * impulse than on a 60Hz one, and the oil is visibly more shredded on the
+ * faster phone. Measured at 30 / 60 / 144 events a second before this change,
+ * the fraction of oil left with no interior after one shake was 0.15 / 0.32 /
+ * 0.61 — the same page behaving like three different liquids.
+ *
+ * The taus below are the old coefficients solved back at 60Hz, so a 60Hz
+ * device sees exactly what it saw: tau = -dt / ln(1 - k).
+ */
+const TAU_GRAVITY = 0.658;   // was k = 0.025 per event
+const TAU_ATTACK  = 0.111;   // was k = 0.14
+const TAU_RELEASE = 0.051;   // was k = 0.28
+let lastMotionAt = 0;
+
+/** A per-event coefficient for a given time constant, clamped so that a long
+ *  gap (a backgrounded wallpaper) snaps to the new value instead of ringing. */
+function lag(tau, dt) { return dt >= tau * 8 ? 1 : 1 - Math.exp(-dt / tau); }
+
+function filterAcceleration(x, y, z, dt) {
   const m = Math.hypot(x, y, z);
   let tx = 0, ty = 0, tz = 0;
   if (m > ACCEL_DEAD_ZONE) {
@@ -354,7 +380,8 @@ function filterAcceleration(x, y, z) {
   }
   // Slower attack gives the liquid mass; the quicker release lets it come
   // properly to rest instead of preserving a residual indefinitely.
-  const k = Math.hypot(tx, ty, tz) > Math.hypot(accel.x, accel.y, accel.z) ? 0.14 : 0.28;
+  const rising = Math.hypot(tx, ty, tz) > Math.hypot(accel.x, accel.y, accel.z);
+  const k = lag(rising ? TAU_ATTACK : TAU_RELEASE, dt);
   accel.x += (tx - accel.x) * k;
   accel.y += (ty - accel.y) * k;
   accel.z += (tz - accel.z) * k;
@@ -380,13 +407,19 @@ function onMotion(e) {
     gravRaw.x = sx; gravRaw.y = sy; gravRaw.z = sz;
     setGravityVector(sx, sy);
     accel.x = 0; accel.y = 0; accel.z = 0;
+    lastMotionAt = performance.now();
   } else {
-    const k = 0.025;
+    /* Clamped: a stalled or bursty sensor must not hand the filters a step
+     * they treat as a second of real time. */
+    const now = performance.now();
+    const dt = Math.min(0.1, Math.max(1e-3, (now - lastMotionAt) / 1000)) || 1 / 60;
+    lastMotionAt = now;
+    const k = lag(TAU_GRAVITY, dt);
     gravRaw.x += (sx - gravRaw.x) * k;
     gravRaw.y += (sy - gravRaw.y) * k;
     gravRaw.z += (sz - gravRaw.z) * k;
     setGravityVector(gravRaw.x, gravRaw.y);
-    filterAcceleration(sx - gravRaw.x, sy - gravRaw.y, sz - gravRaw.z);
+    filterAcceleration(sx - gravRaw.x, sy - gravRaw.y, sz - gravRaw.z, dt);
   }
 }
 
@@ -508,15 +541,30 @@ const BUOY = 130;          // px/s^2 per g of effective gravity, between the pha
  * change that: the drive was not near the threshold, so lowering the
  * threshold was not the answer.
  *
- * So the gain is dialled far above life, deliberately. What it buys is the
- * thing the product is for, and what it costs is a claim nobody should read
- * as a measurement. Everything else on this page is doing real work; this
- * line is a decision.
+ * So the gain is dialled above life, deliberately. But it was dialled to 180,
+ * and that was not a stylisation, it was the bug this page spent its whole
+ * life chasing. At 180 a two-and-a-half second shake drives the cell at about
+ * 1,500 px/s -- four screen widths a second. Nothing survives that as a
+ * liquid: the oil is torn into thirty-odd stringy bodies, a third of it is
+ * lost to the advection in the process, and the fragments are then too thin
+ * for the interfacial tension to pull back together, so it never recovers.
+ * Every "the oil is too skinny" reading traces back here.
  *
- * The finger, by contrast, needs no help. Dragging through a liquid really
- * does impose your own velocity on it, so the stirring is honest at gain 1.
+ * Measured on one seeded shake, deterministically (see the note on the test
+ * harness in OIL-WATER.md -- until that harness existed none of these numbers
+ * were reproducible, and the earlier tuning done against them was noise):
+ *
+ *   gain   thickness after settling   oil kept   still moving at +10s
+ *    180            28 px               68%          62 px/s
+ *     60            33 px               51%          29 px/s
+ *     25           115 px              100%          22 px/s
+ *     10           191 px              100%          12 px/s, never breaks up
+ *
+ * 25 is the corner. Below it a shake only sloshes the layers and they never
+ * separate into bodies at all; above it the tearing starts and the thickness
+ * falls off a cliff.
  */
-const SHAKE_GAIN = 180;
+const SHAKE_GAIN = num("gain", 25);
 const NU = 32;             // momentum diffusivity, cells^2/s
 const BULK_DRAG = 0.15;    // 1/s
 const WALL_DRAG = 1.6;     // 1/s, in the cells touching glass
@@ -525,27 +573,58 @@ const PROJECT_ITERS = 12;
 
 /* The phase field's own constants.
  *
- * EPS is the interface half-width in cells, and it is the number everything
- * else is hostage to: too small and the interface falls between grid points
- * and the field goes lumpy; too large and every droplet is a soft cloud and
- * the sharpness the whole page exists for is gone. Between one and two cells
- * is the usable window, and 1.2 sits in it.
+ * EPS is the interface half-width in cells. It is not a smoothing knob: it is
+ * the smallest feature the field can hold, because a body thinner than about
+ * two of them has no interior left and the relaxation eats it.
  *
- * MOBILITY is how fast the field relaxes toward the two wells. Its ceiling
- * is a stability limit, not a taste one: the relaxation is an explicit
- * diffusion with coefficient MOBILITY*EPS^2, so MOBILITY*EPS^2*dt must stay
- * under about an eighth of a cell squared or the field oscillates and blows
- * up. At dt = 1/60 that caps it near 6; this runs at 3.4.
+ * It is worth being clear that this was chased hard as the cause of the thin
+ * oil, and it is not the cause. Swept properly, with the shake gain still at
+ * 180, settled thickness lands between 28 and 62 px whatever EPS is -- the
+ * tearing dominates and the interface width is not what the result is made
+ * of. Only once the gain came down did EPS start to matter at all, and then
+ * modestly: at gain 25 it moves the fraction of oil with no interior from
+ * 0.47 at 1.2 cells to 0.44 at 1.8. Nudged up to 1.8 for that, and no more,
+ * because past about two cells the interface is a fifth of a 96-cell grid
+ * wide and separate bodies start bleeding into each other.
+ *
+ * MOBILITY is how fast the field relaxes toward the two wells, and its
+ * ceiling is stability, not taste: the relaxation is Cahn-Hilliard, whose
+ * limit on this stencil is dt*M*eps^2*64 < 2. At dt = 1/60 and EPS = 1.8 that
+ * caps M near 1.5; this runs at 0.25, and raising it within that range
+ * changes the settled picture by less than the seed does.
  */
-const EPS = 1.2, EPS2 = EPS * EPS;
-const MOBILITY = 0.25;
-/* Doubled once the force was pointing the right way. Everything about this
- * number was tuned against a sign error — it had been dropped from 900 to
- * 300 because raising it made the interface *worse*, which is what an
- * anti-surface-tension does. With the sign fixed, more of it is better: it
- * rounds a planted square into a circle in about two seconds instead of
- * four, and a shake still tears the layer into twenty-odd bodies. */
-const TENSION = 600 * CONFIG.tension;
+const EPS = num("eps", 1.8), EPS2 = EPS * EPS;
+const MOBILITY = num("mob", 0.25);
+/* Interfacial tension, and the one lever that acts directly on thinness.
+ *
+ * This sat at 600 on the belief, written down in this file for weeks, that
+ * raising it breached the capillary time-step limit and stopped the cell ever
+ * coming to rest. That was measured while the shake gain was 180, so it was
+ * measuring the tearing, not the tension. With the gain at 25 and the sensor
+ * filters fixed, the same sweep says the opposite: tension is monotonically
+ * good, and it is the only knob here that is.
+ *
+ * One seeded shake, measured ten seconds after it ends, at three sensor
+ * rates. The figure is the fraction of the oil with no interior left -- near
+ * zero is thick oil, a third is tendrils -- and then mean body thickness:
+ *
+ *   tension       30Hz         60Hz        144Hz
+ *      600      0.47/115     0.47/115     0.47/115   (never got this far)
+ *    6,000      0.24/171     0.31/178     0.27/175
+ *   12,000      0.22/169     0.18/183     0.19/190
+ *   18,000      0.15/182     0.15/156     0.19/188
+ *   30,000      0.17/195     0.20/184     0.18/194
+ *
+ * Nothing destabilises: the resting speed *falls* as tension rises, because a
+ * stronger tension retracts the fine structure that was carrying the energy.
+ *
+ * The upper end is a choice rather than a limit. Past about 18,000 the oil
+ * re-separates into a single layer within a few seconds of any shake, which
+ * is correct physics and a dull wallpaper. 12,000 is the last value that
+ * still leaves several distinct bodies drifting after a shake with the
+ * tendrils gone, and that is the trade this page is making.
+ */
+const TENSION = 12000 * CONFIG.tension;
 const RIPPLE_RESET = 0.55;   // 1/s, how fast the surface re-roughens
 
 function idx(i, j) { return j * GW + i; }
@@ -1121,6 +1200,11 @@ function extendPhase() {
    * and an open path cannot be filled. With it, every loop closes off-screen
    * and the visible area is still covered edge to edge. */
   pex.fill(-1);
+  /* Contoured a little above zero rather than at it. A cell that is only
+   * marginally oil is exactly the smeared, half-thick material that draws
+   * out into threads, and lifting the level deletes it outright instead of
+   * drawing it as a hair. Costs a fraction of the oil's apparent area and
+   * removes the thinnest features first, which is the right order. */
   for (let j = 0; j < GH; j++) {
     for (let i = 0; i < GW; i++) pex[(j + 1) * EW + (i + 1)] = phi[j * GW + i];
   }
@@ -1233,23 +1317,52 @@ function contour() {
  * oil, and this page has spent enough effort conserving its mass to not want
  * the renderer losing it again.
  */
-const SMOOTH_L = 0.55, SMOOTH_M = -0.58, SMOOTH_PASSES = 2;
+/* How hard the contour is smoothed, and it is the number that decides
+ * whether the oil reads as oil.
+ *
+ * A real oil boundary has no small ridges on it. Capillary damping goes as
+ * the cube of the wavenumber, so the shortest wavelengths die fastest and a
+ * liquid boundary held by any appreciable surface tension is smooth arcs —
+ * that is not a stylisation, it is the one thing the physics guarantees
+ * hardest. This page was drawing crenellated edges: the isoline of a field
+ * sampled on a coarse lattice picks up a bump per cell, and marching squares
+ * then joins those bumps with straight segments, so the boundary came out
+ * covered in ridges that could not exist on oil at any scale.
+ *
+ * Two passes were nowhere near enough. Twenty-four removes everything at the
+ * cell scale and leaves the shape.
+ */
+const SMOOTH_L = 0.55, SMOOTH_M = -0.58;
+const SMOOTH_PASSES = Math.max(0, num("sm", 24));
 let smoothBuf = null;
 
+/** Signed area of one loop, by the shoelace. */
+function loopArea(st, m) {
+  let A = 0;
+  for (let n = 0; n < m; n++) {
+    const i0 = st + n, i1 = st + (n + 1) % m;
+    A += loopXY[i0 * 2] * loopXY[i1 * 2 + 1] - loopXY[i1 * 2] * loopXY[i0 * 2 + 1];
+  }
+  return A * 0.5;
+}
+
 function smoothLoops() {
+  if (!SMOOTH_PASSES) return;
   if (!smoothBuf || smoothBuf.length < loopLen * 2) smoothBuf = new Float32Array(loopLen * 2 + 64);
-  for (let pass = 0; pass < SMOOTH_PASSES * 2; pass++) {
-    const k = (pass & 1) ? SMOOTH_M : SMOOTH_L;
-    for (let L = 0; L < loopCount; L++) {
-      const st = loopStart[L], en = loopStart[L + 1], m = en - st;
-      if (m < 5) continue;
+  for (let L = 0; L < loopCount; L++) {
+    const st = loopStart[L], en = loopStart[L + 1], m = en - st;
+    if (m < 5) continue;
+    const before = Math.abs(loopArea(st, m));
+
+    for (let pass = 0; pass < SMOOTH_PASSES * 2; pass++) {
+      const k = (pass & 1) ? SMOOTH_M : SMOOTH_L;
       for (let n = 0; n < m; n++) {
         const c = st + n;
-        const a = st + (n + m - 1) % m, b = st + (n + 1) % m;
+        const a2 = st + (n + m - 1) % m, b2 = st + (n + 1) % m;
         smoothBuf[c * 2] = loopXY[c * 2] +
-          k * ((loopXY[a * 2] + loopXY[b * 2]) * 0.5 - loopXY[c * 2]);
+          k * ((loopXY[a2 * 2] + loopXY[b2 * 2]) * 0.5 - loopXY[c * 2]);
         smoothBuf[c * 2 + 1] = loopXY[c * 2 + 1] +
-          k * ((loopXY[a * 2 + 1] + loopXY[b * 2 + 1]) * 0.5 - loopXY[c * 2 + 1]);
+          k * ((loopXY[a2 * 2 + 1] + loopXY[b2 * 2 + 1]) * 0.5 - loopXY[c * 2 + 1]);
       }
       for (let n = 0; n < m; n++) {
         const c = st + n;
@@ -1257,12 +1370,26 @@ function smoothLoops() {
         loopXY[c * 2 + 1] = smoothBuf[c * 2 + 1];
       }
     }
+
+    /* Taubin is only approximately volume-preserving, and at twenty-four
+     * passes "approximately" was eight to fifteen per cent of the oil. Each
+     * loop is rescaled about its own centroid to put back exactly what the
+     * smoothing took or added, so the picture keeps agreeing with the
+     * solver about how much oil there is. */
+    const after = Math.abs(loopArea(st, m));
+    if (after <= 1e-6 || before <= 1e-6) continue;
+    const k2 = Math.sqrt(before / after);
+    let cx2 = 0, cy2 = 0;
+    for (let n = 0; n < m; n++) { cx2 += loopXY[(st + n) * 2]; cy2 += loopXY[(st + n) * 2 + 1]; }
+    cx2 /= m; cy2 /= m;
+    for (let n = 0; n < m; n++) {
+      const c = st + n;
+      loopXY[c * 2] = cx2 + (loopXY[c * 2] - cx2) * k2;
+      loopXY[c * 2 + 1] = cy2 + (loopXY[c * 2 + 1] - cy2) * k2;
+    }
   }
 }
 
-/** The extracted loops as one path, smoothed. The polygon's vertices sit on
- *  grid edges, so quadratics through their midpoints round off the staircase
- *  the lattice would otherwise print onto every droplet. */
 function oilPath() {
   const path = new Path2D();
   for (let L = 0; L < loopCount; L++) {
@@ -1821,6 +1948,46 @@ window.__shaker = {
        * and is the honest measure of "has it separated". */
       interfaceCells: interface_ / cells,
       blobs: loopCount, drawnArea: drawnArea(),
+      /* How much of the oil has no interior. The mean thickness above is an
+       * average over whole bodies, so one fat slab hides any number of thin
+       * arms hanging off it — and thin arms are the whole complaint. This is
+       * local: a cell counts as skin if it is oil but has not reached the
+       * well, and a body only a few interface-widths across is skin all the
+       * way through. Near zero is thick oil; above about a third is tendrils.
+       */
+      skinFraction: (() => {
+        let oil = 0, skin = 0;
+        for (let j = 1; j < GH - 1; j++)
+          for (let i = 1; i < GW - 1; i++) {
+            const v = phi[j * GW + i];
+            if (v <= 0) continue;
+            oil++; if (v < 0.8) skin++;
+          }
+        return oil > 0 ? skin / oil : 0;
+      })(),
+      /* Mean thickness of the oil bodies, in pixels: 2A/P per body, weighted
+       * by area. For a circle that is its radius; for a long ribbon it is
+       * half its width. This is the number "it gets too skinny" is about,
+       * and there was no way to measure it. */
+      thickness: (() => {
+        let num2 = 0, den = 0;
+        for (let L = 0; L < loopCount; L++) {
+          const st = loopStart[L], en = loopStart[L + 1], m = en - st;
+          if (m < 5) continue;
+          let A = 0, P = 0;
+          for (let n = 0; n < m; n++) {
+            const i0 = st + n, i1 = st + (n + 1) % m;
+            const x0 = loopXY[i0 * 2], y0 = loopXY[i0 * 2 + 1];
+            const x1 = loopXY[i1 * 2], y1 = loopXY[i1 * 2 + 1];
+            A += x0 * y1 - x1 * y0;
+            P += Math.hypot(x1 - x0, y1 - y0);
+          }
+          A = Math.abs(A) * 0.5;
+          if (P <= 0 || A <= 0) continue;
+          num2 += (2 * A / P) * A; den += A;
+        }
+        return den > 0 ? num2 / den : 0;
+      })(),
       /* Roundness, as the isoperimetric quotient 4*pi*A / P^2 of the whole
        * oil phase. One for a circle, 0.79 for a square, and tending to zero
        * for anything long and thin or spiky.

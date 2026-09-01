@@ -402,29 +402,71 @@ Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
 | `oil` | `0.42` | Oil as a fraction of the cell. Past about two thirds the water is the minority phase and the emulsion inverts, which is real and looks odd |
 | `ramp` | shaker's blue | The water, along the gravity axis. Same parameter and same default across all three pages |
 | `tint` | `#e8806c` | The oil. Ember Glow — the two phases have to differ in *hue*, or the separation the physics works so hard at is invisible |
-| `tension` | `1` | Interfacial tension. Low is ragged and slow to round up; high snaps everything to circles and the shake gets no purchase |
+| `tension` | `1` | Interfacial tension, as a multiple of 12,000. Low is ragged and slow to round up; above about 1.5 the oil re-separates into one layer within seconds of any shake, which is right and dull |
+| `gain` | `25` | How far above life the accelerometer is amplified. This is the number that decides whether the oil holds together — see below |
+| `eps` | `1.8` | Interface half-width in cells |
+| `mob` | `0.25` | Phase-field relaxation rate. Its ceiling is Cahn–Hilliard stability, `dt·M·eps²·64 < 2` |
+| `sm` | `24` | Contour smoothing passes |
 | `buoyancy` | `1` | Density difference. At 0 the fluids weigh the same, they never separate, and shaking does literally nothing |
 | `visc` | `1` | Momentum diffusivity, which sets how fast droplets rise |
 | `glass` | `0` | 0 is opaque water (a wallpaper); 1 drops the water so an icon shows the home screen through the cell |
 | `seed` | `20260831` | Names a cell: the same seed gives the same starting interface and the same sequence of shakes |
 | `n` / `scale` | `4` / `0.78` | Corner squareness and size, `pouch` mode only |
 
+## The measurements in this file were noise until the harness was fixed
+
+This section used to claim the page was driven "with the clock stubbed before
+the page's own script runs, so no real frame ever steps the solver". That was
+not true, and it is the reason this page went through eight rounds of tuning
+that did nothing.
+
+The harness stubbed `performance.now` *after* `goto` and a 350ms wait, so the
+page's own `requestAnimationFrame` loop ran for a few hundred milliseconds of
+**real** wall-clock time first. How many frames that is, and what timestamps
+they carry, are facts about the machine and its load, so every run started
+from a different state. Same seed, same parameters, four runs of the identical
+script:
+
+| run | mean body thickness after one shake |
+| --- | --- |
+| A | 37 px |
+| B | 118 px |
+| C | 96 px |
+| D | 32 px |
+
+A 3.7× spread with nothing changed. Every sweep taken against that harness was
+reading noise, and the conclusions drawn from them — that the interface width
+`eps` was what made the oil thin, that interfacial tension above ~600 breached
+the capillary time-step — were both wrong, and both were written into this
+file as measured facts.
+
+The harness now installs, via `addInitScript` and therefore before the page's
+first line runs, a virtual clock and a frame queue: `performance.now` and
+`Date.now` read the virtual clock, `requestAnimationFrame` pushes onto a
+queue, and `__vclock.pump(ms)` advances time and flushes it. No frame ever
+runs that the test did not ask for. Three runs of the same seed now return
+bit-identical statistics.
+
+**Anything below this line was re-measured on the fixed harness.** Nothing
+from before it survived.
+
 ## Verified
 
-Driven headless in Chromium at 393×852 with the clock stubbed before the
-page's own script runs, so no real frame ever steps the solver and a run is
-reproducible from the first tick.
+Driven headless in Chromium at 393×852 on the virtual clock described above.
 
 | Property | Result |
 | --- | --- |
+| Determinism from `seed` | three runs bit-identical: thickness 161.7px, 4 bodies, roundness 0.592, oil 0.4262, rms 17.77 |
+| Sensor-rate independence (30 / 60 / 144 events per second) | skin fraction 0.22 / 0.18 / 0.19, thickness 169 / 183 / 190px, oil 0.423 / 0.416 / 0.420. Before the filters were made time-based: 0.15 / 0.32 / 0.61 |
+| Mass, across a shake and 30s of settling | oil fraction 0.423 → 0.426 → 0.423; nothing lost. At the old shake gain a third of the oil disappeared |
+| Rest state | 2–3 px/s RMS |
+| Settling after a 2.5s shake | 192 → 119 → 52 → 18 → 2 px/s at +0 / +1 / +3 / +10 / +30s |
+| Thickness after a 2.5s shake | 77px at the end of the shake, recovering to 162px by +10s and 192px by +30s |
+| Oil with no interior ("tendrils") | 0.19 at the end of the shake, 0.29 at +30s; 0.02 at rest |
 | A planted square, no gravity | isoperimetric quotient 0.81 → 0.99 in 2s, 1.00 by 4s |
 | A planted plus-sign, no gravity | 0.69 → 1.00 in 2s |
 | Five planted droplets, no gravity, 40s | 4 of 5 survive (was 2 of 5 under the global multiplier) |
-| Frame-rate independence (same impulse at 20 / 60 / 144fps) | identical oil fraction, perimeter, blob count and roundness |
-| Determinism from `seed` | identical run twice; a different seed differs |
-| Mass drift, 75s over 6 shake-and-settle cycles | ~10⁻⁹; `phi` stays inside [-1, 1] |
-| Rest state | 2–3px/s RMS (was 126 before the two projection fixes) |
-| A 2.5s shake at 2.5Hz | 18 separate bodies, still 36 after eight seconds |
+| Tap and page-offset interaction, then pause/resume | no error, state finite |
 | Mobility set to zero | interface smears to 96% of the cell and never separates — i.e. it becomes the shaker's dye |
 
 **The roundness metric was itself wrong for most of this work.** It computed
@@ -447,36 +489,71 @@ software rasteriser doing full-screen blending, which is the single thing a
 GPU is best at. At 96 cells a step costs 7.5ms, leaving about 9ms of a
 sixtieth of a second for everything else.
 
-## Where this actually stands
+## What was actually wrong
 
-It still does not look like oil and water, and the reason is a three-way
-squeeze that every fix has made more visible rather than less. All three
-sides were measured today:
+Two bugs, and neither was the one this file spent most of its length on.
 
-- **First-order advection** smears the interface and Cahn–Hilliard re-hardens
-  the smear, freezing in points and tendrils that a real interface would
-  retract in milliseconds.
-- **Second-order advection** removes the smearing, and the flow immediately
-  stretches the interface into hair-thin threads. Threads only break into
-  drops when they are several interface-widths thick, and the interface is
-  about three cells at any resolution affordable here — so they simply keep
-  thinning. Thirty-six stringy bodies instead of two blobby ones is a
-  different failure, not a better result.
-- **Enough interfacial tension to stop them thinning** breaches the capillary
-  time-step limit, `Δt ≈ √(ρΔx³/2πσ)`. At a coefficient of 15,000 and 40,000
-  the cell stops coming to rest at all: resting RMS goes 2.6 → 15.9 → 30.1.
+### The shake gain was 180
 
-The way out of all three at once is three to five times the grid, which is ten
-to twenty-five times the solver cost. That is not available in JavaScript at
-sixty frames a second on a phone, and no further tuning of the constants will
-substitute for it.
+The accelerometer is amplified before it reaches the solver, because a phone
+being shaken in a hand does not produce accelerations that would visibly break
+an oil layer apart. That much is deliberate and is argued for in the source.
+But it was set to **180**, and at that strength a two-and-a-half second shake
+drives the cell at about 1,500 px/s — four screen widths per second. Nothing
+survives that as a liquid. The oil is torn into thirty-odd stringy bodies, a
+third of it is lost to the advection on the way, and the fragments are then
+too thin for interfacial tension to pull back together, so it never recovers.
 
-What is here is correct and measured — the tension force points the right way,
-mass is conserved locally, the advection is second order, the interface is
-resolved as well as the budget allows — and the result is still not
-convincing. Those are compatible statements, and the honest reading is that
-this particular liquid is the wrong one to have picked for a coarse real-time
-solver.
+| shake gain | thickness after settling | oil kept | still moving at +10s |
+| --- | --- | --- | --- |
+| 180 | 28 px | 68% | 62 px/s |
+| 60 | 33 px | 51% | 29 px/s |
+| **25** | **115 px** | **100%** | 22 px/s |
+| 10 | 191 px | 100% | 12 px/s, but a shake only sloshes it |
+
+25 is the corner: below it a shake never separates the layers into bodies at
+all, above it the tearing starts and thickness falls off a cliff.
+
+### The accelerometer filters were per-event, not per-second
+
+`onMotion` low-passed the signal into a gravity part and an acceleration part
+with fixed per-event coefficients. `devicemotion` fires at whatever rate the
+device's sensor reports — 60Hz on most handsets, but 100Hz and 120Hz are both
+common and the spec promises nothing — so the cut-off frequency of that split
+was a property of the hardware. The same shake on a faster sensor arrived as a
+sharper, larger impulse:
+
+| sensor rate | oil with no interior, after one shake |
+| --- | --- |
+| 30 Hz | 0.15 |
+| 60 Hz | 0.32 |
+| 144 Hz | 0.61 |
+
+The same page behaving as three different liquids depending on the phone. Each
+coefficient is now a time constant converted with the measured interval
+between events, with the taus solved back from the old coefficients at 60Hz so
+a 60Hz device sees exactly what it saw. The spread is now 0.22 / 0.18 / 0.19.
+
+### What this means for the rest of the file
+
+Two claims recorded here as measurements were artefacts of the over-driven
+shake, and both are now false:
+
+- **"The interface width is what makes the oil thin."** Swept properly at gain
+  180, settled thickness lands between 28 and 62 px whatever `eps` is; the
+  tearing dominates and the interface width is not what the result is made of.
+  At gain 25 it matters, and only modestly: 1.2 → 1.8 cells moves the tendril
+  fraction from 0.47 to 0.44.
+- **"Interfacial tension above ~600 breaches the capillary time-step and the
+  cell never comes to rest."** It does not. Tension is monotonically good up to
+  at least 30,000, and the resting speed *falls* as it rises, because a
+  stronger tension retracts the fine structure that was carrying the energy.
+  It now runs at 12,000, twenty times the old value.
+
+The three-way squeeze this section used to describe — smearing, threading, and
+a capillary limit that could not be paid — was two thirds an artefact. What
+remains true is that a 96-cell grid cannot resolve a fine emulsion; what is no
+longer true is that this made the page impossible.
 
 **It has never run on a handset.** Same caveat as the other two, and for the
 same reason: there is no device here.
