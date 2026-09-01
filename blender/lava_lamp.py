@@ -230,6 +230,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                           "also un-hides that light from glossy rays, because "
                           "a glossy surface with nothing to reflect just "
                           "looks darker rather than shinier")
+    wax.add_argument("--glass", type=float, default=0.0,
+                     help="0 is wax, opaque. 1 is tinted glass: light passes "
+                          "through and the ground shows through every blob. "
+                          "This is the difference between a sphere that reads "
+                          "as a bubble and one that reads as an egg")
     wax.add_argument("--accent", default="",
                      help="a second colour for the floor of the vessel, as "
                           "r,g,b in 0-1. Given one, both the wax and the "
@@ -816,7 +821,8 @@ def height_ramp(tree, reference: bpy.types.Object, height: float,
 
 def wax_material(reference: bpy.types.Object, height: float, colour,
                  glow: float, heat: float, blob: float,
-                 accent=None, gloss: float = 0.0) -> bpy.types.Material:
+                 accent=None, gloss: float = 0.0,
+                 glass: float = 0.0) -> bpy.types.Material:
     """Translucent wax, hot at the floor and cooling as it climbs.
 
     Two things make wax read as wax rather than as plastic. The first is
@@ -848,7 +854,13 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     # surface from reading as polished: light that goes in and comes out
     # somewhere else softens exactly the contrast a highlight needs. Gloss
     # takes most of it away.
-    put(bsdf, ("Subsurface Weight", "Subsurface"), 0.7 * (1.0 - 0.85 * gloss))
+    put(bsdf, ("Subsurface Weight", "Subsurface"),
+        0.7 * (1.0 - 0.85 * gloss) * (1.0 - glass))
+    # Transmission is what makes a sphere a bubble rather than an egg: the
+    # ground shows through it, tinted. Emission fights it, so the glow the
+    # look asks for is scaled down as glass goes up.
+    put(bsdf, ("Transmission Weight", "Transmission"), glass)
+    glow = glow * (1.0 - 0.8 * glass)
     # Scattering distance is measured against the blob, which is why it is
     # passed in rather than guessed from the bottle. Set it to the blob radius
     # and light walks clean through everything, every blob washes out to the
@@ -1454,7 +1466,8 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
     # the largest: the spread runs 0.85 to 1.20 of --blob-size.
     typical = unit * args.blob_size * surface_fraction(args.threshold)
     wax = wax_material(basis, height, args.wax_rgb, args.glow,
-                       args.glow_reach, typical, args.accent_rgb, args.gloss)
+                       args.glow_reach, typical, args.accent_rgb, args.gloss,
+                       args.glass)
     # Only the basis's material is used for the whole family; assigning to the
     # members as well would be dead data.
     basis.data.materials.append(wax)
