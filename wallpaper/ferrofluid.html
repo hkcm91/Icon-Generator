@@ -191,6 +191,24 @@ let swirlInput = 0;
 const GRAVITY_DIRECTION_FLOOR = 0.06;
 const GRAVITY_FLOOR = 0.34;
 
+/* Screen size past which the physics stops growing with the screen.
+ *
+ * Gravity is taken from the short edge and the magnets' standoff is a fraction
+ * of it, so that the liquid falls the same way relative to the frame whatever
+ * the frame is. But the solver's stiffnesses are absolute pixel corrections at
+ * a fixed timestep and they do not grow with anything, so left uncapped both
+ * eventually outrun what the pressure can undo in a step: drops pass through
+ * one another and the liquid comes apart. Measured at 600×1000, capping these
+ * took the pool from 13% of its drops in a body to 83%.
+ *
+ * Past this reference the liquid falls at a phone's absolute rate rather than
+ * a scaled one and the magnets stay a phone's size, which on a large display
+ * reads as slightly more languid. That is the whole of the cost — and it is
+ * only part of the cure; see the known-bad sizes in tools/verify-ferrofluid. */
+const PHYSICS_REF = 520;
+/** The short edge, as the physics is allowed to see it. */
+const refU = () => Math.min(U, PHYSICS_REF);
+
 /* MEMS accelerometers never become perfectly quiet. Remove the noise floor as
  * a vector, so diagonals are treated the same as axes, then ease what is left
  * in and out — a slower attack gives the liquid mass, a quicker release lets
@@ -353,7 +371,7 @@ function buildPoles() {
   ambientPoles = Math.max(0, Math.min(4, CONFIG.poles));
   for (let i = 0; i < ambientPoles; i++) {
     poles.push({
-      x: CX, y: CY, z: U * 0.17, strength: 0, q: 0,
+      x: CX, y: CY, z: refU() * 0.17, strength: 0, q: 0,
       // Alternating polarity, so a pair is a bar magnet rather than two of
       // the same end. It changes nothing about how hard the liquid is pulled
       // — that goes as H² either way — and everything about the shape of the
@@ -403,7 +421,7 @@ function stepPoles(t, dt) {
     p.y = CY + gDir.y * rDown * down + tany * rAlong * 0.62 * (along + swirl);
     // A rising and falling standoff: the same magnet pressed against the
     // glass and taken away again, which strengthens and narrows it at once.
-    p.z = U * (0.1 + 0.1 * (0.5 + 0.5 * Math.sin(ph * 0.81)));
+    p.z = refU() * (0.1 + 0.1 * (0.5 + 0.5 * Math.sin(ph * 0.81)));
     const pulse = 0.2 + 0.8 * (0.5 + 0.5 * Math.sin(t * 2 * Math.PI / p.period + p.phase));
     p.strength = CONFIG.field * 1.15 * pulse * p.sign;
   }
@@ -597,7 +615,7 @@ function buildParticles() {
   IR = spacing * 2.2;
   KR = spacing * 1.44;
   REST = measureRestDensity();
-  G = 4.0 * U;
+  G = 4.0 * refU();
   buildHash();
 }
 
@@ -687,7 +705,7 @@ function applyBodyForces(dt) {
   const sx = -accel.x * G * 1.25, sy = -accel.y * G * 1.25;
   // ∇H has units of 1/length, so the pull is made dimensionless against a
   // typical pole standoff. That is what lets `pull` read as gravities.
-  const pull = CONFIG.pull * G * U * 0.16;
+  const pull = CONFIG.pull * G * refU() * 0.16;
   const pullCap = PULL_CLAMP * G;
   const spike = CONFIG.spike * G;
   const spikeCap = SPIKE_CLAMP * G;
@@ -1756,7 +1774,7 @@ function placePole(x, y, strength, seconds) {
    * much further than a sharp one held close, at the cost of doing less where
    * it is. A finger on the glass should be felt across the screen. */
   const p = {
-    x, y, z: U * 0.26, strength, q: 0,
+    x, y, z: refU() * 0.26, strength, q: 0,
     peak: strength, life: seconds, born: seconds,
     phase: 0, period: 1,
   };

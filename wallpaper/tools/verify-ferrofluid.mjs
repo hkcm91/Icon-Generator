@@ -135,6 +135,15 @@ const check = (name, ok, result) => {
     ['wallpaper', '', { width: W, height: H }],
     ['landscape', '', { width: H, height: W }],
     ['tiny', '', { width: 200, height: 320 }],
+    /* Screens with several times the *area* of a phone, which is the axis
+     * that matters and the one this list did not have: the landscape case
+     * above is the same screen turned over, so every viewport here used to
+     * cost the solver exactly the same and a size-dependent collapse could
+     * not show up. */
+    ['large phone', '', { width: 600, height: 1000 }],
+    ['tablet portrait', '', { width: 820, height: 1180 }, 'known-bad'],
+    ['tablet large', '', { width: 1024, height: 1366 }, 'known-bad'],
+    ['tablet landscape', '', { width: 1280, height: 800 }, 'known-bad'],
     ['pouch', 'mode=pouch&drops=380&fill=0.3', { width: 512, height: 512 }],
     ['no extras', 'gloss=0&shadow=0&filings=0', { width: W, height: H }],
     ['no magnets', 'poles=0', { width: W, height: H }],
@@ -142,7 +151,8 @@ const check = (name, ok, result) => {
     ['coarse grid', 'grid=9&drops=400', { width: W, height: H }],
   ];
   let worst = 100, bad = 0;
-  for (const [, qs, vp] of cases) {
+  const detail = [], knownBad = [];
+  for (const [label, qs, vp, known] of cases) {
     const page = await open(qs, vp);
     await drive(page, 7);
     /* A host is a program and programs send rubbish. A pole at NaN is not a
@@ -154,18 +164,43 @@ const check = (name, ok, result) => {
     });
     await drive(page, 3);
     const r = await probe(page);
-    if (r.nan || r.escaped) bad++;
-    worst = Math.min(worst, r.bodyPct);
-    // A resize destroys and rebuilds every array in the page.
+    if (!known && (r.nan || r.escaped)) bad++;
+    if (!known) worst = Math.min(worst, r.bodyPct);
+    /* A resize destroys and rebuilds every array in the page — including the
+     * density, which is what this measures. The resize event lands on its own
+     * schedule and not necessarily before the next call, so the page is driven
+     * once to let it arrive and again to give the rebuilt state a density to
+     * report. Without the first, this read a freshly zeroed array and called a
+     * perfectly healthy liquid 0% in a body. */
     await page.setViewportSize({ width: vp.width + 90, height: vp.height + 70 });
+    await drive(page, 0.5);
     await drive(page, 2);
     const after = await probe(page);
-    if (after.nan || after.escaped) bad++;
+    if (!known && (after.nan || after.escaped)) bad++;
+    if (known) knownBad.push(`${label} ${vp.width}x${vp.height}: ${r.bodyPct}% in a body, ` +
+                             `${r.escaped + after.escaped} escaped, ${r.spacing}px spacing`);
+    detail.push(`${label} ${vp.width}x${vp.height}: ${r.bodyPct}%/${after.bodyPct}% body, ` +
+                `${r.escaped + after.escaped} escaped, ${r.spacing}px`);
     await page.close();
   }
-  check('8 configurations, 4 viewports, resized',
+  if (process.env.FF_DETAIL) for (const d of detail) console.log('     ' + d);
+  check('12 configurations, 8 viewports, resized',
         bad === 0 && errors.length === 0,
         `${errors.length} errors, ${bad} with a lost or escaped drop; worst in-a-body ${worst}%`);
+  /* Tablet-sized screens are measured but not gated, because they do not pass
+   * and the defect is older than this file. The solver comes apart somewhere
+   * above phone dimensions and the cause has not been pinned down: it is not a
+   * clean function of drop spacing, gravity or pool depth taken separately,
+   * and capping the physics against a reference size (which is why gravity and
+   * the magnets no longer grow without bound) moved the boundary without
+   * removing it. Printed here so the size of the problem stays visible rather
+   * than being quietly outside the test set, which is how it survived this
+   * long — every other viewport in this list has about a phone's area, the
+   * landscape one included, that being the same screen turned over. */
+  if (knownBad.length) {
+    console.log('     known bad, measured but not gated:');
+    for (const k of knownBad) console.log(`       ${k}`);
+  }
 }
 
 // --- 2. containment and recoalescence -------------------------------------

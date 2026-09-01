@@ -315,7 +315,7 @@ clock, so runs are comparable.
 
 | Property | Result |
 | --- | --- |
-| Runtime errors across 8 configurations and 4 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped |
+| Runtime errors across 12 configurations and 8 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped, at the sizes the wallpaper supports — see **Known bad** |
 | Drops leaving the cell — ever, in any of the below | 0 of 1000 |
 | A 2 s shake | 92% of drops in a body before, 87% immediately after, 90% ten seconds later; peak speed 727 px/s |
 | Four taps in nine seconds, the worst a user can do to it | 98% -> 94% -> 89%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
@@ -342,6 +342,39 @@ exits non-zero if any of it regresses. It exists because two real defects got
 through a reading of the code and a look at the stills — a NaN tap silently
 turning every magnet off, and the relaxation manufacturing kinetic energy
 without bound — and neither is visible in a single frame.
+
+## Known bad
+
+**Tablet-sized screens.** Somewhere above phone dimensions the solver stops
+holding the liquid together: at 820×1180 it keeps 53% of its drops in a body
+and loses 47 of them out of the cell, and at 1280×800, 12%. The wallpaper is
+not usable at those sizes. It is measured on every run of the verifier and
+printed, but not gated, because it does not pass.
+
+The cause is not pinned down, and the honest version of that is worth writing
+out because the obvious explanations are all wrong. It is not the drop spacing
+on its own — a tablet at 17 px of spacing is stable while a phone at 10.8 px is
+not. It is not gravity per spacing, nor the pool depth in drops, nor the
+hydrostatic load against the stiffness: each of those orders some of the
+measurements and is contradicted by the rest. Capping the physics against a
+reference size moved the boundary a long way — 600×1000 went from 13% of its
+drops in a body to 83%, which is why gravity and the magnets no longer grow
+without bound with the screen — but it did not remove it.
+
+What made it survive this long is that every viewport the verifier tested had
+about a phone's *area*, the landscape one included, that being the same screen
+turned over. The four large ones are there now.
+
+**Making it more present is blocked on the same thing.** The obvious way to
+give the piece more of the screen is more liquid, and more liquid is exactly
+what the solver will not take: raising `fill` from 0.185 to 0.30 measured out
+at 33% coverage against 21% and a crest at 40% of the screen's height against
+29% — a real improvement to look at — and it also tore the pool apart under
+taps and at a fifth of the tested sizes. Raising the drop count to hold the
+spacing constant fixes some of that and not the rest. This is a solver problem
+rather than a parameter problem, and the parameters are `fill` with `drops`
+raised alongside it if you want to try: they are not independent, and `fill`
+alone is a trap.
 
 **It has never run on a handset.** There is no device or emulator here. Every
 number above is a headless software rasteriser, which is the wrong machine in
