@@ -77,7 +77,7 @@ LOOKS = {
         "blobs": 64, "droplets": 40, "blob_size": 0.135, "size_spread": 1.1,
         "threshold": 0.35, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
         "glow": 1.0, "glow_reach": 1.0, "bulb": 0.0, "crown": 300.0,
-        "env": 0.15, "haze": 0.15, "density": 3.0,
+        "env": 0.15, "haze": 0.15, "density": 3.0, "dof": 4.0,
         "view_transform": "Standard",
     },
 }
@@ -289,6 +289,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                             "within")
     out.add_argument("--bulb", type=float, default=140.0,
                      help="wattage of the bulb under the wax")
+    out.add_argument("--dof", type=float, default=0.0,
+                     help="aperture f-stop for depth of field; 0 disables it. "
+                          "Focus sits on the vessel's axis, so wax nearer the "
+                          "camera and wax at the back both go soft while the "
+                          "middle stays sharp. It is what separates a field "
+                          "of blobs into a field with depth in it")
     out.add_argument("--crown", type=float, default=1960.0,
                      help="fullbleed only: wattage of the light above the "
                           "column. It is the only source the top of the frame "
@@ -839,7 +845,25 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
                 tree.links.new(grade.outputs["Color"], emission)
             else:
                 emission.default_value = rgba(scaled(colour, 1.15))
-        put(bsdf, ("Emission Strength",), glow)
+        # Brighter through the middle of a bubble than at its rim. A sphere
+        # lit flat is a flat disc on screen, and it is the fall-off toward the
+        # edge that makes it read as round and as something you are seeing
+        # *into*. Facing ratio does it for free: 1 where the surface points at
+        # the camera, 0 where it turns away.
+        facing = tree.nodes.new("ShaderNodeLayerWeight")
+        facing.location = (-200, -420)
+        facing.inputs["Blend"].default_value = 0.5
+
+        core = tree.nodes.new("ShaderNodeMapRange")
+        core.location = (0, -420)
+        core.inputs["From Min"].default_value = 0.0
+        core.inputs["From Max"].default_value = 1.0
+        core.inputs["To Min"].default_value = glow * 1.55
+        core.inputs["To Max"].default_value = glow * 0.45
+        tree.links.new(facing.outputs["Facing"], core.inputs["Value"])
+        power = socket(bsdf, ("Emission Strength",))
+        if power is not None:
+            tree.links.new(core.outputs["Result"], power)
         return mat
 
     coord = tree.nodes.new("ShaderNodeTexCoord")
@@ -1628,6 +1652,12 @@ def build_camera(args, ortho: float, centre: float) -> bpy.types.Object:
     cam = link(bpy.data.objects.new("Lava_Cam", cam_data))
     cam.location = (0.0, -12.0, centre)
     cam.rotation_euler = (math.radians(90.0), 0.0, 0.0)
+    if args.dof > 0.0:
+        cam_data.dof.use_dof = True
+        # The axis of the vessel: the camera sits on -Y looking at x=0, so the
+        # distance to focus is just how far back it is.
+        cam_data.dof.focus_distance = 12.0
+        cam_data.dof.aperture_fstop = args.dof
     bpy.context.scene.camera = cam
     return cam
 

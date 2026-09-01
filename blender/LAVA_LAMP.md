@@ -84,6 +84,12 @@ Raising `--blob-size` on its own runs into the wall that table describes: past
 about 0.17 at a threshold of 1.0 the field stops being bubbles and becomes a
 few fused masses.
 
+**`--dof`** is what turns a field of blobs into a field with depth in it. Focus
+sits on the vessel's axis, so wax at the front and wax at the back both go soft
+while the middle stays sharp. The useful range is narrow and not where you would
+start: f/8 and above is invisible at this scale, f/1.4 and below dissolves the
+whole frame, and the interesting band is around f/2.5 to f/4.
+
 **The ground's brightness is set by `--haze`, not by any light.** The bubbles
 are self-luminous and they sit inside the medium, so what lights the violet is
 their own emission scattering in it. Turning `--crown` down from 700 to 220
