@@ -72,6 +72,19 @@ PALETTES = {
 # what stops it merging into masses.
 LOOKS = {
     "lamp": {},
+    # Molten flow in the bubbles' colours: a pool to neck off, wax big enough
+    # to buoyancy-cycle rather than ride the roll, a threshold that lets
+    # neighbours join, elongation with speed, and no swirl — lava rises and
+    # falls, it does not orbit.
+    "lava": {
+        "palette": "bubblegum", "accent": "1.0,0.34,0.02",
+        "blobs": 14, "droplets": 5, "blob_size": 0.32, "size_spread": 0.5,
+        "threshold": 0.75, "stretch": 0.7, "pool": 0.10, "depth": 0.7,
+        "gloss": 1.0, "swirl": 0,
+        "glow": 0.6, "glow_reach": 0.75, "bulb": 60.0, "crown": 400.0,
+        "env": 5.0, "haze": 0.2, "density": 1.5, "dof": 7.0,
+        "backdrop": "0.008,0.006,0.016", "view_transform": "Standard",
+    },
     "bubbles": {
         "palette": "bubblegum", "no_pool": True,
         "blobs": 32, "droplets": 18, "blob_size": 0.20, "size_spread": 1.1,

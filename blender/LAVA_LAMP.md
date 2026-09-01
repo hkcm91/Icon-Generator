@@ -57,6 +57,7 @@ overridden by passing it.
 | --- | --- |
 | `lamp` (default) | A lava lamp: a bulb, a pool, a dozen blobs turning over. |
 | `bubbles` | A dense field of luminous pink bubbles on violet, with no lamp around it. |
+| `lava` | Molten flow in the bubbles' colours: a pool to neck off, big wax that buoyancy-cycles, easy merging, elongation with speed, no swirl. |
 
 `bubbles` is the same pipeline pointed somewhere else. There is no bulb, so
 nothing in frame is a lamp; the wax glows uniformly rather than over a heater;
