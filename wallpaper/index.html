@@ -4104,6 +4104,17 @@ function fixedStep(dt, time) {
   // soft layer instead of becoming a one-pixel white seam on the glass.
   const glitterPad = Math.min(RX, RY) * 0.082;
 
+  /* A grain touching the glass is in contact, not in free suspension, so it
+   * sheds under gravity at its own rate rather than at the body's. Without
+   * this floor the wall slide inherits `settleRate`, which drops to 0.12 once
+   * the toy is left alone — slow enough that a grain pinned to the glass by a
+   * shake never comes down. Measured over 150s at rest, the outer band went on
+   * accumulating (14% -> 34% of all glitter) and drew two bright stripes down
+   * the sides; the microglitter did it alone, the hero flakes never did.
+   * Raising the body's own settleRate fixes it too, but at the cost of the
+   * hanging drift this whole layer exists for. */
+  const WALL_SHED_RATE = 0.5;
+
   /* Wall response. Reflecting the inward correction and keeping the
    * tangential component lets flakes slide along the glass; the old blanket
    * 65% velocity cut plus a nudge toward the centre killed all energy at the
@@ -4128,7 +4139,8 @@ function fixedStep(dt, time) {
     const gn = gDir.x * nx + gDir.y * ny;
     const side = Math.max(0, 1 - Math.abs(gn) / 0.72);
     if (side > 0 && p.density > 0) {
-      const slide = p.terminal * p.settleScale * p.density * gMag * settleRate;
+      const slide = p.terminal * p.settleScale * p.density * gMag *
+        Math.max(settleRate, WALL_SHED_RATE);
       const gx = gDir.x - nx * gn, gy = gDir.y - ny * gn;
       p.vx += (gx * 0.42 + nx * 0.14) * slide * side;
       p.vy += (gy * 0.42 + ny * 0.14) * slide * side;
