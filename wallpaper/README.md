@@ -893,11 +893,13 @@ the flow, the bed or the core.
 
 | Property | Result |
 | --- | --- |
-| Bed at rest, over 40s | flow 5–8 px/s mean, suspension clears 1,796 → 241 grains, bed grows 1.00 → 1.12 as it settles |
-| Slope held at rest | every column within the repose limit; steepest face 6.8px against a 2.8px per-column limit |
-| Half-turn, 45s | bed collapses to 0.13 of full in under 5s and rebuilds to 1.13 by 20s, with 560 grains left in the water |
-| Grains at the crest, at rest | flow median 3 px/s against a 134 px/s critical velocity — no scour without an input |
-| Grains at the crest, 30s after a half-turn | median 16, 90th percentile 125 — marginal, which is what consolidation is for |
+| Bed at rest, over 25s | flow 6–11 px/s mean, suspension clears 1,640 → 21 grains, bed grows 1.00 → 1.15 as it settles |
+| Slope held at rest | every column inside the repose limit |
+| Avalanching a wedge three times over repose | worst step 36px → 5 in one second, → 3 at convergence; volume identical to the unit |
+| Lean to 25°, hold, release, then a 2.6s shake | bed collapses to 0.13 of full, rebuilds monotonically to 1.06 by 14s and holds; grains in the water 13,556 → 630 |
+| Where the sand ends up after that | 40% of the pile in the outer fifth of columns — the same balance the frame opened with |
+| Consolidation after the rebuild | 0 → 0.59 over the following fifteen seconds |
+| Grains at the crest, at rest | flow median 3 px/s against a 115 px/s critical velocity — no scour without an input |
 | Frame cost against the shaker, same viewport | +4% at rest, +31% mid-cascade (software rasteriser; absolute numbers mean nothing) |
 
 One caveat, and it is the shaker's rather than the sand frame's: a slow

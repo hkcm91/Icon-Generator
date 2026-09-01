@@ -91,12 +91,18 @@ const CONFIG = {
    * meniscus is trimmed to its true contact points and split into segments,
    * the surface can sit in the corner arc — or press against the ceiling —
    * and still terminate correctly, so the container can be properly full. */
-  /* The sand frame is deliberately less full. A sand-art picture needs a
-   * headspace big enough for the air to gather into one travelling bubble —
-   * that bubble is half the toy, because it is what the falling sand has to
-   * push past — and the liquid it displaces has to go somewhere the dunes
-   * are not. */
-  fill: num("fill", SAND ? 0.9 : 0.98),
+  /* The sand frame is a little less full: a sand-art picture wants a
+   * headspace big enough for the air to gather into one travelling bubble,
+   * because that bubble is what the falling sand has to push past.
+   *
+   * Only a little, though. The free surface and the flow under it are
+   * coupled both ways — the slope drives the liquid and the liquid drives
+   * the slope — and how far that pair can be pushed depends on how much room
+   * the waterline has to move in. At a tenth of the vessel it has enough to
+   * develop a tilt steep enough to drive the loop somewhere it does not come
+   * back from, and a lean followed by a hard shake could put it there. A
+   * twentieth still reads as an air pocket and stays well inside it. */
+  fill: num("fill", SAND ? 0.95 : 0.98),
   /* How large the suspension is against its vessel. One flake diameter is a
    * fixed fraction of a phone screen, which is right for a wallpaper and
    * wrong for anything small: a shaker drawn at 48dp with wallpaper-sized
@@ -1419,6 +1425,19 @@ const FLUID_WALL_DRAG = 4.8; // 1/s, applied only in cells touching glass
  * with that removed, the flow after a flip now holds at 51px/s instead of
  * dying. */
 const COUPLE = 0.16;
+/* Sand pushes back on the liquid far less than the same arithmetic suggests.
+ *
+ * The reaction is the drag times the slip velocity, and a grain's slip is
+ * its terminal velocity — which for sand is most of what it is. Flakes drift
+ * at a tenth of that, so a constant tuned on flakes, applied to grains that
+ * are heavier and an order of magnitude faster through the liquid, hands the
+ * solver an impulse large enough to show as a spike in a single cell when a
+ * cluster of them lands in one.
+ *
+ * It is also a coupling that should be weaker on physical grounds: a grain
+ * settling through a crowd, onto a bed, loses most of its momentum to the
+ * grains it is touching rather than to the liquid it is passing through. */
+const SAND_COUPLE = 0.045;
 const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
 /* Far larger than DYE_BUOY, and it should be: the dense phase is a few per
  * cent heavier than the liquid, a bubble is a hundred per cent lighter. */
@@ -1522,9 +1541,19 @@ const WAKE = 18;              // short wake attraction between genuinely near bu
  * law is what produces that; without it a settle is just parallel falling.
  */
 function scatterForce(x, y, fx, fy) {
+  /* Clamped to the cells the solver actually visits, which is everything
+   * inside the outermost ring.
+   *
+   * A bilinear deposit at the edge of the domain spills into that ring, and
+   * nothing ever takes it out again: the force loop that applies and clears
+   * this field skips the boundary, so a cell there only ever accumulates. It
+   * has no effect on the flow — the ring is solid and is never read — but it
+   * grows without bound for as long as the page is open, and a reaction
+   * field carrying millions in its margins is a trap for anything that later
+   * takes a sum or a maximum over the whole array. */
   let gx = x / cell - 0.5, gy = y / cell - 0.5;
-  if (gx < 0) gx = 0; else if (gx > GW - 1.001) gx = GW - 1.001;
-  if (gy < 0) gy = 0; else if (gy > GH - 1.001) gy = GH - 1.001;
+  if (gx < 1) gx = 1; else if (gx > GW - 2.001) gx = GW - 2.001;
+  if (gy < 1) gy = 1; else if (gy > GH - 2.001) gy = GH - 2.001;
   const i0 = gx | 0, j0 = gy | 0;
   const s = gx - i0, t = gy - j0;
   const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
@@ -1932,6 +1961,8 @@ const bedShed = new Float32Array(N);      // erosion owed by each column, in lif
  * reaches a standoff with that circulation — scour and deposition in balance,
  * half the sand permanently in the water — and never finishes forming. */
 const bedFirm = new Float32Array(N);
+// How much has crossed each face this tick, against the flux cap.
+const bedMoved = new Float32Array(N);
 const BED_SET = 0.22;                     // 1/s toward fully consolidated
 const BED_ARMOUR = 2.4;                   // extra critical velocity when it is
 let bedVolume = 0;                        // bedTotal(), refreshed each tick
@@ -1963,15 +1994,34 @@ const buriedPool = [];                    // grains currently part of the bed
  * from this one number: it is the steepest face a heap of these grains can
  * stand up, and a pile pushed past it does not deform, it collapses. */
 let BED_REPOSE = 0.62;
-/* How fast a face past repose relaxes back to it, per second. Sand
- * avalanches quickly but not instantly, and the difference between the two
- * is the whole of whether a slump reads as material moving or as the
- * geometry being corrected between frames. */
-const BED_RELAX = 9.0;
-/* The share of an avalanching slab that goes into suspension rather than
- * arriving at the foot of the slope. A submerged avalanche raises a cloud;
- * it is the most recognisable thing sand does under water. */
-const BED_SLIP_EJECT = 0.16;
+/* How a face past the repose angle comes back to it.
+ *
+ * Two numbers, because one cannot express it. `BED_RELAX` is the share of
+ * the excess a single relaxation pass removes and `BED_PASSES` is how many
+ * of them run per tick; together they decide how *quickly* an unstable slope
+ * finds its limit. `BED_FLUX` is the separate question of how much material
+ * a slip face can actually carry per second, and it is what keeps a collapse
+ * looking like sand flowing rather than like the geometry being corrected
+ * between two frames.
+ *
+ * The pass count is the part that is easy to get wrong, and getting it wrong
+ * does not look like a slow avalanche — it looks like none at all. A single
+ * nearest-neighbour pass over a long over-steep ramp is a conveyor: every
+ * column hands the same amount to the one below it and receives the same
+ * from the one above, so material travels the whole length of the slope
+ * while the slope itself barely changes. Only the two ends actually gain or
+ * lose. Measured on a wedge three times steeper than repose, sixty ticks of
+ * one pass took the worst step from 36px to 28 and left the ramp otherwise
+ * intact; six seconds of it did no better. What flattens a slope is the
+ * relaxation propagating along it, and that takes a pass per column it has
+ * to travel. */
+const BED_RELAX = 0.34;                   // of the excess, per pass
+const BED_PASSES = 12;                    // passes per tick
+const BED_FLUX = 460;                     // px of lift per second, per face
+/* The share of what runs down a slip face that goes into suspension rather
+ * than arriving at the foot of it. A submerged avalanche raises a cloud; it
+ * is the most recognisable thing sand does under water. */
+const BED_SLIP_EJECT = 0.07;
 /* Critical velocity for scour, in px/s at unit scale. Below it the bed is
  * stable however long you wait, above it the flow lifts grains off the
  * crest — which is the whole reason a gentle tilt leaves the picture intact
@@ -2254,8 +2304,9 @@ function bedCeiling() {
 
 function bedAvalanche(dt) {
   const maxStep = BED_REPOSE * bedDx;
-  const relax = Math.min(0.48, BED_RELAX * dt);
-  for (let pass = 0; pass < 2; pass++) {
+  const budget = BED_FLUX * dt;
+  bedMoved.fill(0);
+  for (let pass = 0; pass < BED_PASSES; pass++) {
     const rev = pass & 1;
     for (let q = 0; q < N - 1; q++) {
       const i = rev ? N - 2 - q : q;
@@ -2264,21 +2315,48 @@ function bedAvalanche(dt) {
       if (d > maxStep) { from = i; to = i + 1; excess = d - maxStep; }
       else if (-d > maxStep) { from = i + 1; to = i; excess = -d - maxStep; }
       else continue;
-      const move = Math.min(excess * relax * 0.5, bedH[from]);
+      /* Capped per face per tick. Without it the passes converge within the
+       * tick and a slope that has just been tipped past its limit snaps to
+       * the limit in one frame; with it, what you watch is the face running. */
+      const move = Math.min(excess * BED_RELAX, bedH[from], budget - bedMoved[i]);
       if (move < 1e-5) continue;
+      bedMoved[i] += move;
       const band = bedTake(from, move);
       /* Part of what runs down a submerged face never reaches the foot of
        * it: the slide drags liquid with it and the finest of what it carries
        * stays up in that liquid. Handing it to the erosion debt puts it back
        * into the particle system as a cloud over the slip face. */
-      /* All of it arrives at the foot of the slope, and a share of it is
-       * then marked as owed. It would be more direct to hold that share back
-       * — but the debt is paid by taking lift out of the column, so material
-       * withheld here and taken there leaves twice, and the pile shrinks
-       * under a bed nothing has actually left. */
+      /* All of it arrives at the foot of the slope. What goes into
+       * suspension instead is settled after the passes, not here: the same
+       * material crosses a face many times within a tick as the relaxation
+       * converges, so a share taken per pass is a share taken a dozen times
+       * over — which pours the bed into the water fast enough to keep the
+       * vessel permanently stirred, and the stirring scours the bed, and so
+       * on. What a slip face sheds depends on how much sand went down it,
+       * not on how many arithmetic steps it took to work that out. */
       bedAdd(to, band, bedTook);
-      bedShed[to] += bedTook * BED_SLIP_EJECT;
     }
+  }
+
+  /* A submerged slide drags liquid with it, and the finest of what it
+   * carries stays up in that liquid rather than reaching the foot of the
+   * slope. Handing it to the erosion debt puts it back into the particle
+   * system as a cloud over the slip face — once per tick, in proportion to
+   * what actually crossed. */
+  for (let i = 0; i < N - 1; i++) {
+    if (bedMoved[i] <= 1e-6) continue;
+    /* How much of a cloud a slide raises depends on how fast it is running,
+     * not merely on how much went down. A face at its flux limit is a
+     * collapse and throws sand up into the water; a bed creeping the last
+     * fraction of a degree toward its repose angle is not moving fast enough
+     * to lift anything, and charging it the same fraction bleeds the pile
+     * into the vessel continuously — which stirs the liquid, and the stirred
+     * liquid scours the pile, and the picture oscillates between built and
+     * collapsed with nobody touching the phone. */
+    const rate = Math.min(1, bedMoved[i] / budget);
+    const lower = (surfaceFloor[i] + bedH[i]) <= (surfaceFloor[i + 1] + bedH[i + 1])
+      ? i : i + 1;
+    bedShed[lower] += bedMoved[i] * BED_SLIP_EJECT * rate;
   }
 }
 
@@ -6015,8 +6093,9 @@ function fixedStep(dt, time) {
     // Third law: whatever drag the liquid applied to the flake, the flake
     // applies back. Settling glitter displaces carrier upward and gives the
     // suspension its slow recirculating plumes.
-    scatterForce(p.x, p.y, (flow.x - p.vx) * p.mass * COUPLE,
-                           (flow.y - p.vy) * p.mass * COUPLE);
+    const couple = SAND ? SAND_COUPLE : COUPLE;
+    scatterForce(p.x, p.y, (flow.x - p.vx) * p.mass * couple,
+                           (flow.y - p.vy) * p.mass * couple);
     depositConc(p.x, p.y, p.r * p.r * Math.PI);
 
     p.x += p.vx * dt; p.y += p.vy * dt;
