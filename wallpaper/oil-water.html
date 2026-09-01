@@ -182,8 +182,7 @@ let GW = 0, GH = 0, NC = 0, cell = 0;
 let u, v, u0, v0;            // velocity, px/s, and its scratch
 let p, div;                  // pressure and divergence
 let phi, phi0, lap, mu;      // the phase field and its working set
-let curl;                    // local rotation, kept for the surface relief
-let ripple, ripple0, rippleBase;   // surface texture, carried by the flow
+let curl;                    // local rotation, for vorticity confinement
 let sc1, sc2;                // scratch for the second-order advection
 /* The velocity everything is advected *by*, held apart from the velocity
  * being advected. Reading u and v directly worked while advection only ever
@@ -208,9 +207,6 @@ function buildGrid() {
   curl = new Float32Array(NC);
   sc1 = new Float32Array(NC); sc2 = new Float32Array(NC);
   au = new Float32Array(NC); av = new Float32Array(NC);
-  ripple = new Float32Array(NC); ripple0 = new Float32Array(NC);
-  rippleBase = new Float32Array(NC);
-  seedRipple();
   solid = new Uint8Array(NC);
   for (let j = 0; j < GH; j++) {
     for (let i = 0; i < GW; i++) {
@@ -248,42 +244,6 @@ function seedPhase() {
   targetMean = meanPhi();
 }
 
-/* The standing surface texture.
- *
- * Three octaves of value noise on a lattice, which is the cheapest field that
- * has structure at more than one scale. The first version of the relief used
- * a sum of sine products instead, and it looked exactly like what it was: two
- * sinusoids multiplied together tile the plane in a regular diamond grid, so
- * the "ripples" came out as a crosshatch — a woven fabric laid over the
- * liquid rather than anything the liquid was doing.
- */
-function seedRipple() {
-  const rnd = mulberry32(CONFIG.seed ^ 0x81FF1E);
-  /* Nothing finer than about four cells. The field is stretched sevenfold on
-   * the way to the screen, so an octave at the grid's own Nyquist limit does
-   * not upscale into fine detail — it upscales into visible cell-sized
-   * blocks, which is what the two-cell octave was doing. */
-  for (const [period, amp] of [[13, 0.60], [7, 0.30], [4, 0.14]]) {
-    const lw = Math.ceil(GW / period) + 2, lh = Math.ceil(GH / period) + 2;
-    const lat = new Float32Array(lw * lh);
-    for (let q = 0; q < lat.length; q++) lat[q] = rnd() * 2 - 1;
-    for (let j = 0; j < GH; j++) {
-      for (let i = 0; i < GW; i++) {
-        const x = i / period, y = j / period;
-        const x0 = x | 0, y0 = y | 0;
-        let sx = x - x0, sy = y - y0;
-        // Smoothstep the interpolation weights, or the lattice shows through
-        // as a grid of creases and we are back to the crosshatch.
-        sx = sx * sx * (3 - 2 * sx); sy = sy * sy * (3 - 2 * sy);
-        const a = lat[y0 * lw + x0], b = lat[y0 * lw + x0 + 1];
-        const c = lat[(y0 + 1) * lw + x0], d2 = lat[(y0 + 1) * lw + x0 + 1];
-        rippleBase[j * GW + i] += amp *
-          ((1 - sy) * ((1 - sx) * a + sx * b) + sy * ((1 - sx) * c + sx * d2));
-      }
-    }
-  }
-  ripple.set(rippleBase);
-}
 
 function meanPhi() {
   let s = 0, m = 0;
@@ -322,7 +282,6 @@ function resize() {
   else { RX = RY = Math.min(W, H) * 0.5 * CONFIG.scale; }
   buildGrid();
   buildContour();
-  buildRelief();
   buildLayers();
   return true;
 }
@@ -565,10 +524,37 @@ const BUOY = 130;          // px/s^2 per g of effective gravity, between the pha
  * falls off a cliff.
  */
 const SHAKE_GAIN = num("gain", 25);
-const NU = 32;             // momentum diffusivity, cells^2/s
+/* Momentum diffusivity, cells^2/s, and the knob that decides how many ridges
+ * the oil's outline has.
+ *
+ * It sat at 32 and could not be raised, because the explicit diffusion below
+ * clamped its coefficient -- see the note there. Once the clamp was replaced
+ * by sub-stepping, the small-scale flow that corrugates the boundary could
+ * finally be damped. Counting curvature sign changes per body on one seeded
+ * shake, area-weighted (a circle scores 0, a peanut 2):
+ *
+ *   nu    at shake end   +1s   +3s   +10s   mean thickness
+ *    32        20         10     6      4        121 px
+ *    60         8          6     6      0        163 px
+ *    90         4          6     6      0        183 px
+ *   130         4          4     6      0        192 px
+ *
+ * 90 is where the outline becomes a few long curves rather than a crenellated
+ * edge, and it is as far as this should go: past it the cell is so viscous
+ * that a shake barely deforms the layer at all.
+ */
+const NU = num("nu", 90);
 const BULK_DRAG = 0.15;    // 1/s
 const WALL_DRAG = 1.6;     // 1/s, in the cells touching glass
-const VORTICITY = 2.2;     // eddy confinement
+/* Vorticity confinement, off.
+ *
+ * It exists to put back the small eddies that a coarse advection scheme
+ * dissipates, and it worked -- which is the problem. Those eddies are exactly
+ * what corrugates the oil's boundary, so the term was manufacturing the ridges
+ * the viscosity above is spent removing. At nu = 90 turning it off takes the
+ * ridge count from 6 to 4 and costs nothing else; kept as a knob because the
+ * argument for it is sound for a single-phase fluid, just not for this one. */
+const VORTICITY = num("vort", 0);
 const PROJECT_ITERS = 12;
 
 /* The phase field's own constants.
@@ -625,7 +611,6 @@ const MOBILITY = num("mob", 0.25);
  * tendrils gone, and that is the trade this page is making.
  */
 const TENSION = 12000 * CONFIG.tension;
-const RIPPLE_RESET = 0.55;   // 1/s, how fast the surface re-roughens
 
 function idx(i, j) { return j * GW + i; }
 
@@ -696,7 +681,7 @@ function advectMC(dst, src, dt) {
  *  component. No-slip would eat the flow at this grid resolution.
  *
  *  Everything defined on the grid has to come across, not just the velocity.
- *  The ripple field was left out of this at first, and since advection only
+ *  The phase field was left out of this at first, and since advection only
  *  writes the interior, the ring kept its seeded values while the inside
  *  evolved away from them — so the relief saw a cliff one cell wide all the
  *  way round the cell, and the specular pass, which is a high power of the
@@ -704,13 +689,13 @@ function advectMC(dst, src, dt) {
 function bounds() {
   for (let j = 1; j < GH - 1; j++) {
     const l = j * GW, r = j * GW + GW - 1;
-    u[l] = -u[l + 1]; v[l] = v[l + 1]; phi[l] = phi[l + 1]; ripple[l] = ripple[l + 1];
-    u[r] = -u[r - 1]; v[r] = v[r - 1]; phi[r] = phi[r - 1]; ripple[r] = ripple[r - 1];
+    u[l] = -u[l + 1]; v[l] = v[l + 1]; phi[l] = phi[l + 1];
+    u[r] = -u[r - 1]; v[r] = v[r - 1]; phi[r] = phi[r - 1];
   }
   for (let i = 0; i < GW; i++) {
     const t = i, b = (GH - 1) * GW + i;
-    u[t] = u[t + GW]; v[t] = -v[t + GW]; phi[t] = phi[t + GW]; ripple[t] = ripple[t + GW];
-    u[b] = u[b - GW]; v[b] = -v[b - GW]; phi[b] = phi[b - GW]; ripple[b] = ripple[b - GW];
+    u[t] = u[t + GW]; v[t] = -v[t + GW]; phi[t] = phi[t + GW];
+    u[b] = u[b - GW]; v[b] = -v[b - GW]; phi[b] = phi[b - GW];
   }
 }
 
@@ -774,6 +759,7 @@ function project() {
 /** Vorticity confinement, to give back the eddies a first-order advection
  *  scheme on a 56-cell grid smears away inside a second. */
 function vorticity(dt) {
+  if (!VORTICITY) return;   // default: the curl pass is not even walked
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
@@ -1073,14 +1059,39 @@ function fixedStep(dt) {
    * properly rather than by being asked for. It is also the reason a shaken
    * bottle clears from the top down: the big drops go first.
    */
-  const kd = Math.min(0.24, NU * CONFIG.viscosity * dt);
-  u0.set(u); v0.set(v);
-  for (let j = 1; j < GH - 1; j++) {
-    for (let i = 1; i < GW - 1; i++) {
-      const k = j * GW + i;
-      u[k] = u0[k] + kd * (u0[k - 1] + u0[k + 1] + u0[k - GW] + u0[k + GW] - 4 * u0[k]);
-      v[k] = v0[k] + kd * (v0[k - 1] + v0[k + 1] + v0[k - GW] + v0[k + GW] - 4 * v0[k]);
+  /* Sub-stepped, and that is not a refinement -- without it the viscosity
+   * knob did nothing at all.
+   *
+   * An explicit Laplacian is unstable above kd = 0.25 in two dimensions, so
+   * this clamped to 0.24. But nu*dt is already 0.53 at the default, so the
+   * clamp was always active: `visc` could only ever lower the viscosity, and
+   * raising nu from 32 to 64 to 128 returned bit-identical runs. The one
+   * knob that should damp the small-scale flow that corrugates the oil's
+   * boundary was pinned at a ceiling and silently ignoring its input.
+   *
+   * Splitting the same diffusion into n passes of kd/n each is stable and is
+   * the same operator, so the coefficient is free to be what the physics
+   * wants. The pass count must then follow the coefficient and not be capped
+   * on its own -- capping it at eight reintroduced exactly the bug above in a
+   * new place, and nu = 180 silently went past kd = 0.25 and blew the field
+   * to NaN. So the *viscosity* carries the ceiling, stated and clamped here,
+   * and the passes are however many that needs.
+   *
+   * The ceiling is cost, not stability: sixteen passes over the grid is the
+   * most this will spend, and at 1/60s that is nu = 192. */
+  const kdTotal = Math.min(16 * 0.2, NU * CONFIG.viscosity * dt);
+  const passes = Math.max(1, Math.ceil(kdTotal / 0.2));
+  const kd = kdTotal / passes;
+  for (let pass = 0; pass < passes; pass++) {
+    u0.set(u); v0.set(v);
+    for (let j = 1; j < GH - 1; j++) {
+      for (let i = 1; i < GW - 1; i++) {
+        const k = j * GW + i;
+        u[k] = u0[k] + kd * (u0[k - 1] + u0[k + 1] + u0[k - GW] + u0[k + GW] - 4 * u0[k]);
+        v[k] = v0[k] + kd * (v0[k - 1] + v0[k + 1] + v0[k - GW] + v0[k + GW] - 4 * v0[k]);
+      }
     }
+    bounds();
   }
   // A small bulk decay on top, so one big slow eddy does eventually stop
   // rather than turning forever, and the wall's grip on what touches it.
@@ -1108,25 +1119,7 @@ function fixedStep(dt) {
   phi0.set(phi);
   advectMC(phi, phi0, dt);
 
-  /* The surface texture rides the flow, which is what makes it read as the
-   * liquid's own surface rather than as a pattern printed over it: stir the
-   * cell and the ripples wind up into the eddies, because they are being
-   * carried by the same velocity field the oil is.
-   *
-   * Advection is dissipative, so left alone the texture smears flat after a
-   * few seconds of stirring. It is pulled slowly back toward its standing
-   * pattern instead — a surface being continuously re-roughened, which is
-   * also what stops a long shake leaving a dead mirror behind. */
-  ripple0.set(ripple);
-  advect(ripple, ripple0, dt);
-  const kr = RIPPLE_RESET * dt;
-  for (let j = 1; j < GH - 1; j++) {
-    for (let i = 1; i < GW - 1; i++) {
-      const k = j * GW + i;
-      ripple[k] += (rippleBase[k] - ripple[k]) * kr;
-    }
-  }
-
+  
   chemicalPotential();
   relaxPhase(dt);
   conserveMass();
@@ -1503,8 +1496,9 @@ function blit(layer) {
  *     it — the picture had no idea the liquid was in motion except that the
  *     silhouette changed shape.
  *
- * So: one saturated fill, two edge treatments, and the relief in `drawRelief`
- * below, which is where the liquid actually comes from.
+ * So: one saturated fill and two edge treatments. The third thing that used
+ * to be here -- a lit relief over the whole screen -- is gone; see the note
+ * below drawOil for why.
  */
 function drawOil(path) {
   const lx = Math.cos(lightAngle), ly = Math.sin(lightAngle);
@@ -1571,148 +1565,21 @@ function drawOil(path) {
   ctx.restore();
 }
 
-/* ------------------------------------------------------- the surface moving
+/* There is no surface relief on either liquid, and there used to be.
  *
- * The relief. Both liquids get it, because both of them are liquids.
+ * The page carried an advected noise field and lit it as a height map, blended
+ * over the whole screen: a standing "chop" on the resting liquid plus a
+ * picture of the flow once it moved. It was argued for at length, and it was
+ * wrong. Still liquid is not textured -- it is a mirror -- and mottling laid
+ * over both phases read as sponged plaster on the water and as marbled stone
+ * on the oil, which is the opposite of the wet, poured look the whole page is
+ * for. It also fought the thing that actually carries the read here, which is
+ * the shape of the boundary.
  *
- * The height of a disturbed surface is not the velocity — a fluid translating
- * bodily has a flat top, and shading by velocity would put a bright band
- * across a cell that was merely sliding. What lifts and dips a surface is the
- * *rotation* in it: an eddy has a low centre, a shear layer ripples along its
- * length. So the relief is the curl, which is exactly zero for uniform motion
- * and largest where the flow is being wound up.
- *
- * Shaded by dotting its gradient into the light, that gives bright and dark
- * bands lying along the eddies and sliding as they move — and it costs one
- * pass over a fifty-six cell grid, drawn once as an image and stretched, so
- * the softness is free and honest: surface relief on a slow viscous liquid
- * genuinely has no hard edges.
- *
- * Underneath it a slow chop keeps a resting cell from being a dead flat
- * colour, at an amplitude chosen to be felt rather than seen.
+ * Removed outright rather than turned down: the ripple field, its advection,
+ * its re-roughening, its share of the boundary conditions, and both passes
+ * over the grid it needed every frame.
  */
-let reliefCanvas = null, reliefCtx = null, reliefImage = null;
-/* The relief cannot use a fixed gain, and measuring it is what showed why.
- * The 90th percentile of the signal is 0.11 in a cell at rest, 49 while it is
- * being shaken, 2.8 two seconds later and 0.4 after ten — four orders of
- * magnitude. Any single number is either invisible at one end or railed at
- * the other, and both were tried: at 6.5 everything clipped and the surface
- * became a contour map; at 0.0033 the surface went flat.
- *
- * So it is normalised against a slow running average of its own magnitude.
- * That is not a cheat — it is what an eye does. What you read off a liquid
- * surface is the *shape* of the relief, not its absolute amplitude, and a
- * surface does not stop looking like a surface because the light dimmed.
- *
- * The floor matters as much as the average. Without it, a cell at rest has
- * its own numerical noise amplified until the surface fizzes; with it, the
- * flow relief fades out as the motion dies and the designed chop below is
- * what is left, which is the right thing to be looking at when nothing is
- * happening. */
-const RELIEF_TARGET = 2.4, RELIEF_FLOOR = 0.02;
-let reliefScale = RELIEF_FLOOR;
-
-function buildRelief() {
-  if (!reliefCanvas) {
-    reliefCanvas = document.createElement("canvas");
-    reliefCtx = reliefCanvas.getContext("2d");
-  }
-  if (reliefCanvas.width !== GW || reliefCanvas.height !== GH) {
-    reliefCanvas.width = GW; reliefCanvas.height = GH;
-  }
-  reliefImage = reliefCtx.createImageData(GW, GH);
-}
-
-function drawRelief(t) {
-  if (!reliefImage) return;
-  const lx = Math.cos(lightAngle), ly = Math.sin(lightAngle);
-  const d = reliefImage.data;
-  // One pass to see how strong the field currently is, then a slow follow so
-  // the normalisation cannot flicker frame to frame.
-  let acc = 0, n2 = 0;
-  for (let j = 1; j < GH - 1; j++) {
-    for (let i = 1; i < GW - 1; i++) {
-      const k = j * GW + i;
-      acc += Math.abs((ripple[k + 1] - ripple[k - 1]) * 0.5 * lx
-                    + (ripple[k + GW] - ripple[k - GW]) * 0.5 * ly);
-      n2++;
-    }
-  }
-  const want = Math.max(RELIEF_FLOOR, n2 ? acc / n2 * 3.2 : RELIEF_FLOOR);
-  reliefScale += (want - reliefScale) * (want > reliefScale ? 0.12 : 0.03);
-  const gain = RELIEF_TARGET / reliefScale;
-
-  /* How hard the relief is drawn is a separate question from what shape it
-   * is, and conflating the two was the last thing wrong with this.
-   *
-   * Normalising to a constant contrast gives a resting cell the same heavy
-   * mottling as a churning one, and a resting cell then reads as sponged
-   * plaster rather than as liquid — because still liquid is not textured at
-   * all. It is a mirror. The texture is what motion does to it.
-   *
-   * So the field supplies the shape, normalised, and the amount of motion in
-   * the cell supplies the amplitude. At rest that leaves a whisper of sheen;
-   * a second after a shake it is at full strength. */
-  let ke = 0;
-  for (let j = 1; j < GH - 1; j++) {
-    for (let i = 1; i < GW - 1; i++) {
-      const k = j * GW + i;
-      ke += u[k] * u[k] + v[k] * v[k];
-    }
-  }
-  const m = Math.min(1, Math.sqrt(ke / Math.max(1, n2)) / 260);
-  const amp = 0.13 + 0.87 * (m * m * (3 - 2 * m));
-
-  /* Every cell, including the ring. Filling only the interior leaves the
-   * border pixels of the image at zero alpha, and because the image is drawn
-   * a cell oversized on each side that transparent edge lands just inside the
-   * screen as a hairline seam down both sides and across the top. */
-  for (let j = 0; j < GH; j++) {
-    const jc = j === 0 ? 1 : j === GH - 1 ? GH - 2 : j;
-    for (let i = 0; i < GW; i++) {
-      const ic = i === 0 ? 1 : i === GW - 1 ? GW - 2 : i;
-      const k = jc * GW + ic;
-      /* Slope of the surface along the light. The height is the advected
-       * texture, so this is one field doing both jobs: it is the standing
-       * chop of a resting liquid, and — because the flow carries it — it is
-       * also the picture of the flow. The curl term the first version used
-       * only ever showed the second, so a still cell had no surface at all. */
-      const hx = (ripple[k + 1] - ripple[k - 1]) * 0.5;
-      const hy = (ripple[k + GW] - ripple[k - GW]) * 0.5;
-      let s = (hx * lx + hy * ly) * gain;
-      // Saturated smoothly rather than clipped: a hard clamp puts a crease
-      // everywhere the field crosses the rail, and on a fifty-six cell grid
-      // stretched to a phone screen every crease is a visible step.
-      s = s / (1 + Math.abs(s));
-      // Mid grey is "no change" under soft-light, so the field is drawn as a
-      // deviation from it and the blend does the lightening and darkening.
-      /* The glint rides in the same channel as the relief rather than in a
-       * second image. Overlay drives hard toward white as the source
-       * approaches it, so a bright enough value in this one map *is* the
-       * specular — and a full-screen blend costs the same whether the grid
-       * under it is forty cells or ninety, which is why two of them halved
-       * the frame rate while the solver's own cost barely showed. */
-      const gl = s > 0.28 ? Math.pow((s - 0.28) / 0.72, 2.2) : 0;
-      let g = 128 + s * 62 * amp + gl * 105 * amp;
-      if (g > 255) g = 255; else if (g < 0) g = 0;
-      const p = (j * GW + i) * 4;
-      d[p] = d[p + 1] = d[p + 2] = g;
-      d[p + 3] = 255;
-    }
-  }
-  reliefCtx.putImageData(reliefImage, 0, 0);
-  ctx.save();
-  ctx.globalCompositeOperation = "overlay";
-  ctx.globalAlpha = 0.72;
-  ctx.imageSmoothingEnabled = true;
-  // The grid's ring sits outside the visible cell, so the image is drawn one
-  // cell oversized on every side to line the interior up with the screen.
-  const ox = (CONFIG.mode === "full" ? 0 : CX - RX) - cell;
-  const oy = (CONFIG.mode === "full" ? 0 : CY - RY) - cell;
-  ctx.drawImage(reliefCanvas, ox, oy,
-    GW * cell, GH * cell);
-  ctx.restore();
-}
 
 function render() {
   const ux = -gDir.x, uy = -gDir.y, a = -0.42;
@@ -1737,7 +1604,6 @@ function render() {
   blit(backLayer);
   contour();
   if (loopCount) drawOil(oilPath());
-  drawRelief(simTime);
   blit(glossLayer);
   ctx.restore();
 }
@@ -1865,11 +1731,27 @@ window.__shaker = {
     }
   },
 
-  /** A tap on the glass: a short shear pulse under the finger. A radial push
-   *  would be pure divergence and the projection would delete every bit of
-   *  it, which is measured and not assumed — see the shaker. */
+  /** A tap on the glass: a shear pulse under the finger. A radial push would
+   *  be pure divergence and the projection would delete every bit of it,
+   *  which is measured and not assumed — see the shaker.
+   *
+   *  Wide and strong, and it has to be. The pulse used to be 1.6 contact radii
+   *  at 620px/s, and at that scale the viscosity above erases it inside two
+   *  frames: measured, a tap moved the oil's perimeter by half a per cent and
+   *  it was back to rest a quarter second later. That is the viscosity working
+   *  as designed -- small-scale motion is exactly what it exists to kill -- so
+   *  the tap has to stop being small-scale. Radius does most of the work:
+   *
+   *    radius  strength   perimeter, rest -> +0.25s -> +1s -> +3s
+   *      1.6      620       374 -> 376 -> 374 -> 374
+   *      3.5     1400       374 -> 398 -> 382 -> 374
+   *      5.0     2600       374 -> 456 -> 444 -> 382
+   *      7.0     2600       374 -> 504 -> 564 -> 494   (never settles)
+   *
+   *  At five radii the oil visibly bulges and heals over about three seconds,
+   *  which is what a finger in a viscous liquid does. */
   tap(nx, ny) {
-    const x = nx * W, y = ny * H, R = STIR_R * cell * 1.6;
+    const x = nx * W, y = ny * H, R = STIR_R * cell * 5;
     for (let j = 1; j < GH - 1; j++) {
       for (let i = 1; i < GW - 1; i++) {
         const k = j * GW + i;
@@ -1878,8 +1760,8 @@ window.__shaker = {
         if (d > R) continue;
         const w = 1 - d / R;
         // A curl about the tap, which is what survives the projection.
-        u[k] += -dy / (d + 1e-3) * 620 * w;
-        v[k] += dx / (d + 1e-3) * 620 * w;
+        u[k] += -dy / (d + 1e-3) * 2600 * w;
+        v[k] += dx / (d + 1e-3) * 2600 * w;
       }
     }
   },
@@ -1955,6 +1837,73 @@ window.__shaker = {
        * well, and a body only a few interface-widths across is skin all the
        * way through. Near zero is thick oil; above about a third is tendrils.
        */
+      /* How many separate ridges each oil body's outline has, area-weighted.
+       *
+       * "Too many ridges and bumps -- it should be a couple per blob" is a
+       * statement about the *outline*, and neither thickness nor roundness
+       * says it. Roundness scores a smooth ellipse and a smooth peanut
+       * differently while scoring a smooth circle and a gently rippled one
+       * almost the same, which is backwards for this question.
+       *
+       * This walks each loop, takes the discrete curvature at every vertex,
+       * smooths it enough that a single lattice cell cannot register, and
+       * counts its sign changes. Every convex bulge separated by a concave
+       * neck is one crossing pair, so the count is twice the number of
+       * lobes: a circle or an ellipse gives 0, a peanut 2, a starfish 10.
+       */
+      lobes: (() => {
+        let num2 = 0, den = 0;
+        const kap = [];
+        for (let L = 0; L < loopCount; L++) {
+          const st = loopStart[L], en = loopStart[L + 1], m = en - st;
+          if (m < 12) continue;
+          kap.length = m;
+          let A = 0;
+          for (let n = 0; n < m; n++) {
+            const a2 = st + (n + m - 1) % m, c = st + n, b2 = st + (n + 1) % m;
+            const x0 = loopXY[a2 * 2], y0 = loopXY[a2 * 2 + 1];
+            const x1 = loopXY[c * 2], y1 = loopXY[c * 2 + 1];
+            const x2 = loopXY[b2 * 2], y2 = loopXY[b2 * 2 + 1];
+            A += x1 * y2 - x2 * y1;
+            // Twice the signed triangle area over the product of the three
+            // side lengths is the Menger curvature, and needs no angles.
+            const a = Math.hypot(x1 - x0, y1 - y0);
+            const b = Math.hypot(x2 - x1, y2 - y1);
+            const c2 = Math.hypot(x2 - x0, y2 - y0);
+            const cross = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+            kap[n] = (a * b * c2) > 1e-9 ? 2 * cross / (a * b * c2) : 0;
+          }
+          /* Smoothed hard, and that is the whole difficulty of the metric:
+           * unsmoothed, the marching-squares vertices alone put a curvature
+           * sign change every few points and every body scores in the
+           * hundreds regardless of what it looks like. */
+          for (let pass = 0; pass < 12; pass++) {
+            let prev = kap[m - 1], first = kap[0];
+            for (let n = 0; n < m; n++) {
+              const next = n === m - 1 ? first : kap[n + 1];
+              const cur = kap[n];
+              kap[n] = cur * 0.5 + (prev + next) * 0.25;
+              prev = cur;
+            }
+          }
+          let scale = 0;
+          for (let n = 0; n < m; n++) scale += Math.abs(kap[n]);
+          scale /= m;
+          // A crossing only counts once the curvature has actually committed
+          // to a sign, or noise about zero reads as a ridge.
+          const gate = scale * 0.35;
+          let sign = 0, crossings = 0;
+          for (let n = 0; n < m; n++) {
+            const v2 = kap[n];
+            if (v2 > gate) { if (sign === -1) crossings++; sign = 1; }
+            else if (v2 < -gate) { if (sign === 1) crossings++; sign = -1; }
+          }
+          A = Math.abs(A) * 0.5;
+          if (A <= 0) continue;
+          num2 += crossings * A; den += A;
+        }
+        return den > 0 ? num2 / den : 0;
+      })(),
       skinFraction: (() => {
         let oil = 0, skin = 0;
         for (let j = 1; j < GH - 1; j++)

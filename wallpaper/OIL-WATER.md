@@ -336,60 +336,93 @@ anywhere in the frame, and **a picture of a liquid with no specular in it is a
 picture of a piece of paper.** Fixing that alone did more than every wash in
 the second version put together.
 
-**The velocity field was not being drawn.** The page had a full fluid solver
-and the only evidence of it on screen was that the silhouette changed shape.
-A still liquid is a mirror; a moving liquid is a mirror being bent, and the
-bright and dark bands sliding across it are the single most recognisable thing
-about the material.
+**The velocity field was not being drawn**, and the fix for that was a
+mistake — a long, well-argued, thoroughly measured mistake, and it is worth
+recording as one.
 
-So the surface got a height field of its own: a noise texture that is
-**advected by the same flow that carries the oil**, shaded by dotting its
-gradient into the light. Stir the cell and the ripples wind into the eddies,
-because they are being carried by the velocity field, not drawn on top of one.
-It is pulled slowly back toward a standing pattern as it goes, because
-advection is dissipative and a long shake would otherwise leave a dead mirror
-behind.
+The reasoning went: a still liquid is a mirror, a moving liquid is a mirror
+being bent, and the bright and dark bands sliding across it are the single
+most recognisable thing about the material. So the surface got a height field
+of its own — three octaves of value noise, advected by the same flow that
+carries the oil, shaded by dotting its gradient into the light, normalised
+against a running average of its own magnitude, with a glint pass on the
+steepest few per cent. Four separate sub-problems were found and solved along
+the way (a sine-product pattern reads as woven fabric; nothing finer than four
+cells survives the upscale; the gain spans four orders of magnitude between
+rest and shake so it cannot be a constant; contrast and amplitude are
+different questions). It also turned up a real bug in `bounds()`, which
+carried velocity and phase across the wall ring but not the noise field, so
+the ring kept its seeded values while the interior evolved away from them and
+the glint turned that one-cell cliff into a blown-out white border.
 
-Four things about that took measurement rather than judgement:
+All of that was correct work on the wrong idea. Every octave of it was texture
+laid over **both** phases, and mottling on a flat colour reads as sponged
+plaster on the water and as marbled stone on the oil — the opposite of the
+wet, poured look the page exists for. Worse, it competed with the only thing
+that actually carries the read here, which is the shape of the boundary.
 
-- **A sum of sine products is a crosshatch.** The first standing pattern was
-  two sinusoids multiplied, which tiles the plane in a regular diamond grid.
-  It read as woven fabric laid over the liquid. Value noise on a lattice,
-  three octaves, fixed it.
-- **Nothing finer than about four cells.** The field is stretched sevenfold on
-  the way to the screen, so an octave near the grid's Nyquist limit does not
-  become fine detail — it becomes visible cell-sized blocks.
-- **The gain cannot be a constant.** Measured, the 90th percentile of the
-  relief signal is 0.11 in a resting cell, 49 while it is being shaken, 2.8
-  two seconds later and 0.4 after ten. Four orders of magnitude. Both fixed
-  values tried were wrong at one end: too high and everything clipped to the
-  rails, leaving only the one-cell transition between them, which upscaled
-  into a staircase and read as a contour map; too low and the surface went
-  flat again. It is normalised against a slow running average of its own
-  magnitude instead, and saturated smoothly rather than clipped, because a
-  hard clamp puts a crease everywhere the field crosses the rail.
-- **Contrast and amplitude are different questions.** Normalising to a
-  constant contrast gave a resting cell the same heavy mottling as a churning
-  one, and a resting cell then read as sponged plaster — because still liquid
-  is not textured at all. The field supplies the shape; the amount of motion
-  in the cell supplies the amplitude. At rest that leaves a whisper of sheen.
+It is gone: the noise field, its advection, its re-roughening, its share of
+the boundary conditions, the relief pass and the glint pass. The frame rate
+under the software rasteriser went from 13 to 26fps, which is the other half
+of the cost that was being paid for it.
 
-On top of the relief there is a **glint** pass: the slope raised to a high
-power, so only the steepest few per cent survive, added rather than blended so
-it can go brighter than anything else in the frame. A lighten-and-darken pass
-is symmetric and a real surface is not — the crests that happen to face the
-lamp send it straight back at you and everything else does not, which is why
-water reads as a scatter of small very bright marks rather than an even
-modulation.
+What survives from that whole section is the first bullet — the highlights
+were sub-pixel and now are not — and it is still the largest single
+improvement made to how this page looks. The meniscus, the wet line and the
+rim are the specular now, and they sit exactly where the eye wants them,
+which is on the edge.
 
-That pass also found a real bug in the solver's boundary handling. `bounds()`
-carried the velocity and the phase field across the wall ring but not the
-ripple, and since advection only writes the interior, the ring kept its seeded
-values while the inside evolved away from them. The relief saw a cliff one
-cell wide all the way round the cell, and the glint, being a high power of the
-slope, turned that cliff into a blown-out white border. Anything defined on
-the grid has to come across the boundary, not just the parts that obviously
-move.
+## The oil's outline: ridges per blob
+
+An oil blob's outline should be a few long curves. This one was crenellated,
+and neither of the metrics here said so: thickness averages over whole bodies,
+and roundness scores a smooth ellipse and a smooth peanut differently while
+scoring a smooth circle and a gently rippled one almost the same — backwards
+for this question.
+
+So `lobes` counts it directly: the discrete curvature at every vertex of a
+loop, smoothed hard enough that a single lattice cell cannot register, and its
+sign changes tallied. Each convex bulge separated by a concave neck is one
+crossing pair, so a circle or an ellipse scores 0, a peanut 2, a starfish 10.
+It read 20 to 34 straight after a shake.
+
+The cause was the momentum diffusivity, and the reason it had never been tuned
+is that **it could not be**. The viscous step is an explicit Laplacian, which
+is unstable above a coefficient of 0.25 in two dimensions, so it clamped at
+0.24 — but `nu * dt` was already 0.53 at the default, so the clamp was always
+active. Raising `nu` from 32 to 64 to 128 returned bit-identical runs. The one
+knob that damps the small-scale flow that corrugates a boundary was pinned at
+a ceiling and silently discarding its input.
+
+Splitting the same diffusion into *n* passes of `kd/n` each is stable and is
+the same operator, so the coefficient became free:
+
+| `nu` | ridges at shake end | +1s | +3s | +10s | mean thickness |
+| --- | --- | --- | --- | --- | --- |
+| 32 | 20 | 10 | 6 | 4 | 121 px |
+| 60 | 8 | 6 | 6 | 0 | 163 px |
+| **90** | **4** | **6** | **6** | **0** | **183 px** |
+| 130 | 4 | 4 | 6 | 0 | 192 px |
+
+90 is where the outline becomes a few long curves, and it is as far as this
+should go — past it the cell is too viscous for a shake to deform the layer.
+
+Capping the *pass count* at eight rather than the viscosity reintroduced the
+identical bug one layer down: at `nu = 180` the per-pass coefficient went back
+over 0.25 and the field went to NaN. The ceiling now sits on the viscosity,
+where it is stated, and the passes follow it.
+
+**Vorticity confinement is off.** It exists to put back the small eddies a
+coarse advection scheme dissipates, and it worked — which was the problem. It
+was manufacturing precisely the ridges the viscosity is spent removing. Off
+takes the count from 6 to 4 and costs nothing else.
+
+**The tap had to be rebuilt to survive it.** A shear pulse of 1.6 contact
+radii at 620px/s is small-scale motion, which is what the new viscosity exists
+to erase: measured, a tap moved the oil's perimeter by half a per cent and was
+gone in a quarter second. Radius does most of the work — at five radii and
+2,600px/s the oil bulges by a fifth and heals over about three seconds, which
+is what a finger in a viscous liquid does.
 
 ## Options
 
@@ -408,7 +441,9 @@ Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
 | `mob` | `0.25` | Phase-field relaxation rate. Its ceiling is Cahn–Hilliard stability, `dt·M·eps²·64 < 2` |
 | `sm` | `24` | Contour smoothing passes |
 | `buoyancy` | `1` | Density difference. At 0 the fluids weigh the same, they never separate, and shaking does literally nothing |
-| `visc` | `1` | Momentum diffusivity, which sets how fast droplets rise |
+| `visc` | `1` | Multiplies `nu`. Momentum diffusivity sets how fast droplets rise and, through it, how many ridges the oil's outline carries |
+| `nu` | `90` | Momentum diffusivity in cells²/s. The ridge knob — see above |
+| `vort` | `0` | Vorticity confinement. Non-zero puts back small eddies, and corrugates the oil |
 | `glass` | `0` | 0 is opaque water (a wallpaper); 1 drops the water so an icon shows the home screen through the cell |
 | `seed` | `20260831` | Names a cell: the same seed gives the same starting interface and the same sequence of shakes |
 | `n` / `scale` | `4` / `0.78` | Corner squareness and size, `pouch` mode only |
@@ -456,17 +491,18 @@ Driven headless in Chromium at 393×852 on the virtual clock described above.
 
 | Property | Result |
 | --- | --- |
-| Determinism from `seed` | three runs bit-identical: thickness 161.7px, 4 bodies, roundness 0.592, oil 0.4262, rms 17.77 |
-| Sensor-rate independence (30 / 60 / 144 events per second) | skin fraction 0.22 / 0.18 / 0.19, thickness 169 / 183 / 190px, oil 0.423 / 0.416 / 0.420. Before the filters were made time-based: 0.15 / 0.32 / 0.61 |
+| Determinism from `seed` | three runs bit-identical: 0 ridges, thickness 192px, roundness 0.79, oil 0.422, rms 4 |
+| Sensor-rate independence (30 / 60 / 144 events per second) | 0 ridges at all three; skin fraction 0.05 / 0.06 / 0.06, thickness 192px at all three, oil 0.422 / 0.422 / 0.423. Before the filters were made time-based the skin fraction was 0.15 / 0.32 / 0.61 |
 | Mass, across a shake and 30s of settling | oil fraction 0.423 → 0.426 → 0.423; nothing lost. At the old shake gain a third of the oil disappeared |
 | Rest state | 2–3 px/s RMS |
-| Settling after a 2.5s shake | 192 → 119 → 52 → 18 → 2 px/s at +0 / +1 / +3 / +10 / +30s |
-| Thickness after a 2.5s shake | 77px at the end of the shake, recovering to 162px by +10s and 192px by +30s |
-| Oil with no interior ("tendrils") | 0.19 at the end of the shake, 0.29 at +30s; 0.02 at rest |
+| Settling after a 2.5s shake | 210 → 105 → 32 → 4 → 1 px/s at +0 / +1 / +3 / +10 / +30s |
+| Thickness after a 2.5s shake | 120px at the end of the shake, recovering to 183px by +3s and 192px by +10s |
+| Oil with no interior ("tendrils") | 0.06 at the end of the shake, 0.10 at +30s; 0.02 at rest |
+| Ridges per body | 4 at the end of the shake, 6 at +1s and +3s, 0 once settled |
 | A planted square, no gravity | isoperimetric quotient 0.81 → 0.99 in 2s, 1.00 by 4s |
 | A planted plus-sign, no gravity | 0.69 → 1.00 in 2s |
 | Five planted droplets, no gravity, 40s | 4 of 5 survive (was 2 of 5 under the global multiplier) |
-| Tap and page-offset interaction, then pause/resume | no error, state finite |
+| Tap and page-offset interaction, then pause/resume | no error, state finite; a tap raises RMS from 4 to 16 px/s and puts 4 ridges on the settled outline, which heal |
 | Mobility set to zero | interface smears to 96% of the cell and never separates — i.e. it becomes the shaker's dye |
 
 **The roundness metric was itself wrong for most of this work.** It computed
@@ -477,17 +513,22 @@ started succeeding, and steering by it argued for fewer, larger blobs, which
 is the opposite of what oil in water should do. It is now computed per body
 and averaged with area as the weight.
 
-| `grid` | cells | solver ms/step | fps (software) |
+| `grid` | cells | ms/frame (step + render) | fps (software) |
 | --- | --- | --- | --- |
-| 40 | 3,480 | 2.3 | 27 |
-| 56 | 6,776 | 2.6 | 22 |
-| 96 (default) | 19,968 | 7.5 | 22 |
-| 128 | 31,200 | 12.6 | 19 |
+| 40 | 3,480 | 2.1 | 48 |
+| 56 | 6,776 | 4.1 | 50 |
+| 96 (default) | 19,968 | 12.1 | 26 |
+| 128 | 35,456 | 20.7 | 14 |
 
-The solver column is the one that transfers to a phone; the fps column is a
-software rasteriser doing full-screen blending, which is the single thing a
-GPU is best at. At 96 cells a step costs 7.5ms, leaving about 9ms of a
-sixtieth of a second for everything else.
+Re-measured after the relief pass was removed; the frame rate at the default
+grid went from 13 to 26fps, which is what a full-screen blend over every pixel
+was costing. The ms column is step plus render together, in a headless
+software rasteriser, so the render half of it is the part a GPU makes nearly
+free and the part that does not transfer to a phone.
+
+The eight viscosity sub-passes that the ridge fix needs are not what costs
+anything: the same frame with one pass instead of eight is 10.6ms against
+11.7ms.
 
 ## What was actually wrong
 
