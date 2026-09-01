@@ -61,8 +61,36 @@ overridden by passing it.
 `bubbles` is the same pipeline pointed somewhere else. There is no bulb, so
 nothing in frame is a lamp; the wax glows uniformly rather than over a heater;
 and it is small enough that the convection roll carries it instead of buoyancy,
-so it never returns to the floor. Four times the population at half the size is
-what keeps it as a field of bubbles rather than a few merged masses.
+so it never returns to the floor.
+
+Two flags do most of the work in it, and both behave in ways their names do not
+suggest:
+
+**`--threshold` is the size control**, more than `--blob-size` is. Lowering it
+renders a larger blob from the same influence radius *and* makes blobs fuse only
+when much closer — bigger and less sticky at once. Solving the merge condition
+`2·s·(1 − d²/R²)³ = T` at the midpoint between two elements gives the gap at
+which they join, in units of their rendered radius:
+
+| `--threshold` | surface/influence | fuses across a gap of |
+| --- | --- | --- |
+| 0.30 | 0.664 | 0.25 radii |
+| 0.45 | 0.626 | 0.30 radii |
+| 0.60 | 0.575 | 0.38 radii |
+| 1.00 | 0.454 | 0.68 radii |
+| 1.50 | 0.302 | 1.49 radii |
+
+Raising `--blob-size` on its own runs into the wall that table describes: past
+about 0.17 at a threshold of 1.0 the field stops being bubbles and becomes a
+few fused masses.
+
+**`--accent`** gives the vessel a second colour at its floor, and grades the wax,
+the medium's absorption and its scattering from that colour up to the palette's
+own. All three, because grading only some of them is what makes a scene look
+like coloured objects in front of an unrelated background. The scattering in
+particular has to grade rather than take the average of the two ends: orange
+averaged with violet is brown, and a volume lit uniformly brown makes the whole
+frame dusty with neither end reading as its own colour.
 
 ### Presets
 

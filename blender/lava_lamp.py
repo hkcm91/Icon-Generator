@@ -74,9 +74,10 @@ LOOKS = {
     "lamp": {},
     "bubbles": {
         "palette": "bubblegum", "no_pool": True,
-        "blobs": 60, "droplets": 36, "blob_size": 0.145, "size_spread": 1.1,
-        "threshold": 0.45, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
-        "glow": 1.35, "glow_reach": 1.0, "bulb": 0.0, "crown": 700.0,
+        "blobs": 46, "droplets": 28, "blob_size": 0.21, "size_spread": 1.1,
+        "threshold": 0.30, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
+        "accent": "1.0,0.35,0.03",
+        "glow": 1.05, "glow_reach": 1.0, "bulb": 0.0, "crown": 700.0,
         "env": 0.15, "haze": 0.8, "density": 1.6,
         "view_transform": "Standard",
     },
@@ -208,6 +209,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                      help="override the palette's medium as r,g,b in 0-1")
     wax.add_argument("--metal-colour", default="",
                      help="override the palette's metal as r,g,b in 0-1")
+    wax.add_argument("--accent", default="",
+                     help="a second colour for the floor of the vessel, as "
+                          "r,g,b in 0-1. Given one, both the wax and the "
+                          "medium grade from it at the bottom to their own "
+                          "colour at the top, so the whole frame carries one "
+                          "gradient rather than the wax carrying a different "
+                          "one from the ground behind it. Empty or 'none' "
+                          "for a single-colour scene")
 
     motion = p.add_argument_group("motion")
     motion.add_argument("--loop", type=int, default=0,
@@ -343,6 +352,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.wax_rgb = _colour(args.wax_colour, wax_c)
     args.liquid_rgb = _colour(args.liquid_colour, liquid_c)
     args.metal_rgb = _colour(args.metal_colour, metal_c)
+    args.accent_rgb = (None if args.accent.strip().lower() in ("", "none")
+                       else _colour(args.accent, (1.0, 1.0, 1.0)))
     if args.fill <= 0.0:
         args.fill = 0.94 if args.shape == "lamp" else 1.0
     if args.depth <= 0.0:
@@ -644,8 +655,9 @@ def glass_material() -> bpy.types.Material:
     return mat
 
 
-def liquid_material(reference: bpy.types.Object, height: float,
-                    colour, density: float, haze: float) -> bpy.types.Material:
+def liquid_material(reference: bpy.types.Object, height: float, colour,
+                    density: float, haze: float,
+                    accent=None) -> bpy.types.Material:
     """The medium the wax moves through: clear surface, tinted volume.
 
     Absorption rather than a coloured surface, so the tint deepens with the
@@ -685,7 +697,8 @@ def liquid_material(reference: bpy.types.Object, height: float,
     ramp = tree.nodes.new("ShaderNodeValToRGB")
     ramp.location = (0, -200)
     ramp.color_ramp.elements[0].position = 0.0
-    ramp.color_ramp.elements[0].color = rgba(scaled(colour, 0.9))
+    ramp.color_ramp.elements[0].color = rgba(
+        scaled(accent, 0.75) if accent is not None else scaled(colour, 0.9))
     ramp.color_ramp.elements[1].position = 1.0
     ramp.color_ramp.elements[1].color = rgba(scaled(colour, 1.6))
 
@@ -712,7 +725,16 @@ def liquid_material(reference: bpy.types.Object, height: float,
     scatter.location = (300, -480)
     scatter.inputs["Density"].default_value = haze
     scatter.inputs["Anisotropy"].default_value = 0.35
+    # The scattering colour has to grade with height too. Averaging the two
+    # ends into one flat colour — which is what this did first — lights the
+    # whole volume with the mixture, and the mixture of orange and violet is
+    # brown. The frame went dusty from top to bottom and neither end read as
+    # its own colour.
     scatter.inputs["Color"].default_value = rgba(scaled(colour, 2.2))
+    if accent is not None:
+        warm = height_ramp(tree, reference, height, scaled(accent, 2.0),
+                           scaled(colour, 2.2), -760)
+        tree.links.new(warm.outputs["Color"], scatter.inputs["Color"])
 
     add = tree.nodes.new("ShaderNodeAddShader")
     add.location = (450, -300)
@@ -722,8 +744,43 @@ def liquid_material(reference: bpy.types.Object, height: float,
     return mat
 
 
+def height_ramp(tree, reference: bpy.types.Object, height: float,
+                low, high, y: int = -200):
+    """A colour ramp driven by height in the vessel, `low` at the floor.
+
+    Anchored to the vessel rather than to whatever object carries the
+    material, for the same reason everything else here is: the wax is one
+    metaball family sharing one material, and coordinates taken from the wax
+    itself would give every blob the same gradient over its own body however
+    high it had climbed.
+    """
+    coord = tree.nodes.new("ShaderNodeTexCoord")
+    coord.location = (-1000, y)
+    coord.object = reference
+
+    mapping = tree.nodes.new("ShaderNodeMapping")
+    mapping.location = (-800, y)
+    mapping.inputs["Scale"].default_value = (1.0, 1.0, 1.0 / height)
+
+    sep = tree.nodes.new("ShaderNodeSeparateXYZ")
+    sep.location = (-620, y)
+
+    ramp = tree.nodes.new("ShaderNodeValToRGB")
+    ramp.location = (-440, y)
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color = rgba(low)
+    ramp.color_ramp.elements[1].position = 1.0
+    ramp.color_ramp.elements[1].color = rgba(high)
+
+    tree.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
+    tree.links.new(mapping.outputs["Vector"], sep.inputs["Vector"])
+    tree.links.new(sep.outputs["Z"], ramp.inputs["Fac"])
+    return ramp
+
+
 def wax_material(reference: bpy.types.Object, height: float, colour,
-                 glow: float, heat: float, blob: float) -> bpy.types.Material:
+                 glow: float, heat: float, blob: float,
+                 accent=None) -> bpy.types.Material:
     """Translucent wax, hot at the floor and cooling as it climbs.
 
     Two things make wax read as wax rather than as plastic. The first is
@@ -745,6 +802,10 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
     bsdf.location = (300, 0)
     put(bsdf, ("Base Color",), rgba(colour))
+    grade = None
+    if accent is not None:
+        grade = height_ramp(tree, reference, height, accent, colour, -640)
+        tree.links.new(grade.outputs["Color"], bsdf.inputs["Base Color"])
     put(bsdf, ("Roughness",), 0.24)
     put(bsdf, ("IOR",), 1.45)
     put(bsdf, ("Subsurface Weight", "Subsurface"), 0.7)
@@ -775,7 +836,10 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
         # and no bottom.
         emission = socket(bsdf, ("Emission Color", "Emission"))
         if emission is not None:
-            emission.default_value = rgba(scaled(colour, 1.15))
+            if grade is not None:
+                tree.links.new(grade.outputs["Color"], emission)
+            else:
+                emission.default_value = rgba(scaled(colour, 1.15))
         put(bsdf, ("Emission Strength",), glow)
         return mat
 
@@ -825,7 +889,7 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
 
     emission = socket(bsdf, ("Emission Color", "Emission"))
     if emission is not None:
-        tree.links.new(tint.outputs["Color"], emission)
+        tree.links.new((grade or tint).outputs["Color"], emission)
     power = socket(bsdf, ("Emission Strength",))
     if power is not None:
         tree.links.new(strength.outputs["Value"], power)
@@ -1322,7 +1386,7 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
     # the largest: the spread runs 0.85 to 1.20 of --blob-size.
     typical = unit * args.blob_size * surface_fraction(args.threshold)
     wax = wax_material(basis, height, args.wax_rgb, args.glow,
-                       args.glow_reach, typical)
+                       args.glow_reach, typical, args.accent_rgb)
     # Only the basis's material is used for the whole family; assigning to the
     # members as well would be dead data.
     basis.data.materials.append(wax)
@@ -1499,7 +1563,8 @@ def build_scene(args) -> dict:
     across = max(1e-6, 2.0 * max(r for r, _ in interior))
     medium.data.materials.append(
         liquid_material(glass, height, args.liquid_rgb,
-                        args.density / across, args.haze / across))
+                        args.density / across, args.haze / across,
+                        args.accent_rgb))
 
     wax = build_wax(args, interior, fill_z, height)
     scene.frame_end = args.loop
