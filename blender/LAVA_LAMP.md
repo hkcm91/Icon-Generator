@@ -84,10 +84,32 @@ Raising `--blob-size` on its own runs into the wall that table describes: past
 about 0.17 at a threshold of 1.0 the field stops being bubbles and becomes a
 few fused masses.
 
-**`--gloss`** takes the wax from matte to a polished shell — hard specular, a
-full coat, and a highlight where the light above it lands. It also un-hides
-that light from glossy rays, which is the part worth knowing: a glossy surface
-with nothing to reflect does not look shinier, it looks darker.
+**`--gloss`** takes the wax from matte to a polished shell. Roughness is the
+least of it — three other things were keeping polished wax looking dull, and
+each has to give:
+
+- **A flat world reflects as a flat colour.** A mirror shows its surroundings,
+  and surroundings that are one even value have no bright part to catch, so
+  there is no highlight at any roughness. Gloss gives the world a tight bright
+  band overhead and a dark floor, which is the least a sphere needs to read as
+  wet: a crisp cap and a dark underside.
+- **Subsurface fights the highlight.** Light that enters and leaves elsewhere
+  softens exactly the contrast a specular needs, so gloss takes most of it out.
+  It is the same setting that makes wax read as wax, which is why the lamp
+  keeps it and the bubbles do not.
+- **A dense medium eats the reflection.** The wax sits inside an absorbing
+  volume, so a reflected ray has to cross it twice to reach anything. At
+  `--density 3` doubling `--env` did almost nothing. The bubbles look runs a
+  much thinner medium and a much brighter world, and takes the deep ground
+  from a darker backdrop instead.
+
+**`--swirl`** turns each blob around the vessel's axis, a whole number of turns
+per loop. Without it every blob holds one station and one bearing for the entire
+loop, so the only relative motion anywhere in the field is vertical: blobs pass
+each other going up and down but never travel *past* each other, and the result
+reads as a set of separate spheres sharing a frame rather than as wax. Mixed
+directions matter more than the rate, because two blobs going opposite ways
+close and part, which is the encounter.
 
 **`--dof`** is what turns a field of blobs into a field with depth in it. Focus
 sits on the vessel's axis, so wax at the front and wax at the back both go soft

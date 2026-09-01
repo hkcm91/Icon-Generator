@@ -76,9 +76,10 @@ LOOKS = {
         "palette": "bubblegum", "no_pool": True,
         "blobs": 32, "droplets": 18, "blob_size": 0.20, "size_spread": 1.1,
         "threshold": 0.32, "stretch": 0.15, "pool": 0.06, "depth": 1.0,
-        "accent": "1.0,0.34,0.02", "gloss": 0.85,
-        "glow": 1.0, "glow_reach": 1.0, "bulb": 0.0, "crown": 300.0,
-        "env": 0.15, "haze": 0.15, "density": 3.0, "dof": 4.0,
+        "accent": "1.0,0.34,0.02", "gloss": 1.0, "swirl": 1,
+        "glow": 0.35, "glow_reach": 1.0, "bulb": 0.0, "crown": 300.0,
+        "env": 6.0, "haze": 0.15, "density": 1.5, "dof": 4.0,
+        "backdrop": "0.008,0.006,0.016",
         "view_transform": "Standard",
     },
 }
@@ -270,6 +271,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                              "it to absorb the colour. 0 picks a default for "
                              "--shape: 1.0 for lamp, 0.55 for the much deeper "
                              "fullbleed column")
+    motion.add_argument("--swirl", type=int, default=0,
+                        help="how many turns around the vessel's axis a blob "
+                             "makes per loop. Without it a blob holds one "
+                             "station and one bearing for the whole loop, so "
+                             "the only relative motion in the whole field is "
+                             "vertical and blobs never travel past each "
+                             "other — they read as separate spheres sharing a "
+                             "frame rather than as wax. Whole turns, because "
+                             "a fraction of one would not close the loop")
     motion.add_argument("--stretch", type=float, default=0.45,
                         help="how much a blob elongates at full climbing "
                              "speed. Volume is held roughly constant")
@@ -819,9 +829,13 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     if accent is not None:
         grade = height_ramp(tree, reference, height, accent, colour, -640)
         tree.links.new(grade.outputs["Color"], bsdf.inputs["Base Color"])
-    put(bsdf, ("Roughness",), 0.24 - 0.19 * gloss)
+    put(bsdf, ("Roughness",), 0.24 - 0.225 * gloss)
     put(bsdf, ("IOR",), 1.45 + 0.05 * gloss)
-    put(bsdf, ("Subsurface Weight", "Subsurface"), 0.7)
+    # Subsurface is what makes wax read as wax, and it is also what keeps a
+    # surface from reading as polished: light that goes in and comes out
+    # somewhere else softens exactly the contrast a highlight needs. Gloss
+    # takes most of it away.
+    put(bsdf, ("Subsurface Weight", "Subsurface"), 0.7 * (1.0 - 0.85 * gloss))
     # Scattering distance is measured against the blob, which is why it is
     # passed in rather than guessed from the bottle. Set it to the blob radius
     # and light walks clean through everything, every blob washes out to the
@@ -1213,6 +1227,11 @@ def blob_specs(args, unit: float) -> list[dict]:
             "phase": ((i - args.blobs if bead else i)
                       + jitter(j, 5)) / float(count),
             "azimuth": 2.0 * math.pi * jitter(j, 6),
+            # Whole turns per loop, some each way, some stationary. Mixed
+            # directions matter more than the rate: blobs going opposite ways
+            # close on each other and part again, which is the encounter.
+            "spin": args.swirl * (1 - (i % 3)) if args.swirl else 0,
+            "sway": 1 + (i % 2),
             # Where in the bottle this blob lives, as a fraction of the
             # interior radius. See blob_state for why it needs one.
             #
@@ -1334,14 +1353,19 @@ def blob_state(spec: dict, t: float, args, radius_at, floor_z: float,
     # So each blob keeps its own station in the bottle, and what the roll
     # contributes is its *change* in radius over the cycle — inward across the
     # floor, outward under the top — applied around that station.
-    reach = min(max(0.0, (spec["station"] + rn - spec["drift"])
+    # The station breathes as well as the bearing turning, so blobs cross
+    # each other's radius instead of riding fixed concentric shells.
+    station = spec["station"] + 0.18 * math.sin(
+        2.0 * math.pi * (spec["sway"] * t + spec["phase"]))
+    reach = min(max(0.0, (station + rn - spec["drift"])
                     * radius_at(z)), room)
 
-    x = reach * math.cos(spec["azimuth"])
+    bearing = spec["azimuth"] + 2.0 * math.pi * spec["spin"] * t
+    x = reach * math.cos(bearing)
     # Depth is squeezed toward the camera rather than merely narrowed: a blob
     # centred in a wide column sits behind half a metre of absorbing medium,
     # and the colour it loses there is the colour the wallpaper is made of.
-    y = (reach * math.sin(spec["azimuth"]) * args.depth
+    y = (reach * math.sin(bearing) * args.depth
          - (1.0 - args.depth) * room * 0.42)
 
     # Deformation from speed alone. A drop's distortion goes with the capillary
@@ -1683,10 +1707,40 @@ def build_lighting(args, height: float, r_max: float, centre: float,
 
     world = bpy.data.worlds.new("Lava_World")
     world.use_nodes = True
-    bg = world.node_tree.nodes["Background"]
+    tree = world.node_tree
+    bg = tree.nodes["Background"]
     bg.inputs["Color"].default_value = rgba((0.28, 0.33, 0.46))
     bg.inputs["Strength"].default_value = args.env
     scene.world = world
+
+    if args.gloss > 0.0:
+        # A flat world is the real reason polished wax still looked matte. A
+        # mirror reflects its surroundings, and a surrounding that is one even
+        # colour reflects as that colour — no brighter anywhere, so there is no
+        # highlight and no shape to it, however low the roughness goes. This
+        # gives the world a bright top and a dark floor, which is the least a
+        # sphere needs to read as wet: a crisp bright cap and a dark underside.
+        coord = tree.nodes.new("ShaderNodeTexCoord")
+        coord.location = (-800, 0)
+        up = tree.nodes.new("ShaderNodeSeparateXYZ")
+        up.location = (-600, 0)
+        span = tree.nodes.new("ShaderNodeMapRange")
+        span.location = (-420, 0)
+        span.inputs["From Min"].default_value = -1.0
+        span.inputs["From Max"].default_value = 1.0
+        sky = tree.nodes.new("ShaderNodeValToRGB")
+        sky.location = (-240, 0)
+        # A tight band rather than a slow fade. A broad gradient reflects as
+        # a broad soft sheen, which is what a matte surface already looks
+        # like; the crisp edge is the whole difference between wet and dull.
+        sky.color_ramp.elements[0].position = 0.66
+        sky.color_ramp.elements[0].color = rgba((0.02, 0.02, 0.05))
+        sky.color_ramp.elements[1].position = 0.84
+        sky.color_ramp.elements[1].color = rgba((1.0, 0.98, 0.95))
+        tree.links.new(coord.outputs["Generated"], up.inputs["Vector"])
+        tree.links.new(up.outputs["Z"], span.inputs["Value"])
+        tree.links.new(span.outputs["Result"], sky.inputs["Fac"])
+        tree.links.new(sky.outputs["Color"], bg.inputs["Color"])
 
     bulb_data = bpy.data.lights.new("Bulb", "POINT")
     bulb_data.energy = args.bulb
