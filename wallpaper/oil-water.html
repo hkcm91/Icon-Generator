@@ -131,13 +131,6 @@ const CONFIG = {
   buoyancy: num("buoyancy", 1),
   viscosity: num("visc", 1),
 
-  /* Motes suspended in the water. This is the number that decides whether
-   * the thing on screen reads as a liquid at all — see the block above
-   * stepMotes for why it took so long to work that out. */
-  /* Sub-grid oil drops, carried as particles because the field cannot hold
-   * them. See the block above stepDrops — this is the number that decides
-   * whether the thing on screen reads as a liquid at all. */
-  drops: Math.max(0, Math.min(4000, num("drops", 1400))),
   glass: Math.max(0, Math.min(1, num("glass", 0))),
   sound: flag("sound", false),
   seed: num("seed", 20260831) >>> 0,
@@ -198,7 +191,6 @@ let sc1, sc2;                // scratch for the second-order advection
  * the backtrace for later cells would read values the same pass had already
  * overwritten. */
 let au, av;
-let su, sv;                  // the flow the bulk oil sees, low-passed
 let solid;                   // the wall ring
 
 function buildGrid() {
@@ -216,7 +208,6 @@ function buildGrid() {
   curl = new Float32Array(NC);
   sc1 = new Float32Array(NC); sc2 = new Float32Array(NC);
   au = new Float32Array(NC); av = new Float32Array(NC);
-  su = new Float32Array(NC); sv = new Float32Array(NC);
   ripple = new Float32Array(NC); ripple0 = new Float32Array(NC);
   rippleBase = new Float32Array(NC);
   seedRipple();
@@ -241,9 +232,20 @@ function gy(j) { return (CONFIG.mode === "full" ? 0 : CY - RY) + (j - 1) * cell;
  * the thing it looks like when nobody has touched it — should be the thing
  * on the product page. */
 function seedPhase() {
-  // The oil is a population of drops now; the field is derived from them.
-  seedDrops();
-  splatDrops();
+  const rnd = mulberry32(CONFIG.seed);
+  const line = 1 + (GH - 2) * CONFIG.oilFraction;
+  const a = 0.9 + rnd() * 0.5, b = 1.7 + rnd() * 0.9;
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      const k = j * GW + i;
+      const wob = 0.9 * Math.sin(i * 0.31 + a) + 0.5 * Math.sin(i * 0.77 + b);
+      // tanh, because that is the equilibrium interface profile of this free
+      // energy and seeding anything else means the first frames are spent
+      // relaxing into it.
+      phi[k] = Math.tanh((line + wob - j) / 1.4);
+    }
+  }
+  targetMean = meanPhi();
 }
 
 /* The standing surface texture.
@@ -320,7 +322,6 @@ function resize() {
   else { RX = RY = Math.min(W, H) * 0.5 * CONFIG.scale; }
   buildGrid();
   buildContour();
-  seedDrops();
   buildRelief();
   buildLayers();
   return true;
@@ -521,10 +522,6 @@ const BULK_DRAG = 0.15;    // 1/s
 const WALL_DRAG = 1.6;     // 1/s, in the cells touching glass
 const VORTICITY = 2.2;     // eddy confinement
 const PROJECT_ITERS = 12;
-/* How far the bulk oil's view of the flow is smoothed, in Jacobi passes.
- * Each pass roughly doubles the filter width, so six of them means the pool
- * ignores everything under about eight cells and carries the rest as drops. */
-const BULK_SMOOTH = num("smooth", 6);
 
 /* The phase field's own constants.
  *
@@ -716,276 +713,118 @@ function vorticity(dt) {
   }
 }
 
-/* ============================================================== the oil
+/* ------------------------------------------------------- immiscibility
  *
- * The oil is a population of drops, not a field. That is the third and last
- * answer to "this does not behave like oil in water", and it is the one that
- * had to change the representation rather than a constant.
+ * Everything that makes this oil and water rather than two dyes is here, and
+ * it is one free energy: a double well that costs energy to be half-mixed,
+ * plus a gradient penalty that costs energy to have interface. Its variation
+ * is the chemical potential
  *
- * What was here before was a Cahn-Hilliard phase field: an interface tracked
- * on the grid and advected by the flow. Every version of it made ribbons —
- * long curling filaments, spirals, threads. That is not what oil does. Oil
- * and water have high interfacial tension, so oil makes *spheres*: they rise,
- * they merge when they touch, they burst apart under enough shear, and they
- * pool. Ribbons are what miscible fluids do. Ink in water makes ribbons;
- * marbling ink makes ribbons; oil never does.
+ *     mu = (phi^3 - phi) - eps^2 * lap(phi)
  *
- * The field could not be made to stop. Interfacial tension is what resists
- * stretching, and at this grid size the coefficient needed to hold a body
- * together against the flow breaches the capillary time-step limit —
- * measured, the cell stops coming to rest above about 12000, going from
- * 2.6px/s of residual motion to 30. Below that the flow always wins and the
- * body always draws out. Smoothing the flow the bulk sees did not help
- * either; it just made larger spirals, because the stretching is driven by
- * the large scales rather than the small ones.
+ * and mu does two jobs at once. Relaxing phi down its own gradient separates
+ * the phases and keeps the interface a fixed width; feeding mu * grad(phi)
+ * into the momentum equation *is* the interfacial tension force, in the form
+ * that does not require knowing the curvature of anything.
  *
- * A drop with a centre and a radius cannot be stretched into a ribbon. That
- * is not a tuning improvement, it is a representation that has the right
- * behaviour built into it, and it is also the truer model at this scale: a
- * phone-sized cell of shaken oil and water *is* a population of drops, and
- * treating it as a continuum interface was the error.
- *
- * The drops are still drawn through the same contour and the same renderer.
- * They are splatted into the grid as smooth kernels and the isoline is taken
- * of the sum, so a lone drop comes out as a circle and a raft of them packed
- * at the top comes out as one pool with a continuous surface — which is what
- * a metaball sum is for, and what makes a settled layer and a dispersion the
- * same object drawn the same way.
+ * That second half is what most of the visible behaviour comes out of.
+ * Roundness, coalescence and pinch-off are not three features. They are one
+ * force, and it points the same way in all three cases: toward less
+ * interface.
  */
-const DROPS = Math.max(16, CONFIG.drops | 0);
-let dx_, dy_, dvx, dvy, drad;
-let dropRnd = null;
-/* The body force the drops feel: gravity in the frame of a shaken container,
- * which is g - a. Held here because stepDrops needs the same vector the grid
- * uses, and using plain gravity instead — which is what it did at first —
- * means a shake never reaches the oil at all. The drops just sat in their
- * raft while the water thrashed underneath them. */
-const dropG = { x: 0, y: 1 };
-let dhead, dnext;               // bins, for finding neighbours without O(n^2)
-
-const R_MIN = 1.6, R_MAX = 15;  // px
-const DROP_DRAG = 3400;         // px^2/s: response time is r^2 / this
-const DROP_BUOY = 190;          // px/s^2 against gravity, size-independent
-const DROP_PACK = 1500;          // px/s^2 of soft repulsion when overlapping
-const MERGE_OVERLAP = 0.40;     // fraction of the smaller radius
-const SPLIT_WE = 46;            // strain * r above which a drop bursts
-
-function seedDrops() {
-  dx_ = new Float32Array(DROPS); dy_ = new Float32Array(DROPS);
-  dvx = new Float32Array(DROPS); dvy = new Float32Array(DROPS);
-  drad = new Float32Array(DROPS);
-  dhead = new Int32Array(NC); dnext = new Int32Array(DROPS);
-  dropRnd = mulberry32(CONFIG.seed ^ 0xD3075);
-
-  /* Seeded already settled: the oil starts as a raft at the top, because
-   * that is the resting state and the resting state is what a wallpaper
-   * mostly is. Total area is the requested oil fraction, split across the
-   * pool so the drops come out near the middle of the size range. */
-  const area = CONFIG.oilFraction * W * H;
-  const r0 = Math.min(R_MAX, Math.max(R_MIN, Math.sqrt(area / (DROPS * Math.PI))));
-  const bandH = area / W * 1.25;
-  for (let i = 0; i < DROPS; i++) {
-    drad[i] = r0 * (0.75 + dropRnd() * 0.5);
-    dx_[i] = dropRnd() * W;
-    dy_[i] = dropRnd() * bandH;
-    dvx[i] = 0; dvy[i] = 0;
-  }
-}
-
-/** Bilinear sample of a grid field at a pixel position. */
-function sampleAt(f, x, y) {
-  let gi = x / cell + 1, gj = y / cell + 1;
-  if (gi < 1) gi = 1; else if (gi > GW - 2) gi = GW - 2;
-  if (gj < 1) gj = 1; else if (gj > GH - 2) gj = GH - 2;
-  const i0 = gi | 0, j0 = gj | 0;
-  const sx = gi - i0, sy = gj - j0;
-  const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
-  return (1 - sy) * ((1 - sx) * f[a] + sx * f[a + 1]) +
-               sy * ((1 - sx) * f[b] + sx * f[b + 1]);
-}
-
-/** Bin the drops into the simulation grid so neighbour tests are local. */
-function binDrops() {
-  dhead.fill(-1);
-  for (let i = 0; i < DROPS; i++) {
-    if (drad[i] <= 0) continue;
-    let gi = (dx_[i] / cell + 1) | 0, gj = (dy_[i] / cell + 1) | 0;
-    if (gi < 0) gi = 0; else if (gi > GW - 1) gi = GW - 1;
-    if (gj < 0) gj = 0; else if (gj > GH - 1) gj = GH - 1;
-    const k = gj * GW + gi;
-    dnext[i] = dhead[k]; dhead[k] = i;
-  }
-}
-
-function stepDrops(dt) {
-  const gex = dropG.x, gey = dropG.y;
-  for (let i = 0; i < DROPS; i++) {
-    const r = drad[i];
-    if (r <= 0) continue;
-    /* Stokes: the response time grows with the square of the radius, so a
-     * big drop lags the water and a small one is carried by it exactly.
-     * With a size-independent buoyancy that also makes the rise speed go as
-     * r^2, which is Stokes' law and is why the big drops clear first. */
-    const k = 1 - Math.exp(-(DROP_DRAG / (r * r)) * dt);
-    dvx[i] += (sampleAt(u, dx_[i], dy_[i]) - dvx[i]) * k;
-    dvy[i] += (sampleAt(v, dx_[i], dy_[i]) - dvy[i]) * k;
-    dvx[i] -= gex * DROP_BUOY * dt;
-    dvy[i] -= gey * DROP_BUOY * dt;
-  }
-
-  binDrops();
-
-  // Packing and coalescence, over the nine cells around each drop.
-  for (let i = 0; i < DROPS; i++) {
-    /* Not `const`. A drop can absorb more than one neighbour in a single
-     * pass, and reading its radius once at the top means the second merge
-     * computes the combined area from the radius it had *before* the first —
-     * which silently discards the first partner. Measured, that leaked 77%
-     * of the oil during a shake: 387 drops and 30% coverage went to 55 drops
-     * and 7%. Area is conserved by construction here only if the radius the
-     * conservation is computed from is the current one. */
-    let ri = drad[i];
-    if (ri <= 0) continue;
-    let gi = (dx_[i] / cell + 1) | 0, gj = (dy_[i] / cell + 1) | 0;
-    const span = Math.max(1, Math.ceil((ri + R_MAX) / cell));
-    for (let jj = gj - span; jj <= gj + span; jj++) {
-      if (jj < 0 || jj >= GH) continue;
-      for (let ii = gi - span; ii <= gi + span; ii++) {
-        if (ii < 0 || ii >= GW) continue;
-        for (let j = dhead[jj * GW + ii]; j >= 0; j = dnext[j]) {
-          if (j <= i) continue;
-          const rj = drad[j];
-          if (rj <= 0) continue;
-          let ddx = dx_[j] - dx_[i], ddy = dy_[j] - dy_[i];
-          const d = Math.hypot(ddx, ddy);
-          const sum = ri + rj;
-          if (d >= sum || d < 1e-6) continue;
-          const small = Math.min(ri, rj);
-          if (sum - d > small * MERGE_OVERLAP &&
-              Math.hypot(ri, rj) <= R_MAX) {
-            /* Coalescence, conserving area and momentum. Two drops that meet
-             * become one bigger drop; this is the only way a drop grows and
-             * it is why a shaken cell clears from the top down. */
-            const ai = ri * ri, aj = rj * rj, at = ai + aj;
-            dx_[i] = (dx_[i] * ai + dx_[j] * aj) / at;
-            dy_[i] = (dy_[i] * ai + dy_[j] * aj) / at;
-            dvx[i] = (dvx[i] * ai + dvx[j] * aj) / at;
-            dvy[i] = (dvy[i] * ai + dvy[j] * aj) / at;
-            drad[i] = ri = Math.sqrt(at);
-            drad[j] = 0;
-            continue;
-          }
-          // Otherwise they simply cannot occupy the same place.
-          const push = DROP_PACK * (sum - d) / sum * dt;
-          const nx = ddx / d, ny = ddy / d;
-          const wi = rj * rj / (ri * ri + rj * rj);
-          dvx[i] -= nx * push * wi; dvy[i] -= ny * push * wi;
-          dvx[j] += nx * push * (1 - wi); dvy[j] += ny * push * (1 - wi);
-        }
-      }
+function chemicalPotential() {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const f = phi[k];
+      lap[k] = phi[k - 1] + phi[k + 1] + phi[k - GW] + phi[k + GW] - 4 * f;
+      mu[k] = (f * f * f - f) - EPS2 * lap[k];
     }
   }
-
-  // Move, and break up anything the flow is shearing hard enough.
-  for (let i = 0; i < DROPS; i++) {
-    const r = drad[i];
-    if (r <= 0) continue;
-    dx_[i] += dvx[i] * dt;
-    dy_[i] += dvy[i] * dt;
-    if (dx_[i] < r) { dx_[i] = r; if (dvx[i] < 0) dvx[i] *= -0.2; }
-    else if (dx_[i] > W - r) { dx_[i] = W - r; if (dvx[i] > 0) dvx[i] *= -0.2; }
-    if (dy_[i] < r) { dy_[i] = r; if (dvy[i] < 0) dvy[i] *= -0.2; }
-    else if (dy_[i] > H - r) { dy_[i] = H - r; if (dvy[i] > 0) dvy[i] *= -0.2; }
-
-    if (r < R_MIN * 2) continue;
-    /* A drop bursts when the flow pulls on it harder than its own surface
-     * can hold it together, and a bigger drop is easier to burst — which is
-     * the Weber criterion, and is why shaking makes a fine spray out of a
-     * pool rather than cutting it into pieces of the same size. */
-    let gi = (dx_[i] / cell + 1) | 0, gj = (dy_[i] / cell + 1) | 0;
-    if (gi < 1) gi = 1; else if (gi > GW - 2) gi = GW - 2;
-    if (gj < 1) gj = 1; else if (gj > GH - 2) gj = GH - 2;
-    const c = gj * GW + gi;
-    const sxx = (u[c + 1] - u[c - 1]) * 0.5 / cell;
-    const syy = (v[c + GW] - v[c - GW]) * 0.5 / cell;
-    const sxy = ((u[c + GW] - u[c - GW]) + (v[c + 1] - v[c - 1])) * 0.25 / cell;
-    const strain = Math.sqrt(sxx * sxx + syy * syy + 2 * sxy * sxy);
-    if (strain * r > SPLIT_WE) {
-      for (let j = 0; j < DROPS; j++) {
-        if (drad[j] > 0) continue;
-        const nr = r / Math.SQRT2;      // two of equal area
-        drad[i] = nr; drad[j] = nr;
-        const a2 = dropRnd() * Math.PI * 2, off = nr * 0.9;
-        dx_[j] = dx_[i] + Math.cos(a2) * off;
-        dy_[j] = dy_[i] + Math.sin(a2) * off;
-        dx_[i] -= Math.cos(a2) * off; dy_[i] -= Math.sin(a2) * off;
-        dvx[j] = dvx[i]; dvy[j] = dvy[i];
-        break;
-      }
-    }
+  /* Zero chemical-potential gradient at the wall. Not decoration:
+   * Cahn-Hilliard conserves mass because it is the divergence of a flux, and
+   * that holds exactly only if no flux crosses the boundary. */
+  for (let j = 1; j < GH - 1; j++) {
+    mu[j * GW] = mu[j * GW + 1];
+    mu[j * GW + GW - 1] = mu[j * GW + GW - 2];
+  }
+  for (let i = 0; i < GW; i++) {
+    mu[i] = mu[i + GW];
+    mu[(GH - 1) * GW + i] = mu[(GH - 2) * GW + i];
   }
 }
 
-/* Splat the drops into the grid and take the isoline of the sum.
+/* Cahn-Hilliard: dphi/dt = M * lap(mu).
  *
- * A smooth kernel rather than a hard disc, so that drops touching each other
- * blend into one shape with a continuous boundary instead of a scalloped
- * chain of circles. That is what makes a raft of drops packed at the top
- * read as a pool with a surface, and a lone drop read as a circle, without
- * the renderer needing to know which it is looking at.
+ * This was conservative Allen-Cahn — relax straight down the free energy at
+ * rate -M*mu, then subtract a single global Lagrange multiplier spread over
+ * the interfaces so the total came out unchanged. That conserves the total
+ * exactly, and it is wrong in a way that turns out to be the whole reason
+ * this never looked like oil and water.
+ *
+ * A global correction conserves mass *globally*. It does not conserve it
+ * anywhere in particular. Mass taken off one interface reappears on another
+ * at the far end of the cell, and because curvature flow shrinks the most
+ * sharply curved features fastest, the smallest droplets pay for the
+ * largest. This is a known failure of the formulation, described in the
+ * literature in exactly those terms: small features dissolve into the bulk
+ * because the correction is global.
+ *
+ * Measured here, gravity off, nothing else acting: five planted droplets of
+ * radii 0.28 down to 0.06 became two within twenty seconds, while the total
+ * oil fraction held at 0.059 the whole time. Nothing touched them. They
+ * evaporated into each other. That is why every shake ended as a couple of
+ * big interpenetrating lobes instead of a dispersion of round drops — the
+ * drops were not being merged, they were being deleted, and no amount of
+ * tuning the tension could have produced something the bookkeeping was
+ * quietly removing.
+ *
+ * Cahn-Hilliard needs no such term. It is the divergence of a flux, so mass
+ * is conserved cell by cell by construction and a droplet can only lose mass
+ * by transporting it to a neighbour. Small drops do still slowly feed big
+ * ones, but that is Ostwald ripening — real physics, at a rate set by how
+ * far the mass has to move, rather than an artefact that acts at a distance.
+ *
+ * It costs a fourth-order stability limit, dt*M*eps^2*64 < 2 on this
+ * stencil, which caps the mobility near 1.3 at a sixtieth of a second. That
+ * is the real constraint on M, and it is why it sits where it does.
  */
-/* Kernel reach in drop radii, and the level a lone drop crosses at exactly
- * its own radius, which is (1 - 1/R^2)^2 for this kernel.
- *
- * The reach is what decides whether a raft of packed drops reads as a pool
- * or as lace. Too short and neighbouring kernels do not sum above the
- * threshold in the gaps between the circles, so a settled layer comes out
- * full of holes — which is what 1.55 did. Wide enough and the union closes
- * up into one surface, while a drop on its own still comes out at its own
- * size because the threshold moves with the reach. */
-const SPLAT_R = num("splat", 2.35);
-const SPLAT_T = Math.pow(1 - 1 / (SPLAT_R * SPLAT_R), 2);
-
-function splatDrops() {
-  phi.fill(-1);
-  const acc = lap;               // borrowed: nothing else is using it here
-  acc.fill(0);
-  for (let i = 0; i < DROPS; i++) {
-    const r = drad[i];
-    if (r <= 0) continue;
-    const R = r * SPLAT_R, R2 = R * R;
-    const cx2 = dx_[i] / cell + 1, cy2 = dy_[i] / cell + 1;
-    const span = R / cell;
-    let i0 = Math.max(0, Math.floor(cx2 - span)), i1 = Math.min(GW - 1, Math.ceil(cx2 + span));
-    let j0 = Math.max(0, Math.floor(cy2 - span)), j1 = Math.min(GH - 1, Math.ceil(cy2 + span));
-    for (let j = j0; j <= j1; j++) {
-      const ddy = (j - cy2) * cell;
-      for (let i2 = i0; i2 <= i1; i2++) {
-        const ddx = (i2 - cx2) * cell;
-        const d2 = ddx * ddx + ddy * ddy;
-        if (d2 >= R2) continue;
-        const t = 1 - d2 / R2;
-        acc[j * GW + i2] += t * t;
-      }
+function relaxPhase(dt) {
+  const k = dt * MOBILITY;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const c = j * GW + i;
+      const f = phi[c] + k *
+        (mu[c - 1] + mu[c + 1] + mu[c - GW] + mu[c + GW] - 4 * mu[c]);
+      phi[c] = f < -1.4 ? -1.4 : f > 1.4 ? 1.4 : f;
     }
   }
-  for (let k = 0; k < NC; k++) {
-    const f = (acc[k] - SPLAT_T) * 3.2;
-    phi[k] = f < -1 ? -1 : f > 1 ? 1 : f;
+}
+
+/** Advection is what loses mass now, not the relaxation: a clamped
+ *  semi-Lagrangian step is not conservative. The correction is kept because
+ *  a wallpaper runs for hours, but it is now mopping up a rounding error
+ *  rather than doing the phase separation's bookkeeping for it, so it is
+ *  applied gently and only when the drift is real. */
+function conserveMass() {
+  const drift = meanPhi() - targetMean;
+  if (Math.abs(drift) < 2e-6) return;
+  let weight = 0;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      weight += Math.max(0, 1 - phi[k] * phi[k]);
+    }
   }
-}
-
-/** Oil as a fraction of the cell, from the drops themselves. */
-function oilFractionNow() {
-  let a = 0;
-  for (let i = 0; i < DROPS; i++) if (drad[i] > 0) a += drad[i] * drad[i];
-  return a * Math.PI / (W * H);
-}
-
-function liveDrops() {
-  let n = 0;
-  for (let i = 0; i < DROPS; i++) if (drad[i] > 0) n++;
-  return n;
+  if (weight < 1e-6) return;
+  const cells = (GW - 2) * (GH - 2);
+  const k0 = drift * cells / weight * 0.25;
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      phi[k] -= k0 * Math.max(0, 1 - phi[k] * phi[k]);
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ a step */
@@ -1042,23 +881,70 @@ function fixedStep(dt) {
    * physics twice with two constants to keep in agreement. */
   const gex = gDir.x * gMag - accel.x * SHAKE_GAIN;
   const gey = gDir.y * gMag - accel.y * SHAKE_GAIN;
-  dropG.x = gex; dropG.y = gey;
-  /* The water's own motion. With the oil carried as drops the grid holds a
-   * single fluid, so the shake reaches the water through the drops rather
-   * than through a density field: each rising drop drives water down past
-   * it, equal and opposite, which is what keeps a settling cell alive to
-   * look at instead of going still the moment the hand stops. */
   const kb = BUOY * CONFIG.buoyancy * dt;
-  for (let i = 0; i < DROPS; i++) {
-    const r = drad[i];
-    if (r <= 0) continue;
-    let gi = (dx_[i] / cell + 1) | 0, gj = (dy_[i] / cell + 1) | 0;
-    if (gi < 1) gi = 1; else if (gi > GW - 2) gi = GW - 2;
-    if (gj < 1) gj = 1; else if (gj > GH - 2) gj = GH - 2;
-    const c = gj * GW + gi;
-    const w = (r * r) / (cell * cell) * 0.05;
-    u[c] += gex * kb * w;
-    v[c] += gey * kb * w;
+  /* Buoyancy is measured against the mean density, not against zero.
+   *
+   * This subtraction is the whole of the difference between a cell that
+   * comes to rest and one that does not, and leaving it out is an easy
+   * mistake to make and a hard one to see. The oil is 42% of the cell, so
+   * phi averages -0.15 rather than 0, so a force proportional to phi has a
+   * non-zero mean — a uniform pull on the entire body of liquid. And a
+   * uniform force is exactly the thing a pressure projection cannot cancel,
+   * because it is already divergence-free. So it survives every step, and
+   * the whole cell accelerates until viscosity balances it: measured, a
+   * permanent 126px/s drift that no amount of damping or vorticity tuning
+   * touched, because none of those were what was causing it.
+   *
+   * Physically the missing term is the container. A sealed jar pushes back
+   * on the liquid it holds with exactly the net weight of it, which is what
+   * subtracting the mean says. */
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const f = phi[k] - targetMean;
+      u[k] -= kb * f * gex;
+      v[k] -= kb * f * gey;
+    }
+  }
+
+  /* Interfacial tension, from the potential rather than from a curvature.
+   *
+   * The sign here is the whole of it, and it was wrong. The Korteweg force
+   * is +mu*grad(phi) — equal to -phi*grad(mu) up to a gradient the pressure
+   * projection absorbs — and this had the minus, which is an *anti*-surface
+   * tension: a force that pays to make interface instead of to remove it.
+   *
+   * Check it on a droplet. Oil is phi = +1 inside, so phi falls outward and
+   * grad(phi) points inward. At the rim mu is about -eps^2 * phi_r / r, and
+   * phi_r is negative, so mu is positive. Positive times inward is inward,
+   * which is the Laplace pressure squeezing the drop into the smallest
+   * boundary that will hold it. With the minus it points outward, and every
+   * bump on the interface is a bump the force makes bigger.
+   *
+   * Everything about how this looked follows from that one character. Blobs
+   * had corners and spikes and long thin spears, because nothing was pulling
+   * them round; filaments never beaded; and the harder the coefficient was
+   * driven the worse it got. Measured on a planted square, with no gravity
+   * and nothing else acting: it went from an isoperimetric quotient of 0.81
+   * to 0.47 over sixteen seconds instead of rising toward a circle's 1.0,
+   * and at a coefficient of eight it reached 0.17.
+   *
+   * It was masked at first. Allen-Cahn relaxation is mean-curvature flow, so
+   * it rounds shapes on its own, and at the mobility this shipped with
+   * originally it was outrunning the bad force. Lowering the mobility while
+   * chasing fragmentation took that cover away — so the bug was introduced
+   * on day one and only became visible three commits later, which is why the
+   * "fluid isn't round" reading was pointing at the physics and not at the
+   * shading it looked like it was pointing at. */
+  chemicalPotential();
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const gxp = (phi[k + 1] - phi[k - 1]) * 0.5;
+      const gyp = (phi[k + GW] - phi[k - GW]) * 0.5;
+      u[k] += TENSION * mu[k] * gxp * dt;
+      v[k] += TENSION * mu[k] * gyp * dt;
+    }
   }
 
   // Fingers.
@@ -1140,6 +1026,8 @@ function fixedStep(dt) {
   project();
 
   au.set(u); av.set(v);
+  phi0.set(phi);
+  advectMC(phi, phi0, dt);
 
   /* The surface texture rides the flow, which is what makes it read as the
    * liquid's own surface rather than as a pattern printed over it: stir the
@@ -1160,22 +1048,19 @@ function fixedStep(dt) {
     }
   }
 
-  /* The oil. Stepped after the water is solved, so the drops are carried by
-   * a velocity field that is already divergence-free, and splatted straight
-   * afterwards — the contour, the renderer and the relief all read phi, and
-   * none of them need to know it is now a sum of kernels rather than a
-   * solved field. */
-  stepDrops(dt);
-  splatDrops();
+  chemicalPotential();
+  relaxPhase(dt);
+  conserveMass();
   bounds();
+
   stirEnergy *= Math.exp(-0.9 * dt);
   if (shaking > 0.55) stirEnergy = Math.min(1.6, stirEnergy + shaking * dt * 1.4);
 }
 
-/* A fixed step, and here it is not a nicety. The drops' packing force and
- * the viscous diffusion are both explicit, and both have a step size above
- * which they do not merely lose accuracy but diverge — a 1/20s frame from a
- * slow device would put a crowded raft of drops through each other. */
+/* A fixed step, and here it is not a nicety. The phase relaxation is an
+ * explicit diffusion sitting at about a third of its stability limit at
+ * 1/60s; hand it a 1/20s frame from a slow device and it is over the limit,
+ * the field rings, and it does not come back. */
 const FIXED_DT = 1 / 60;
 let accumulator = 0, simTime = 0;
 
@@ -1987,7 +1872,6 @@ window.__shaker = {
        * events and were being read as one. */
       perimeter: loopLen,
       rms: Math.sqrt(ke / cells),
-      drops: liveDrops(), oilArea: oilFractionNow(),
       mean: meanPhi(), targetMean, phiMax: hi, phiMin: lo,
       stir: stirEnergy,
       gravity: { x: gDir.x, y: gDir.y }, light: lightAngle,

@@ -42,77 +42,190 @@ The rest of the estimate held up. The velocity solver, the shake model, the
 sensor handling and the colourway system all came across nearly unchanged.
 It was the one sentence about the second phase that was doing all the damage.
 
-## Oil is drops, not a field
+## How two fluids refuse to mix
 
-This started as a Cahn–Hilliard phase field: an interface tracked on the grid
-and advected by the flow. Four rounds of real fixes went into it — the sign of
-the interfacial tension force, local mass conservation, second-order
-advection, a grid fine enough to resolve a bead — and every version of it made
-**ribbons**. Long curling filaments, spirals, threads.
+The dye is replaced by a **phase field**: `phi` running from -1 (water) to +1
+(oil), advected by the flow, and relaxing under a free energy with two wells:
 
-That is not what oil does. Oil and water have high interfacial tension, so oil
-makes *spheres*: they rise, they merge when they touch, they burst apart under
-enough shear, and they pool. Ribbons are what miscible fluids do — ink in
-water, marbling ink — and the page was drawing ink.
+```
+f(phi) = (phi² - 1)² / 4  +  (eps²/2)|grad phi|²
+```
 
-The field could not be made to stop, and the reason is measurable rather than
-a matter of tuning. Interfacial tension is what resists stretching, and at
-this grid size the coefficient needed to hold a body together against the flow
-breaches the capillary time-step limit `Δt ≈ √(ρΔx³/2πσ)`: at 15,000 and
-40,000 the cell stops coming to rest at all, resting RMS going 2.6 → 15.9 →
-30.1px/s. Below that the flow always wins and the body always draws out.
-Low-passing the velocity the bulk sees did not help either — it just made
-larger spirals, because the stretching is driven by the large scales.
+The double well is what separates them. Every intermediate value is uphill, so
+a half-mixed cell rolls to one side or the other; there is no stable state in
+between, which is what "immiscible" means. The gradient term is what stops the
+interface collapsing to nothing and gives it a width of about three cells.
 
-**A drop with a centre and a radius cannot be stretched into a ribbon.** That
-is not a better tuning, it is a representation with the right behaviour built
-into it — and it is the truer model at this scale. A phone-sized cell of
-shaken oil and water *is* a population of drops; treating it as a continuum
-interface was the error.
+The variation of that energy is the chemical potential
 
-So the oil is now a few hundred drops:
+```
+mu = (phi³ - phi) - eps² lap(phi)
+```
 
-- **Advected with Stokes drag**, response time growing as `r²`, so a big drop
-  lags the water and a small one is carried by it exactly.
-- **Buoyant**, with a size-independent acceleration — which with `r²` drag
-  makes the rise speed go as `r²` too. That is Stokes' law, and it is why a
-  shaken cell clears from the top down.
-- **Coalescing**: two drops that meet become one, conserving area and
-  momentum. This is the only way a drop grows.
-- **Bursting**: a drop breaks in two when the local strain rate times its
-  radius passes a threshold, so bigger drops break more easily — the Weber
-  criterion, and why shaking makes a fine spray rather than equal pieces.
-- **Packing**: drops that overlap without merging push each other apart, so a
-  raft of them at the top behaves like a crowd rather than a pile.
+and `mu` does two jobs. Relaxing `phi` down its own gradient separates the
+phases and holds the interface width. Feeding `mu * grad(phi)` back into the
+momentum equation **is** the interfacial tension force — in the form that does
+not require knowing the curvature of anything.
 
-They are drawn through the same contour and the same renderer as before, by
-splatting each drop into the grid as a smooth kernel and taking the isoline of
-the sum. A lone drop comes out as a circle; a raft packed at the top comes out
-as one pool with a continuous surface. That is what a metaball sum is for, and
-it means a settled layer and a dispersion are the same object drawn the same
-way — the renderer never needs to know which it is looking at.
+That second half is where the visible behaviour comes from, and it is worth
+being precise about how little is written down. **Roundness, coalescence and
+pinch-off are not three features.** They are one force, and it points the same
+way in all three cases: toward less interface. A droplet is round because that
+is the shortest boundary around its area. Two that touch merge because one
+boundary is shorter than two. A filament drawn out by shear beads up because a
+row of spheres has less surface than a cylinder. Nothing in this file knows
+what a droplet is.
 
-The kernel reach is the number that decides which. Too short and neighbouring
-kernels do not sum above the threshold in the gaps between packed circles, so
-a settled layer comes out as lace; wide enough and the union closes into one
-surface while a lone drop still comes out at its own size, because the
-threshold moves with the reach.
+The check that this is really what is happening: set the mobility to zero, so
+the field advects but never relaxes, and the page becomes the shaker's dye
+again — measured, the interface smears across 96% of the cell and never
+separates. The relaxation is the immiscibility, and nothing else is.
 
-### The area leak
+### The sign of that force was wrong, and it was the whole problem
 
-Coalescence conserves area by construction — and did not, because the radius
-it conserved from was read once at the top of the loop. A drop can absorb more
-than one neighbour in a single pass, and the second merge then computes the
-combined area from the radius it had *before* the first, silently discarding
-the first partner. Measured: 387 drops and 30% coverage went to 55 drops and
-7% during one shake. Oil area now holds at 0.428 through rest, shaking, and
-thirty seconds of settling.
+The Korteweg force is `+mu * grad(phi)` — equal to `-phi * grad(mu)` up to a
+gradient the pressure projection absorbs. This shipped with the minus, which
+is an *anti*-surface tension: a force that pays to make interface rather than
+to remove it.
 
-### The shake did not reach the oil
+Check it on a droplet. Oil is `phi = +1` inside, so `phi` falls outward and
+`grad(phi)` points inward. At the rim `mu` is about `-eps² * phi_r / r`, and
+`phi_r` is negative, so `mu` is positive. Positive times inward is inward —
+the Laplace pressure squeezing the drop into the smallest boundary that will
+hold it. With the minus it points outward, and every bump on the interface is
+a bump the force makes bigger.
 
-The drops were stepped with plain gravity while the grid used the *effective*
-gravity of a shaken container, `g - a`. So the water thrashed and the oil sat
-in its raft and ignored it. They now share one vector.
+Everything about how this looked followed from that one character. Blobs had
+corners and spikes and long thin spears, because nothing was pulling them
+round. Filaments never beaded. And the harder the coefficient was driven the
+worse it got — which is why it had been tuned *down* from 900 to 300 over
+several passes, each one reducing a bug rather than a parameter.
+
+The measurement that settles it is one line: **plant a square in still liquid
+and ask whether it becomes a circle.** The isoperimetric quotient `4πA/P²` is
+1.0 for a circle and 0.79 for a square, so this is a number, not an opinion:
+
+| | t=0 | 0.5s | 1s | 2s | 4s | 8s | 16s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| square, wrong sign | 0.81 | 0.82 | 0.81 | 0.76 | 0.65 | 0.51 | **0.47** |
+| square, wrong sign, ×8 coefficient | 0.81 | 0.73 | 0.55 | 0.34 | 0.38 | 0.21 | **0.17** |
+| square, fixed | 0.81 | 0.86 | 0.94 | **0.99** | 1.00 | 1.00 | 1.00 |
+| plus-sign, fixed | 0.69 | 0.78 | 0.93 | **1.00** | 1.00 | 1.00 | 1.00 |
+
+(With gravity switched off, so the only thing acting is the tension. Left on,
+a planted square also rises and deforms, which is a different question.)
+
+It hid for a long time, and the way it hid is the interesting part.
+Allen–Cahn relaxation *is* mean-curvature flow, so the phase field rounds
+shapes on its own, independently of the hydrodynamics. At the mobility this
+originally shipped with, that relaxation was outrunning the bad force and the
+interfaces looked plausible. Lowering the mobility while chasing fragmentation
+took the cover away. So the bug was introduced on the first day and only
+became visible three commits later — long after the code that contained it had
+stopped being what anyone was looking at.
+
+Two things follow that are worth keeping. First, `stats().roundness` is now a
+first-class diagnostic and `__shaker.plant()` is a permanent fixture, because
+the one-line statement of what interfacial tension is *for* is "it minimises
+perimeter", and nothing in the page could ask that question. Second, every
+constant tuned before the fix was tuned against it: the tension coefficient
+has gone back up to 600, and the measurements below were all retaken.
+
+### Conserving mass globally was deleting the droplets
+
+The relaxation started as **conservative Allen–Cahn**: run down the free
+energy at rate `-M·mu`, then subtract a single global Lagrange multiplier,
+spread over the interfaces, so the total came out unchanged. It conserves the
+total exactly, and it is wrong in a way that turned out to be most of why this
+never looked like oil and water.
+
+A global correction conserves mass *globally*. It does not conserve it
+anywhere in particular. Mass taken off one interface reappears on another at
+the far end of the cell, and because curvature flow shrinks the most sharply
+curved features fastest, **the smallest droplets pay for the largest**. This
+is a known failure of the formulation, described in the literature in exactly
+those terms: small features dissolve into the bulk because the correction is
+global.
+
+Measured here, gravity off and nothing else acting — five planted droplets of
+radii 0.28 down to 0.06:
+
+| | t=0 | 5s | 20s | 40s | total oil |
+| --- | --- | --- | --- | --- | --- |
+| global Lagrange multiplier | 5 | 4 | 2 | 2 | 0.059 throughout |
+| Cahn–Hilliard | 5 | 5 | 4 | 4 | 0.059 throughout |
+
+Nothing touched them. They evaporated into each other while the books
+balanced. No amount of tuning the interfacial tension could have produced a
+dispersion that the bookkeeping was quietly removing.
+
+**Cahn–Hilliard** needs no such term: `∂φ/∂t = M∇²μ` is the divergence of a
+flux, so mass is conserved cell by cell by construction and a droplet can only
+lose mass by transporting it to a neighbour. Small drops do still slowly feed
+big ones, but that is Ostwald ripening — real physics, at a rate set by how
+far the mass has to move, rather than an artefact acting at a distance. It
+costs a fourth-order stability limit, `dt·M·ε²·64 < 2` on this stencil, which
+caps the mobility near 1.3 at a sixtieth of a second.
+
+### The advection was destroying the interface every step
+
+The phase field was moved with the same first-order semi-Lagrangian step as
+the velocity, and for an interface that is a disaster. Each step interpolates
+bilinearly at a backtraced point, smearing a sharp boundary across a cell;
+each step Cahn–Hilliard then re-sharpens whatever the smearing left. The two
+fight sixty times a second, and what survives is not the shape the flow would
+have produced — it is a shape repeatedly blurred and re-hardened. That is
+where the frozen-in points and tendrils came from. A corner on a real
+interface has enormous curvature and retracts almost at once; these survived
+for ten seconds because they were being re-created faster than tension could
+remove them.
+
+It now uses **MacCormack** with a limiter — advect forward, advect back, and
+half the round-trip error corrects the forward result, clamped to the range of
+the four values the forward step interpolated between. Without the limiter it
+rings, and a ringing phase field grows droplets out of nothing.
+
+## Three more things that were wrong
+
+All three presented as the same symptom — the cell never came to rest — and
+none of them were what that symptom looked like.
+
+**The buoyancy force had a non-zero mean.** The oil is 42% of the cell, so
+`phi` averages -0.15 rather than 0, so a force proportional to `phi` has a net
+uniform component. A uniform force is precisely the thing a pressure
+projection cannot remove, because it is already divergence-free. So it
+survived every step and accelerated the entire body of liquid until viscosity
+balanced it: a permanent 126px/s drift that no amount of damping or vorticity
+tuning touched, because neither was causing it. Buoyancy is measured against
+the mean density, not against zero; the missing term is the container pushing
+back with the net weight of what it holds. **126 → 113px/s.**
+
+**The pressure was cleared every frame.** Two fluids of different densities in
+layers need a pressure field varying across the whole height of the domain to
+hold them up. That is the lowest spatial frequency there is, and a relaxation
+method is at its worst on low frequencies: eighteen Gauss–Seidel sweeps carry
+information eighteen cells, and the grid is a hundred and fifty-six tall.
+Started from zero each frame the solve never got close, and the leftover
+buoyancy drove a permanent circulation. Warm-starting costs nothing — the
+hydrostatic field is nearly the same from one frame to the next, so the solver
+refines an answer it already has instead of rediscovering it, and the
+divergence is recomputed from scratch anyway so a stale pressure can only be a
+better initial guess than zero. **113 → 4px/s.** That is one deleted line.
+
+**Viscosity was a decay, and a decay cannot do this job.** The job has two
+halves that pull against each other: shaking has to fragment the layer, which
+needs the flow to survive long enough to fold it, and settling has to take
+tens of seconds, which needs droplets to rise slowly. One decay constant
+cannot be both small and large, and every value tried was either a shake that
+did nothing or an emulsion that unmixed itself in two seconds.
+
+Diffusion is not one constant. Damping goes as `nu·k²`, so bulk flow is
+long-wavelength and barely feels it while a droplet's flow field is as small
+as the droplet and is damped hard. The speed a droplet rises at settles to
+force over damping, which — because damping goes as `k²` — is proportional to
+the square of its radius. **That is Stokes' law, and it arrived by writing the
+viscous term down properly rather than by being asked for.** It is also why a
+shaken bottle clears from the top down: the big drops go first.
 
 ## The one number that is a lie
 
@@ -304,15 +417,30 @@ reproducible from the first tick.
 
 | Property | Result |
 | --- | --- |
-| Oil area, through rest / shaking / 30s settling | 0.428 throughout — exactly conserved |
-| Roundness of the oil bodies | 0.59 at rest, 0.38 mid-shake, 0.69 settled (it was 0.07–0.13 as a field) |
-| Drops surviving a 2.5s shake | 333 → 294 → 245 over thirty seconds, by coalescence |
-| Rest state | 0.3px/s RMS |
-| Ribbons, filaments, spikes | none possible: a drop is a centre and a radius |
+| A planted square, no gravity | isoperimetric quotient 0.81 → 0.99 in 2s, 1.00 by 4s |
+| A planted plus-sign, no gravity | 0.69 → 1.00 in 2s |
+| Five planted droplets, no gravity, 40s | 4 of 5 survive (was 2 of 5 under the global multiplier) |
+| Frame-rate independence (same impulse at 20 / 60 / 144fps) | identical oil fraction, perimeter, blob count and roundness |
+| Determinism from `seed` | identical run twice; a different seed differs |
+| Mass drift, 75s over 6 shake-and-settle cycles | ~10⁻⁹; `phi` stays inside [-1, 1] |
+| Rest state | 2–3px/s RMS (was 126 before the two projection fixes) |
+| A 2.5s shake at 2.5Hz | 18 separate bodies, still 36 after eight seconds |
+| Mobility set to zero | interface smears to 96% of the cell and never separates — i.e. it becomes the shaker's dye |
 
-| `grid` | cells | fps (software rasteriser) |
-| --- | --- | --- |
-| 96 (default), ~300 drops | 19,968 | 25 |
+**The roundness metric was itself wrong for most of this work.** It computed
+`4πA/P²` over the whole oil phase at once, and for *n* identical circles that
+gives `1/n` — eight perfect droplets scored 0.125 and were indistinguishable
+from eight ragged ribbons. It said "not round" exactly when the simulation
+started succeeding, and steering by it argued for fewer, larger blobs, which
+is the opposite of what oil in water should do. It is now computed per body
+and averaged with area as the weight.
+
+| `grid` | cells | solver ms/step | fps (software) |
+| --- | --- | --- | --- |
+| 40 | 3,480 | 2.3 | 27 |
+| 56 | 6,776 | 2.6 | 22 |
+| 96 (default) | 19,968 | 7.5 | 22 |
+| 128 | 31,200 | 12.6 | 19 |
 
 The solver column is the one that transfers to a phone; the fps column is a
 software rasteriser doing full-screen blending, which is the single thing a
