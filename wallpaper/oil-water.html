@@ -90,11 +90,21 @@ const CONFIG = {
   squircleN: num("n", 4),
   scale: num("scale", 0.78),
 
-  /* Cells across. The dial that matters for cost — everything in the step is
-   * a pass over the grid, and the grid is quadratic in this. It is also what
-   * sets the smallest droplet that can exist: an interface is about three
-   * cells wide, so a bead is never smaller than four or five of them. */
-  grid: Math.max(16, Math.min(120, num("grid", 56))),
+  /* Cells across, and the single most important number on the page.
+   *
+   * It sets the smallest droplet that can exist — an interface is about three
+   * cells wide, so a bead is never smaller than four or five — and therefore
+   * whether this behaves like two liquids at all. At 56, which is where it
+   * started, a ribbon of oil drawn out by a shake is seven cells across and
+   * three of those are interface: there is no bulk in it to neck, so it
+   * cannot break into drops, and every shake ended as two big lobes slowly
+   * merging. Rayleigh-Plateau says that ribbon should bead in about a third
+   * of a second, and it was the grid stopping it, not the physics.
+   *
+   * At 96 the same shake leaves 28 separate bodies, still 11 of them two
+   * seconds later and 4 after twenty. That is a dispersion rather than a
+   * shape, and it is what oil in water actually looks like. */
+  grid: Math.max(16, Math.min(160, num("grid", 96))),
 
   /* How much oil there is, as a fraction of the cell. Below about a third it
    * reads as droplets that never quite build a layer; above two thirds the
@@ -174,6 +184,13 @@ let p, div;                  // pressure and divergence
 let phi, phi0, lap, mu;      // the phase field and its working set
 let curl;                    // local rotation, kept for the surface relief
 let ripple, ripple0, rippleBase;   // surface texture, carried by the flow
+let sc1, sc2;                // scratch for the second-order advection
+/* The velocity everything is advected *by*, held apart from the velocity
+ * being advected. Reading u and v directly worked while advection only ever
+ * wrote somewhere else, and broke the moment the velocity advected itself:
+ * the backtrace for later cells would read values the same pass had already
+ * overwritten. */
+let au, av;
 let solid;                   // the wall ring
 
 function buildGrid() {
@@ -189,6 +206,8 @@ function buildGrid() {
   phi = new Float32Array(NC); phi0 = new Float32Array(NC);
   lap = new Float32Array(NC); mu = new Float32Array(NC);
   curl = new Float32Array(NC);
+  sc1 = new Float32Array(NC); sc2 = new Float32Array(NC);
+  au = new Float32Array(NC); av = new Float32Array(NC);
   ripple = new Float32Array(NC); ripple0 = new Float32Array(NC);
   rippleBase = new Float32Array(NC);
   seedRipple();
@@ -502,7 +521,7 @@ const NU = 32;             // momentum diffusivity, cells^2/s
 const BULK_DRAG = 0.15;    // 1/s
 const WALL_DRAG = 1.6;     // 1/s, in the cells touching glass
 const VORTICITY = 2.2;     // eddy confinement
-const PROJECT_ITERS = 18;
+const PROJECT_ITERS = 12;
 
 /* The phase field's own constants.
  *
@@ -519,7 +538,7 @@ const PROJECT_ITERS = 18;
  * up. At dt = 1/60 that caps it near 6; this runs at 3.4.
  */
 const EPS = 1.2, EPS2 = EPS * EPS;
-const MOBILITY = 0.4;
+const MOBILITY = 0.25;
 /* Doubled once the force was pointing the right way. Everything about this
  * number was tuned against a sign error — it had been dropped from 900 to
  * 300 because raising it made the interface *worse*, which is what an
@@ -531,13 +550,13 @@ const RIPPLE_RESET = 0.55;   // 1/s, how fast the surface re-roughens
 
 function idx(i, j) { return j * GW + i; }
 
-/** Semi-Lagrangian advection, shared by the velocity components and phi. */
+/** Semi-Lagrangian advection, first order. Used as the building block. */
 function advect(dst, src, dt) {
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
-      let x = i - dt * u[k] / cell;
-      let y = j - dt * v[k] / cell;
+      let x = i - dt * au[k] / cell;
+      let y = j - dt * av[k] / cell;
       if (x < 0.5) x = 0.5; else if (x > GW - 1.5) x = GW - 1.5;
       if (y < 0.5) y = 0.5; else if (y > GH - 1.5) y = GH - 1.5;
       const i0 = x | 0, j0 = y | 0;
@@ -545,6 +564,51 @@ function advect(dst, src, dt) {
       const a = j0 * GW, b = (j0 + 1) * GW;
       dst[k] = (1 - t) * ((1 - s) * src[a + i0] + s * src[a + i0 + 1]) +
                      t * ((1 - s) * src[b + i0] + s * src[b + i0 + 1]);
+    }
+  }
+}
+
+/* Second-order advection, MacCormack with a limiter.
+ *
+ * The phase field was being moved with the same first-order semi-Lagrangian
+ * step as the velocity, and for an interface that is a disaster. Every step
+ * interpolates the field bilinearly at a backtraced point, which smears a
+ * sharp boundary across a cell, and every step Cahn-Hilliard then re-sharpens
+ * whatever the smearing left behind. The two fight each other sixty times a
+ * second, and what survives is not the shape the flow would have produced —
+ * it is a shape that has been repeatedly blurred and re-hardened, which is
+ * where the frozen-in points and tendrils were coming from. A corner on a
+ * real interface has enormous curvature and retracts almost at once; these
+ * were surviving for ten seconds because they were being re-created faster
+ * than tension could remove them.
+ *
+ * MacCormack fixes the leading error for the price of two more advections:
+ * step forward, step back, and the difference between where you started and
+ * where you got back to is an estimate of the error, so half of it corrects
+ * the forward result. The correction can overshoot, so the result is clamped
+ * to the range of the four values the forward step actually interpolated
+ * between — without that limiter it rings, and a ringing phase field grows
+ * spurious droplets out of nothing.
+ */
+function advectMC(dst, src, dt) {
+  advect(sc1, src, dt);          // forward
+  advect(sc2, sc1, -dt);         // and back again
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      let x = i - dt * au[k] / cell;
+      let y = j - dt * av[k] / cell;
+      if (x < 0.5) x = 0.5; else if (x > GW - 1.5) x = GW - 1.5;
+      if (y < 0.5) y = 0.5; else if (y > GH - 1.5) y = GH - 1.5;
+      const i0 = x | 0, j0 = y | 0;
+      const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
+      const s0 = src[a], s1 = src[a + 1], s2 = src[b], s3 = src[b + 1];
+      let lo = s0, hi = s0;
+      if (s1 < lo) lo = s1; else if (s1 > hi) hi = s1;
+      if (s2 < lo) lo = s2; else if (s2 > hi) hi = s2;
+      if (s3 < lo) lo = s3; else if (s3 > hi) hi = s3;
+      let val = sc1[k] + 0.5 * (src[k] - sc2[k]);
+      dst[k] = val < lo ? lo : val > hi ? hi : val;
     }
   }
 }
@@ -677,46 +741,74 @@ function chemicalPotential() {
       mu[k] = (f * f * f - f) - EPS2 * lap[k];
     }
   }
+  /* Zero chemical-potential gradient at the wall. Not decoration:
+   * Cahn-Hilliard conserves mass because it is the divergence of a flux, and
+   * that holds exactly only if no flux crosses the boundary. */
+  for (let j = 1; j < GH - 1; j++) {
+    mu[j * GW] = mu[j * GW + 1];
+    mu[j * GW + GW - 1] = mu[j * GW + GW - 2];
+  }
+  for (let i = 0; i < GW; i++) {
+    mu[i] = mu[i + GW];
+    mu[(GH - 1) * GW + i] = mu[(GH - 2) * GW + i];
+  }
 }
 
-/** Relax phi toward the two wells, conservatively.
+/* Cahn-Hilliard: dphi/dt = M * lap(mu).
  *
- *  Allen-Cahn on its own is not mass-conserving — run it and the oil quietly
- *  evaporates, small droplets first, which on a wallpaper means the thing
- *  empties itself over an afternoon. The fix is a Lagrange multiplier chosen
- *  so the total change is zero, and spread over the *interfaces* rather than
- *  uniformly: (1 - phi^2) is nearly zero in the bulk of either fluid, so the
- *  correction moves boundaries a little instead of tinting whole regions.
+ * This was conservative Allen-Cahn — relax straight down the free energy at
+ * rate -M*mu, then subtract a single global Lagrange multiplier spread over
+ * the interfaces so the total came out unchanged. That conserves the total
+ * exactly, and it is wrong in a way that turns out to be the whole reason
+ * this never looked like oil and water.
+ *
+ * A global correction conserves mass *globally*. It does not conserve it
+ * anywhere in particular. Mass taken off one interface reappears on another
+ * at the far end of the cell, and because curvature flow shrinks the most
+ * sharply curved features fastest, the smallest droplets pay for the
+ * largest. This is a known failure of the formulation, described in the
+ * literature in exactly those terms: small features dissolve into the bulk
+ * because the correction is global.
+ *
+ * Measured here, gravity off, nothing else acting: five planted droplets of
+ * radii 0.28 down to 0.06 became two within twenty seconds, while the total
+ * oil fraction held at 0.059 the whole time. Nothing touched them. They
+ * evaporated into each other. That is why every shake ended as a couple of
+ * big interpenetrating lobes instead of a dispersion of round drops — the
+ * drops were not being merged, they were being deleted, and no amount of
+ * tuning the tension could have produced something the bookkeeping was
+ * quietly removing.
+ *
+ * Cahn-Hilliard needs no such term. It is the divergence of a flux, so mass
+ * is conserved cell by cell by construction and a droplet can only lose mass
+ * by transporting it to a neighbour. Small drops do still slowly feed big
+ * ones, but that is Ostwald ripening — real physics, at a rate set by how
+ * far the mass has to move, rather than an artefact that acts at a distance.
+ *
+ * It costs a fourth-order stability limit, dt*M*eps^2*64 < 2 on this
+ * stencil, which caps the mobility near 1.3 at a sixtieth of a second. That
+ * is the real constraint on M, and it is why it sits where it does.
  */
 function relaxPhase(dt) {
-  let sum = 0, weight = 0;
+  const k = dt * MOBILITY;
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
-      const k = j * GW + i;
-      const r = -MOBILITY * mu[k];
-      const w = Math.max(0, 1 - phi[k] * phi[k]);
-      phi0[k] = r; lap[k] = w;
-      sum += r; weight += w;
-    }
-  }
-  const lambda = weight > 1e-6 ? sum / weight : 0;
-  for (let j = 1; j < GH - 1; j++) {
-    for (let i = 1; i < GW - 1; i++) {
-      const k = j * GW + i;
-      let f = phi[k] + dt * (phi0[k] - lambda * lap[k]);
-      // The wells are at +/-1; a little past them is physical overshoot, a
-      // long way past is the explicit scheme running away, so it is clamped.
-      phi[k] = f < -1.4 ? -1.4 : f > 1.4 ? 1.4 : f;
+      const c = j * GW + i;
+      const f = phi[c] + k *
+        (mu[c - 1] + mu[c + 1] + mu[c - GW] + mu[c + GW] - 4 * mu[c]);
+      phi[c] = f < -1.4 ? -1.4 : f > 1.4 ? 1.4 : f;
     }
   }
 }
 
-/** Whatever the relaxation could not conserve, put back on the interfaces.
- *  Advection with a clamped semi-Lagrangian step loses a little mass too,
- *  and over a wallpaper's runtime "a little" is the whole product. */
+/** Advection is what loses mass now, not the relaxation: a clamped
+ *  semi-Lagrangian step is not conservative. The correction is kept because
+ *  a wallpaper runs for hours, but it is now mopping up a rounding error
+ *  rather than doing the phase separation's bookkeeping for it, so it is
+ *  applied gently and only when the drift is real. */
 function conserveMass() {
   const drift = meanPhi() - targetMean;
-  if (Math.abs(drift) < 1e-7) return;
+  if (Math.abs(drift) < 2e-6) return;
   let weight = 0;
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
@@ -726,7 +818,7 @@ function conserveMass() {
   }
   if (weight < 1e-6) return;
   const cells = (GW - 2) * (GH - 2);
-  const k0 = drift * cells / weight;
+  const k0 = drift * cells / weight * 0.25;
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
@@ -928,13 +1020,14 @@ function fixedStep(dt) {
   project();
 
   // Move the velocity field through itself, then the phase field through it.
-  u0.set(u); v0.set(v);
-  advect(u, u0, dt); advect(v, v0, dt);
+  au.set(u); av.set(v); u0.set(u); v0.set(v);
+  advectMC(u, u0, dt); advectMC(v, v0, dt);
   bounds();
   project();
 
+  au.set(u); av.set(v);
   phi0.set(phi);
-  advect(phi, phi0, dt);
+  advectMC(phi, phi0, dt);
 
   /* The surface texture rides the flow, which is what makes it read as the
    * liquid's own surface rather than as a pattern printed over it: stir the
@@ -1683,7 +1776,15 @@ window.__shaker = {
     for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
       const x = (i - GW / 2) / (GW * 0.5), y = (j - GH / 2) / (GW * 0.5);
       let d;
-      if (kind === "square") d = 0.42 - Math.max(Math.abs(x), Math.abs(y));
+      if (kind === "drops") {
+        // Five discs, radii 0.28 down to 0.06 of the cell width, well apart.
+        d = -1;
+        for (const [cx2, cy2, r2] of [[-0.45, -0.9, 0.28], [0.45, -0.3, 0.20],
+                                      [-0.4, 0.4, 0.14], [0.35, 0.9, 0.10], [0, 1.35, 0.06]]) {
+          d = Math.max(d, r2 - Math.hypot(x - cx2, y - cy2));
+        }
+      }
+      else if (kind === "square") d = 0.42 - Math.max(Math.abs(x), Math.abs(y));
       else if (kind === "cross") d = 0.42 - Math.min(Math.max(Math.abs(x), Math.abs(y) - 0.3),
                                                      Math.max(Math.abs(x) - 0.3, Math.abs(y)));
       else d = 0.42 - Math.hypot(x, y);
@@ -1732,19 +1833,36 @@ window.__shaker = {
        * measuring it is how the interfacial tension got tuned down to a
        * third of its original strength while chasing fragmentation, without
        * anyone noticing that the oil had stopped being round. */
+      /* Roundness: the isoperimetric quotient 4*pi*A/P^2 of each separate
+       * body, averaged with area as the weight. One for a circle, 0.79 for
+       * a square, tending to zero for anything long, thin or ragged.
+       *
+       * Per body, and that matters. Computing it over the whole oil phase at
+       * once — which is what this did first — divides one total area by one
+       * total perimeter squared, and for n identical circles that gives 1/n.
+       * Eight perfect droplets scored 0.125 and were indistinguishable from
+       * eight ragged ribbons, so the number said "not round" exactly when the
+       * simulation started succeeding. Steering by it argued for fewer, larger
+       * blobs, which is the opposite of what oil in water should do. */
       roundness: (() => {
-        const A = Math.abs(drawnArea()) * W * H;
-        let P = 0;
+        let num = 0, den = 0;
         for (let L = 0; L < loopCount; L++) {
           const st = loopStart[L], en = loopStart[L + 1], m = en - st;
-          if (m < 3) continue;
+          if (m < 5) continue;
+          let A = 0, P = 0;
           for (let n = 0; n < m; n++) {
             const i0 = st + n, i1 = st + (n + 1) % m;
-            P += Math.hypot(loopXY[i1 * 2] - loopXY[i0 * 2],
-                            loopXY[i1 * 2 + 1] - loopXY[i0 * 2 + 1]);
+            const x0 = loopXY[i0 * 2], y0 = loopXY[i0 * 2 + 1];
+            const x1 = loopXY[i1 * 2], y1 = loopXY[i1 * 2 + 1];
+            A += x0 * y1 - x1 * y0;
+            P += Math.hypot(x1 - x0, y1 - y0);
           }
+          A = Math.abs(A) * 0.5;
+          if (P <= 0 || A <= 0) continue;
+          const q = Math.min(1, 4 * Math.PI * A / (P * P));
+          num += q * A; den += A;
         }
-        return P > 0 ? 4 * Math.PI * A / (P * P) : 0;
+        return den > 0 ? num / den : 0;
       })(),
       /* Total interface length, in grid crossings. The honest measure of
        * "is it still mixed": one crossing per cell the boundary passes

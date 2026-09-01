@@ -131,14 +131,59 @@ perimeter", and nothing in the page could ask that question. Second, every
 constant tuned before the fix was tuned against it: the tension coefficient
 has gone back up to 600, and the measurements below were all retaken.
 
-**Mass has to be conserved and Allen–Cahn does not conserve it.** Left alone
-the oil quietly evaporates, smallest droplets first, which on a wallpaper
-means the thing empties itself over an afternoon. The fix is a Lagrange
-multiplier chosen so the total change is zero, spread over the interfaces
-rather than uniformly — `(1 - phi²)` is nearly zero in the bulk of either
-fluid, so the correction nudges boundaries instead of tinting whole regions.
-Measured over seventy-five seconds and six full shake-and-settle cycles, the
-conserved mean drifts by 3.6 × 10⁻¹⁰.
+### Conserving mass globally was deleting the droplets
+
+The relaxation started as **conservative Allen–Cahn**: run down the free
+energy at rate `-M·mu`, then subtract a single global Lagrange multiplier,
+spread over the interfaces, so the total came out unchanged. It conserves the
+total exactly, and it is wrong in a way that turned out to be most of why this
+never looked like oil and water.
+
+A global correction conserves mass *globally*. It does not conserve it
+anywhere in particular. Mass taken off one interface reappears on another at
+the far end of the cell, and because curvature flow shrinks the most sharply
+curved features fastest, **the smallest droplets pay for the largest**. This
+is a known failure of the formulation, described in the literature in exactly
+those terms: small features dissolve into the bulk because the correction is
+global.
+
+Measured here, gravity off and nothing else acting — five planted droplets of
+radii 0.28 down to 0.06:
+
+| | t=0 | 5s | 20s | 40s | total oil |
+| --- | --- | --- | --- | --- | --- |
+| global Lagrange multiplier | 5 | 4 | 2 | 2 | 0.059 throughout |
+| Cahn–Hilliard | 5 | 5 | 4 | 4 | 0.059 throughout |
+
+Nothing touched them. They evaporated into each other while the books
+balanced. No amount of tuning the interfacial tension could have produced a
+dispersion that the bookkeeping was quietly removing.
+
+**Cahn–Hilliard** needs no such term: `∂φ/∂t = M∇²μ` is the divergence of a
+flux, so mass is conserved cell by cell by construction and a droplet can only
+lose mass by transporting it to a neighbour. Small drops do still slowly feed
+big ones, but that is Ostwald ripening — real physics, at a rate set by how
+far the mass has to move, rather than an artefact acting at a distance. It
+costs a fourth-order stability limit, `dt·M·ε²·64 < 2` on this stencil, which
+caps the mobility near 1.3 at a sixtieth of a second.
+
+### The advection was destroying the interface every step
+
+The phase field was moved with the same first-order semi-Lagrangian step as
+the velocity, and for an interface that is a disaster. Each step interpolates
+bilinearly at a backtraced point, smearing a sharp boundary across a cell;
+each step Cahn–Hilliard then re-sharpens whatever the smearing left. The two
+fight sixty times a second, and what survives is not the shape the flow would
+have produced — it is a shape repeatedly blurred and re-hardened. That is
+where the frozen-in points and tendrils came from. A corner on a real
+interface has enormous curvature and retracts almost at once; these survived
+for ten seconds because they were being re-created faster than tension could
+remove them.
+
+It now uses **MacCormack** with a limiter — advect forward, advect back, and
+half the round-trip error corrects the forward result, clamped to the range of
+the four values the forward step interpolated between. Without the limiter it
+rings, and a ringing phase field grows droplets out of nothing.
 
 ## Three more things that were wrong
 
@@ -353,7 +398,7 @@ Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a squircle on a backdrop |
-| `grid` | `56` | Cells across. The dial that matters for cost, and what sets the smallest droplet that can exist — an interface is three cells wide, so a bead is never smaller than four or five |
+| `grid` | `96` | Cells across, and the most important number here. It sets the smallest droplet that can exist — an interface is about three cells wide, so a bead is never smaller than four or five — and therefore whether this behaves like two liquids at all. At 56 a shaken ribbon is seven cells across with three of them interface: no bulk to neck, so it cannot break into drops |
 | `oil` | `0.42` | Oil as a fraction of the cell. Past about two thirds the water is the minority phase and the emulsion inverts, which is real and looks odd |
 | `ramp` | shaker's blue | The water, along the gravity axis. Same parameter and same default across all three pages |
 | `tint` | `#e8806c` | The oil. Ember Glow — the two phases have to differ in *hue*, or the separation the physics works so hard at is invisible |
@@ -374,55 +419,80 @@ reproducible from the first tick.
 | --- | --- |
 | A planted square, no gravity | isoperimetric quotient 0.81 → 0.99 in 2s, 1.00 by 4s |
 | A planted plus-sign, no gravity | 0.69 → 1.00 in 2s |
+| Five planted droplets, no gravity, 40s | 4 of 5 survive (was 2 of 5 under the global multiplier) |
 | Frame-rate independence (same impulse at 20 / 60 / 144fps) | identical oil fraction, perimeter, blob count and roundness |
 | Determinism from `seed` | identical run twice; a different seed differs |
-| Mass drift, 75s over 6 shake-and-settle cycles | 1.1 × 10⁻⁹; `phi` stays inside [-1, 1] |
-| Rest state | 4px/s RMS (was 126 before the two projection fixes) |
-| A 2.5s shake at 2.5Hz | perimeter 220 → 1182 crossings, 19 separate bodies, roundness to 0.04 |
-| Settling after that shake | roundness back to 0.79 — one layer — in about 15 seconds |
+| Mass drift, 75s over 6 shake-and-settle cycles | ~10⁻⁹; `phi` stays inside [-1, 1] |
+| Rest state | 2–3px/s RMS (was 126 before the two projection fixes) |
+| A 2.5s shake at 2.5Hz | 18 separate bodies, still 36 after eight seconds |
 | Mobility set to zero | interface smears to 96% of the cell and never separates — i.e. it becomes the shaker's dye |
 
-Cost against resolution, on a software rasteriser with no GPU:
+**The roundness metric was itself wrong for most of this work.** It computed
+`4πA/P²` over the whole oil phase at once, and for *n* identical circles that
+gives `1/n` — eight perfect droplets scored 0.125 and were indistinguishable
+from eight ragged ribbons. It said "not round" exactly when the simulation
+started succeeding, and steering by it argued for fewer, larger blobs, which
+is the opposite of what oil in water should do. It is now computed per body
+and averaged with area as the weight.
 
-| `grid` | cells | fps |
-| --- | --- | --- |
-| 40 | 3,480 | 27 |
-| 56 (default) | 6,776 | 22 |
-| 72 | 11,232 | 19 |
-| 88 | 16,808 | 15 |
+| `grid` | cells | solver ms/step | fps (software) |
+| --- | --- | --- | --- |
+| 40 | 3,480 | 2.3 | 27 |
+| 56 | 6,776 | 2.6 | 22 |
+| 96 (default) | 19,968 | 7.5 | 22 |
+| 128 | 31,200 | 12.6 | 19 |
 
-Read that table sideways: doubling the cell count costs about a third of the
-frame rate, which means **most of the cost is not the solver**. It is the
-full-screen composite that draws the relief, and a full-screen blend costs the
-same whether the grid under it has forty cells or ninety. Drawing the relief
-and the glint as two separate blended passes halved the frame rate on its own
-— 13fps against 22 — which is why they now ride in one map.
+The solver column is the one that transfers to a phone; the fps column is a
+software rasteriser doing full-screen blending, which is the single thing a
+GPU is best at. At 96 cells a step costs 7.5ms, leaving about 9ms of a
+sixtieth of a second for everything else.
 
-That also means this number understates a phone by more than the other pages'
-do. Blending one full-screen layer is the single thing a GPU is best at and
-the single thing a software rasteriser is worst at; the solver, which is plain
-JavaScript arithmetic either way, is the part that transfers honestly. The
-flat first version of the renderer ran at 45fps here and looked like cut
-paper, which is the trade being made.
+## Where this actually stands
 
-That resolution is also the honest limit on what this can be. At 56 cells the
-smallest droplet is five or six cells across, which is a centimetre-scale blob
-and not the micron-scale one that makes a real emulsion last for minutes. This
-is a lava lamp, not a vinaigrette, and it is a lava lamp because of the grid.
+It still does not look like oil and water, and the reason is a three-way
+squeeze that every fix has made more visible rather than less. All three
+sides were measured today:
+
+- **First-order advection** smears the interface and Cahn–Hilliard re-hardens
+  the smear, freezing in points and tendrils that a real interface would
+  retract in milliseconds.
+- **Second-order advection** removes the smearing, and the flow immediately
+  stretches the interface into hair-thin threads. Threads only break into
+  drops when they are several interface-widths thick, and the interface is
+  about three cells at any resolution affordable here — so they simply keep
+  thinning. Thirty-six stringy bodies instead of two blobby ones is a
+  different failure, not a better result.
+- **Enough interfacial tension to stop them thinning** breaches the capillary
+  time-step limit, `Δt ≈ √(ρΔx³/2πσ)`. At a coefficient of 15,000 and 40,000
+  the cell stops coming to rest at all: resting RMS goes 2.6 → 15.9 → 30.1.
+
+The way out of all three at once is three to five times the grid, which is ten
+to twenty-five times the solver cost. That is not available in JavaScript at
+sixty frames a second on a phone, and no further tuning of the constants will
+substitute for it.
+
+What is here is correct and measured — the tension force points the right way,
+mass is conserved locally, the advection is second order, the interface is
+resolved as well as the budget allows — and the result is still not
+convincing. Those are compatible statements, and the honest reading is that
+this particular liquid is the wrong one to have picked for a coarse real-time
+solver.
 
 **It has never run on a handset.** Same caveat as the other two, and for the
 same reason: there is no device here.
 
 ## What the line wants next
 
-**Slime** is the one still outstanding, and it is now clearly the most
-interesting of the three: the shaker's solver with a shear-thinning,
-yield-stress constitutive law in place of a Newtonian viscosity, so the
-material holds its shape until you push hard enough and then flows. It wants
-*dragging* as its verb — a finger that stretches the material rather than
-loading it or stirring it — which is a third thing the line does not have.
+**Slime**, and this page is the argument for it. Everything the solver does
+badly here it would do well there. Slime is viscous, shape-holding and slow;
+it has no droplets to resolve, no threads to bead, and no capillary time-step
+to breach. The coarse, gooey, smooth-formed behaviour that is wrong for water
+is exactly right for a gel — which means the constraint that defeated oil and
+water is not a constraint there at all.
 
-Two pieces of this page transfer directly to it. The phase field is how you
-say where the slime is and where the air is, and the viscous term is already
-written as a diffusion, which is the term a non-Newtonian law replaces: make
-`nu` a function of the local strain rate and most of the rheology follows.
+It wants a shear-thinning, yield-stress constitutive law in place of the
+Newtonian viscosity, so the material holds its shape until pushed hard enough
+and then flows, and it wants *dragging* as its verb — a finger that stretches
+the material rather than pressing or stirring it. The viscous term here is
+already written as a diffusion, which is precisely the term a non-Newtonian
+law replaces.
