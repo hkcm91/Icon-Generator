@@ -81,8 +81,8 @@ WATER_DEEP = (0.055, 0.408, 0.678)
 # blue in one of these toys actually comes from: the chamber holds maybe a
 # centimetre of water, which tints almost nothing, and the field you see the
 # rings against is a sheet of coloured plastic at the back.
-PLATE_TOP = (0.396, 0.831, 0.898)
-PLATE_DEEP = (0.114, 0.478, 0.722)
+PLATE_TOP = (0.76, 0.93, 0.96)
+PLATE_DEEP = (0.24, 0.55, 0.86)
 
 # The case. These toys were moulded in flat, saturated primaries — the coral
 # reads warmest against the aqua and is the one most people picture.
@@ -90,7 +90,7 @@ CASE_COLOUR = (0.898, 0.286, 0.278)
 # Deliberately a deep amber rather than the bright yellow it looks like
 # when pressed. The press is shown by the button lighting up, and a button
 # that already renders at the top of the range has nowhere to light up to.
-BUTTON_COLOUR = (0.847, 0.565, 0.086)
+BUTTON_COLOUR = (0.97, 0.72, 0.80)
 
 # Ring plastic — pearl, not flat colour. Object Info → Random picks one
 # base tint per ring, and the nacre sweep below runs over whichever it got.
@@ -117,7 +117,7 @@ NACRE_SWEEP = [
     (1.00, 0.72, 0.62),   # peach
 ]
 
-HOOK_COLOUR = (0.96, 0.96, 0.94)
+HOOK_COLOUR = (0.99, 0.97, 0.94)
 
 
 # --------------------------------------------------------------------------
@@ -201,9 +201,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     play = p.add_argument_group("rings and pegs")
     play.add_argument("--rings", type=int, default=9)
-    play.add_argument("--ring-radius", type=float, default=0.155,
+    play.add_argument("--ring-radius", type=float, default=0.175,
                       help="ring outer radius in metres")
-    play.add_argument("--ring-tube", type=float, default=0.028,
+    play.add_argument("--ring-tube", type=float, default=0.034,
                       help="ring stock radius in metres")
     play.add_argument("--hooks", type=int, default=5,
                       help="pegs to land rings on")
@@ -243,7 +243,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     play.add_argument("--hook-bob", type=float, default=0.022,
                       help="how far the pegs drift on their stalks, in "
                            "metres; 0 bolts them down")
-    play.add_argument("--pearl", type=float, default=0.5,
+    play.add_argument("--pearl", type=float, default=0.58,
                       help="how strongly the nacre sheen shows over a ring's "
                            "base tint, 0 to 1. At 0 the rings are flat pearl "
                            "colours; at 1 the sheen swamps the tint and "
@@ -824,10 +824,10 @@ def ring_material(strength: float, args_cycles: float
     # rather than merely bright.
     put(bsdf, ("Coat Weight", "Clearcoat"), 1.0)
     put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.03)
-    # A little emission, to hold the pearl against the plate behind. Any
-    # more and the rings stop looking like objects in water and start
-    # looking like they are lit from inside.
-    put(bsdf, ("Emission Strength",), 0.28)
+    # Enough emission that a ring's colour spills onto the plate and the
+    # water around it: the rings are where the colour in this scene comes
+    # from, and they should be seen to give it off.
+    put(bsdf, ("Emission Strength",), 0.7)
 
     tree.links.new(tinted_out, bsdf.inputs["Base Color"])
     emission = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
@@ -919,16 +919,55 @@ def button_material(name: str):
     out = tree.nodes.new("ShaderNodeOutputMaterial")
     out.location = (300, 0)
     bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    # Frosted rose-quartz glass rather than opaque plastic: light gets into
+    # it and scatters, so the glow on a press comes from inside the button
+    # instead of sitting on its face.
     put(bsdf, ("Base Color",), rgba(lin(BUTTON_COLOUR)))
-    put(bsdf, ("Roughness",), 0.28)
-    put(bsdf, ("Coat Weight", "Clearcoat"), 0.6)
-    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.08)
+    put(bsdf, ("Roughness",), 0.32)
+    put(bsdf, ("IOR",), 1.47)
+    put(bsdf, ("Transmission Weight", "Transmission"), 0.55)
+    put(bsdf, ("Subsurface Weight", "Subsurface"), 0.35)
+    put(bsdf, ("Coat Weight", "Clearcoat"), 1.0)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.05)
     socket = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
     if socket is not None:
         socket.default_value = rgba(lin(BUTTON_COLOUR))
     put(bsdf, ("Emission Strength",), 0.0)
     tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return mat, bsdf
+
+
+def milk_glass_material(name: str,
+                        colour: tuple[float, float, float]) -> bpy.types.Material:
+    """Opal glass: light gets a little way in and comes back soft.
+
+    Flat white plastic in front of a blue plate reads as a cut-out. Subsurface
+    gives the post a body, a low transmission lets the plate tint its edges,
+    and a hard coat over a matte core is what porcelain and sea glass share.
+    """
+    mat, tree = new_material(name)
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (300, 0)
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    put(bsdf, ("Base Color",), rgba(lin(colour)))
+    put(bsdf, ("Roughness",), 0.26)
+    put(bsdf, ("IOR",), 1.5)
+    put(bsdf, ("Subsurface Weight", "Subsurface"), 0.55)
+    radius = bsdf.inputs.get("Subsurface Radius")
+    if radius is not None:
+        radius.default_value = (0.12, 0.08, 0.06)
+    put(bsdf, ("Subsurface Scale",), 0.6)
+    # Almost no transmission. Any real amount lets the blue plate through
+    # and the post reads as smoked grey rather than opal white.
+    put(bsdf, ("Transmission Weight", "Transmission"), 0.03)
+    put(bsdf, ("Coat Weight", "Clearcoat"), 0.9)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.06)
+    put(bsdf, ("Emission Strength",), 0.32)
+    socket = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
+    if socket is not None:
+        socket.default_value = rgba(lin(colour))
+    tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
 
 
 def simple_material(name: str, colour: tuple[float, float, float],
@@ -1190,7 +1229,7 @@ def build_hooks(args, built: dict, fill_z: float) -> list[bpy.types.Object]:
     base_r = hook_base(args)
     # The pegs sit against the back wall, which is the deepest water in
     # the chamber; a plain white plastic reads as charcoal from there.
-    material = simple_material("ringtoy_hook", HOOK_COLOUR, 0.22, 0.25)
+    material = milk_glass_material("ringtoy_hook", HOOK_COLOUR)
 
     back = hook_mount(args, inner)
     # Leaning the post up means -Y rotates toward +Z, so a ring that slides
@@ -1481,13 +1520,22 @@ def build_lighting(args, size: Vector) -> None:
         light.rotation_euler = rotation
         return light
 
-    area("Key", (-3.0, -4.4, 3.4),
-         (math.radians(54), 0.0, math.radians(-36)), 4.0, 460)
-    area("Fill", (3.4, -3.6, -1.4),
-         (math.radians(102), 0.0, math.radians(44)), 5.0, 240)
+    # Product-shot rig: everything is big, so every highlight is a soft
+    # window rather than a hot dot, and the key and fill are split warm and
+    # cool so a white post and a pearl ring have two colours of light to
+    # turn through instead of one.
+    key = area("Key", (-3.2, -4.6, 3.6),
+               (math.radians(54), 0.0, math.radians(-36)), 7.0, 520)
+    key.data.color = lin((1.0, 0.94, 0.88))
+    fill = area("Fill", (3.6, -3.8, -1.2),
+                (math.radians(102), 0.0, math.radians(44)), 8.0, 260)
+    fill.data.color = lin((0.86, 0.94, 1.0))
+    # A high, soft skylight: the top edge of every ring and post catches it,
+    # which is what separates them from the plate.
+    area("Top", (0.0, -1.6, 6.5), (math.radians(14), 0.0, 0.0), 6.0, 300)
     # Back light is what makes the water glow rather than sit there as a
     # dark slab, and it is what puts the bright rim on every bubble.
-    area("Rim", (0.0, 5.2, 1.4), (math.radians(-108), 0.0, 0.0), 6.0, 700)
+    area("Rim", (0.0, 5.2, 1.4), (math.radians(-108), 0.0, 0.0), 6.0, 600)
 
     if args.transparent:
         scene.render.film_transparent = True

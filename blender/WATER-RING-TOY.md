@@ -17,7 +17,9 @@ trip through the UI.
 ![The opening pose, with pearl rings on the pegs](../docs/screenshots/water-ring-toy.png)
 
 Above: the opening pose. Each ring is a pearl — a pale base tint under a nacre
-sheen that walks through the spectrum as the surface turns away from you.
+sheen that walks through the spectrum as the surface turns away from you — and
+the rings are where the colour in the scene comes from: they carry enough
+emission to spill it onto the plate and the water around them.
 
 It is built on [`liquid_shaker.py`](./liquid_shaker.py) and imports its plan
 curve, pillow loft, fill-line boolean and render plumbing directly rather than
@@ -77,9 +79,9 @@ show. The travel stays, because it is what is really going on, but the press
 is carried by the two things that do survive: the button lights up, and it
 bulges. The bulge is across the face rather than through it — a rubber button
 squashes wider as it goes in, and width is the part of that the camera can
-see. The rest colour is a deep amber rather than the bright yellow it looks
-like when lit, because a button already rendering at the top of the range has
-nowhere to light up to.
+see. The rest colour is a soft rose rather than the near-white it goes when lit,
+because a button already rendering at the top of the range has nowhere to
+light up to.
 
 **A press carries rings to the surface.** That is what the jet is for, and
 getting there took more force than it looks: with the drag a ring feels, a
@@ -150,6 +152,18 @@ keyframer and the solver cannot disagree about where a peg is.
 face-on to a leaning peg starts the sim intersecting it — and nothing needs it
 now. On a peg leaning 62° a square ring is seen almost edge-on, and gravity
 would hang it much closer to flat anyway.
+
+**Everything else is glass.** The posts are opal glass — subsurface for a
+body, a hard coat over a matte core, and almost no transmission, because any
+real amount lets the blue plate through and a white post reads as smoked
+grey. The buttons are frosted rose quartz, part transmissive, so the glow on a
+press comes from inside the button rather than sitting on its face. The plate
+behind is a pastel gradient rather than a saturated one, and the light rig is
+a product-shot rig: every source is large, so every highlight is a soft window
+rather than a hot dot, the key is warm and the fill is cool so a white post
+and a pearl ring have two colours of light to turn through, and a high
+skylight catches the top edge of every ring and post, which is what lifts
+them off the plate.
 
 **The rings are pearl, not flat colour.** Two things make a pearl look like a
 pearl and neither is its colour. The first is that the hue moves with the
