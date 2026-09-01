@@ -424,6 +424,22 @@ gone in a quarter second. Radius does most of the work — at five radii and
 2,600px/s the oil bulges by a fifth and heals over about three seconds, which
 is what a finger in a viscous liquid does.
 
+## What it looks like
+
+`docs/video/oil-water.mp4` — 25 seconds, 30fps, one deterministic take from
+`seed=17`: a second and a half at rest, a two-and-a-half second shake at
+2.5Hz, five seconds to settle, then the phone turned through a full
+revolution with a pause at each quarter.
+
+The take is driven on the virtual clock, two 60Hz solver ticks per captured
+frame, so it plays at real speed and is reproducible rather than a recording
+of one particular run.
+
+The rotation is worth watching for its own sake: gravity is low-passed with a
+0.66s time constant, so the oil does not snap to the new "up" — it lags the
+turn by about a second and then climbs, which is what a real cell does and is
+a consequence of the sensor filter rather than anything drawn.
+
 ## Options
 
 Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.

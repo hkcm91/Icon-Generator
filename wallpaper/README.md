@@ -28,7 +28,8 @@ seconds. It is the closest of the three to this page — it took this file's
 velocity solver, shake model and colourways nearly unchanged — but not as
 close as the plan claimed. This page's second phase is a dye, which marbles;
 oil and water is a phase field, which does not mix. That is a term in the
-equation of motion, not a constant.
+equation of motion, not a constant. There is a 25-second clip of it being
+shaken and turned at [`docs/video/oil-water.mp4`](../docs/video/oil-water.mp4).
 
 ## Try it
 
