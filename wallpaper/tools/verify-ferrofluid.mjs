@@ -106,6 +106,10 @@ const drive = (page, seconds, script = 'idle', fps = FPS) => page.evaluate(
       const t = f / fps;
       let tilt = 0, sx = 0, sy = 0, spin = 0;
       if (script === 'tilt') tilt = Math.min(1, t / 2) * 0.9;
+      if (script === 'flat') {
+        // Face up on a desk: all of gravity is out of the screen's plane.
+        w.motion(0, 0, 9.81, 0); window.__vt += dt; w.tick(); continue;
+      }
       if (script === 'shake' && t > 1 && t < 3) {
         sx = 32 * Math.sin((t - 1) * 34);
         sy = 26 * Math.sin((t - 1) * 23 + 1.1);
@@ -236,6 +240,35 @@ const check = (name, ok, result) => {
   await page.close();
 }
 
+// --- 5b. flat on a desk ---------------------------------------------------
+{
+  const page = await open();
+  await drive(page, 8);
+  const upright = await probe(page);
+  /* The premise is a cell on its edge, and lying flat there is no in-plane
+   * gravity at all. Without a floor under the weight the magnets had nothing
+   * to work against and the liquid covered the whole screen; the test is that
+   * it stays a pool, with the top half free for whatever the launcher puts
+   * there.
+   *
+   * Averaged over the minute, not sampled at the end of it. This liquid is
+   * chaotic and one frame of it says nothing: an earlier version of this
+   * check read a single final bounding box and failed on a splash, while the
+   * behaviour over the whole minute was fine. */
+  let top = 0, body = 0, samples = 0;
+  for (let k = 0; k < 12; k++) {
+    await drive(page, 5, 'flat');
+    const r = await probe(page);
+    top += r.bbox[1] / H; body += r.bodyPct; samples++;
+  }
+  const flat = await probe(page);
+  check('face up on a desk for a minute',
+        flat.escaped === 0 && body / samples >= 75 && top / samples > 0.4,
+        `in a body ${upright.bodyPct}% upright, ${Math.round(body / samples)}% flat; ` +
+        `top of the liquid averages ${Math.round(100 * top / samples)}% down the screen`);
+  await page.close();
+}
+
 // --- 6. idle, at length ---------------------------------------------------
 {
   const page = await open();
@@ -269,27 +302,70 @@ const check = (name, ok, result) => {
   await a.close(); await b.close();
 }
 
-// --- 8. cost --------------------------------------------------------------
+// --- 8. flicker: what moves when nothing should ---------------------------
+{
+  const page = await open('poles=0');
+  await drive(page, 10);
+  /* Two consecutive frames of a pool with no magnets near it. Whatever
+   * differs between them is either a drop still settling or the renderer
+   * being unstable, and before the surface normal was measured over arc
+   * length it was mostly the latter — the highlight boiled along the whole
+   * edge of a liquid that was not moving. */
+  const shot = async () => (await page.screenshot()).toString('base64');
+  const a = await shot();
+  await drive(page, 1 / FPS);
+  const b = await shot();
+  const d = await page.evaluate(async ({ A, B }) => {
+    const load = async (s) => { const im = new Image(); im.src = s; await im.decode(); return im; };
+    const [x, y] = await Promise.all([load(A), load(B)]);
+    const c = document.createElement('canvas');
+    c.width = x.width; c.height = x.height;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(x, 0, 0);
+    const da = g.getImageData(0, 0, c.width, c.height).data;
+    g.clearRect(0, 0, c.width, c.height); g.drawImage(y, 0, 0);
+    const db = g.getImageData(0, 0, c.width, c.height).data;
+    let sum = 0, moved = 0;
+    for (let i = 0; i < da.length; i += 4) {
+      const v = Math.abs(da[i] - db[i]);
+      sum += v; if (v > 12) moved++;
+    }
+    const n = da.length / 4;
+    return { mean: sum / n, pct: 100 * moved / n };
+  }, { A: 'data:image/png;base64,' + a, B: 'data:image/png;base64,' + b });
+  check('frame to frame with the liquid at rest', d.pct < 0.6,
+        `${d.mean.toFixed(2)}/255 mean, ${d.pct.toFixed(2)}% of pixels moved more than 12 levels`);
+  await page.close();
+}
+
+// --- 9. cost --------------------------------------------------------------
 for (const qs of ['', 'drops=700']) {
   const page = await open(qs);
   await drive(page, 8);
-  /* Back to back, with no idle between frames. That is not how a wallpaper
-   * runs — it draws once per vsync and sleeps the rest — so this is an upper
-   * bound rather than a typical figure; measured one frame at a time it comes
-   * out around half. An upper bound is the useful one to quote. */
-  const ms = await page.evaluate(({ n }) => {
+  /* Frames spaced out, and reported as a median rather than a mean.
+   *
+   * Both of those were wrong here before, and in the same direction. Driven
+   * back to back with no gap, the canvas eventually stalls waiting to flush,
+   * which puts a handful of forty-millisecond frames into the sample: the
+   * median stays at 3.7 ms while the mean climbs past 11, and it was the mean
+   * that got written down. A wallpaper draws once per vsync and sleeps for the
+   * rest of it, so a gap is the honest condition, and a median with a 95th
+   * percentile beside it says more than either average. */
+  const ms = await page.evaluate(async ({ n }) => {
     const R = window.__real, w = window.__wallpaper;
-    let total = 0;
+    const t = [];
     for (let f = 0; f < n; f++) {
+      await new Promise((r) => setTimeout(r, 4));
       const t0 = R();
       w.motion(0, 9.81, 0, 0); window.__vt += 1000 / 60; w.tick();
-      total += R() - t0;
+      t.push(R() - t0);
     }
-    return total / n;
-  }, { n: 900 });
+    t.sort((a, b) => a - b);
+    return { p50: t[t.length >> 1], p95: t[Math.floor(t.length * 0.95)] };
+  }, { n: 200 });
   const r = await probe(page);
-  check(`JavaScript per frame, ${r.n} drops`, ms < 12,
-        `${ms.toFixed(1)} ms back to back`);
+  check(`JavaScript per frame, ${r.n} drops`, ms.p95 < 12,
+        `${ms.p50.toFixed(1)} ms median, ${ms.p95.toFixed(1)} ms at the 95th percentile`);
   await page.close();
 }
 

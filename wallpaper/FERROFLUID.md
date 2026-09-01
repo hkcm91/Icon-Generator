@@ -70,6 +70,23 @@ over it lifts and spikes with the same force.
 Their paths are laid out in the gravity frame, so tilting the phone takes the
 magnets with it and "above the pool" goes on meaning above the pool.
 
+### When the phone is flat
+
+The premise is a cell standing on its edge, and most of the time a phone is
+anywhere it is lying face up on a desk. Then the cell is horizontal, gravity
+leaves the plane entirely, and the liquid is weightless in the only two
+directions that are drawn. Nothing opposes the magnets: measured, forty
+seconds of that climbed the walls and covered the whole screen in a black
+starburst, with the icons somewhere underneath.
+
+It is not even wrong — a horizontal Hele-Shaw cell really does that. What
+holds a real one down is friction against the plate, and a two-dimensional
+model has no plate to have friction against. So the in-plane weight has a
+floor of a third of a gravity, along whichever way was last down. The pool
+stays a pool, and lying flat becomes a livelier version of the same piece
+rather than a different one: measured over a minute, the liquid averages the
+bottom 55% of the screen with 2% of its drops above the midline.
+
 ### The liquid
 
 Clavet, Beaudoin and Poulin's double density relaxation (SCA 2005). Two
@@ -159,21 +176,36 @@ all of what you see on it is one hard reflection of whatever is bright in the
 room, riding the edge where the surface turns away. Shading the interior
 instead — which this did first — comes out looking like smoke in a jar. So the
 silhouette is clipped, and the lit runs of the outline are stroked in tiers by
-how squarely they face the light, each tier a stack of decreasing widths: the
-stack is the falloff across the band, the tiers are the falloff along it, and
-the narrowest line of the brightest tier is the glint.
+how squarely they face the light.
 
-Two details in there are load-bearing:
+Four details in there are load-bearing, and all four were found by watching a
+clip rather than a still:
 
-- The surface normal is measured across five points of contour, not between
-  neighbours. Marching-squares vertices land a fraction of a cell apart and
-  each sits on a grid edge, so the direction from one to the next mostly
-  records which edge it happened to be; normals built that way are noise and
-  no highlight assembles a run longer than a couple of points.
-- Every stroke is set in by half its own width. Centred on the contour, half
-  of it falls outside and the clip takes it — and not cleanly: what survives
-  sits on the clip's antialiased edge at a fraction of its coverage, and the
-  glint that should be white comes out a mid grey that reads as a bevel.
+- **The normal is measured across 22 px of surface**, not between neighbouring
+  vertices and not across a fixed number of them. The reason is bigger than it
+  sounds. The metaball field ripples at the drop spacing: measured, a pool at
+  rest undulates 0.6 px RMS with a 9 px period. Six tenths of a pixel is
+  invisible as a shape — but over a 9 px period it swings the surface *normal*
+  by ±35°, and the highlight boiled along the whole edge of a liquid that was
+  barely moving. Averaged over a couple of ripple periods, what is left is the
+  shape's own curvature. Counting a fixed number of vertices does not do it:
+  vertex spacing varies with the angle the contour crosses the grid at, so
+  five along is a different arc length every frame.
+- **The bright tiers arrive with curvature**, not merely with facing. A
+  mirror-flat surface reflects the whole room rather than a compact highlight;
+  it is curvature that squeezes a window into a bright band. So a dim broad
+  sheen goes wherever the light falls and the glints are reserved for tips and
+  beads. Without that the highlight is a constant-width line all the way round
+  every shape, and a pool at rest reads as a black bar someone has outlined.
+- **Each band is a stack of narrowing strokes**, not one wide one. A stroke has
+  a hard edge, so a 15 px line at a flat alpha paints a grey ledge running
+  parallel to the whole outline — the liquid comes out looking like a sticker
+  with a bevel on it. Five passes at a fraction of the alpha accumulate into a
+  falloff and none of their edges is visible.
+- **Every stroke is set in by half its own width.** Centred on the contour,
+  half of it falls outside and the clip takes it — and not cleanly: what
+  survives sits on the clip's antialiased edge at a fraction of its coverage,
+  and the glint that should be white comes out a mid grey.
 
 The **light is fixed in the world, not on the screen.** It comes from above
 and a little to one side of wherever "above" currently is, so rolling the
@@ -184,10 +216,16 @@ The **iron filings** are the oldest way of drawing a magnetic field and still
 the clearest, and they are the only thing on the page that says where the
 magnets are — a magnet behind the glass is not visible and its effect on the
 liquid is often a screen away. They are referenced to the strongest pole
-rather than to an absolute field, so the hatch covers the same *shape*
-however strong the magnets happen to be at that instant; on an absolute
-threshold a magnet at full strength puts ticks in every corner and the
-wallpaper turns into a diagram.
+rather than to an absolute field, so the hatch covers the same *shape* however
+strong the magnets happen to be at that instant; on an absolute threshold a
+magnet at full strength puts ticks in every corner and the wallpaper turns
+into a diagram.
+
+They also have to be *wide* and very faint rather than tight and dark. Drawn
+tight they are a small asterisk floating in white space, which reads as a
+smudge on the screen rather than as a field; given room the arcs curve and it
+reads as what it is. `filings=0` removes them, and the piece is perfectly good
+without.
 
 ## Fixed timestep
 
@@ -196,6 +234,14 @@ rather than taking longer ones. Position-based relaxation is only
 conditionally stable and its stiffness is expressed in dt²: hand it a 40 ms
 frame after a stall and the pressure correction overshoots into a spray of
 drops that never comes back.
+
+It also means the page can decline to draw. The simulation is fixed at 60 Hz
+and a great many phones now refresh at 90 or 120, so on those every second or
+third frame arrives with the accumulator short of a step: nothing has moved and
+the canvas already holds the right picture. Redrawing it is a third of the
+frame's work spent reproducing the previous frame exactly, which on a wallpaper
+is battery and nothing else. Measured at 120 Hz, half the renders are skipped
+and the median frame drops from 4.3 ms to 3.6 ms.
 
 Four more guards exist for the same reason, and each of them is a failure that
 actually happened during development rather than a precaution:
@@ -270,14 +316,26 @@ clock, so runs are comparable.
 | Property | Result |
 | --- | --- |
 | Runtime errors across 8 configurations and 4 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped |
-| Drops leaving the cell — ever, in any of the above | 0 of 1000 |
+| Drops leaving the cell — ever, in any of the below | 0 of 1000 |
 | A 2 s shake | 92% of drops in a body before, 87% immediately after, 90% ten seconds later; peak speed 727 px/s |
 | Four taps in nine seconds, the worst a user can do to it | 98% -> 94% -> 89%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
 | Five home-screen swipes arriving in one frame | 92% -> 89% -> 87%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
 | 52° of tilt held 12 s | 98% in a body, occupying 87,286–416,876 of 420×880 |
+| Face up on a desk for a minute | 83% in a body, and the liquid's top averages 45% down the screen. Before the weight had a floor it covered the screen |
 | 45 s idle | 97% in a body, drop count constant |
 | 60 fps against 30 fps, 8 s idle | mean 3.4 px apart, max 10 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
-| JavaScript per frame | 8.5 ms at 1000 drops, 7.1 ms at 700, measured back to back with no idle between frames. A wallpaper draws once per vsync and sleeps the rest; one frame at a time it comes out around half that. The upper bound is the useful one |
+| JavaScript per frame, 1000 drops | 4.2 ms median, 4.7 ms at the 95th percentile, with a realistic gap between frames. `drops=700` takes it to 3.1 / 3.7 ms |
+| Frame-to-frame change with the liquid at rest | 0.15/255 mean, 0.29% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
+
+Two of those numbers were themselves wrong before this table was checked
+against how the thing runs. The frame cost was quoted as 8.5 ms, which was a
+*mean* of frames driven back to back with no gap. Driven that way the canvas
+occasionally stalls waiting to flush, and the handful of forty-millisecond
+frames that produces pulls the mean past 11 ms while the median never moves
+off 3.7 ms. The flat-phone check, meanwhile, asserted on a single final
+bounding box, which is meaningless for a chaotic system: it failed on a splash
+while the behaviour over the whole minute was fine. Both now measure a
+distribution.
 
 Re-run all of it with `node wallpaper/tools/verify-ferrofluid.mjs`, which
 exits non-zero if any of it regresses. It exists because two real defects got
