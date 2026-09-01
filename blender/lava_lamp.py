@@ -82,8 +82,9 @@ LOOKS = {
         "threshold": 0.75, "stretch": 0.7, "pool": 0.10, "depth": 0.7,
         "gloss": 1.0, "swirl": 0,
         "glow": 0.6, "glow_reach": 0.75, "bulb": 60.0, "crown": 400.0,
-        "env": 5.0, "haze": 0.2, "density": 1.5, "dof": 7.0,
-        "backdrop": "0.008,0.006,0.016", "view_transform": "Standard",
+        "env": 5.0, "haze": 0.1, "density": 1.8, "dof": 7.0,
+        "liquid_colour": "0.16,0.03,0.26", "crest": "0.58,0.16,0.82",
+        "backdrop": "0.006,0.004,0.014", "view_transform": "Standard",
     },
     "bubbles": {
         "palette": "bubblegum", "no_pool": True,
@@ -230,6 +231,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                           "also un-hides that light from glossy rays, because "
                           "a glossy surface with nothing to reflect just "
                           "looks darker rather than shinier")
+    wax.add_argument("--crest", default="",
+                     help="a third colour for the top of the vessel, as r,g,b. "
+                          "With --accent this makes the wax a three-stop "
+                          "gradient — accent at the floor, the palette's wax "
+                          "through the middle, this at the crest")
     wax.add_argument("--glass", type=float, default=0.0,
                      help="0 is wax, opaque. 1 is tinted glass: light passes "
                           "through and the ground shows through every blob. "
@@ -395,6 +401,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.metal_rgb = _colour(args.metal_colour, metal_c)
     args.accent_rgb = (None if args.accent.strip().lower() in ("", "none")
                        else _colour(args.accent, (1.0, 1.0, 1.0)))
+    args.crest_rgb = (None if args.crest.strip().lower() in ("", "none")
+                      else _colour(args.crest, (1.0, 1.0, 1.0)))
     if args.fill <= 0.0:
         args.fill = 0.94 if args.shape == "lamp" else 1.0
     if args.depth <= 0.0:
@@ -786,7 +794,7 @@ def liquid_material(reference: bpy.types.Object, height: float, colour,
 
 
 def height_ramp(tree, reference: bpy.types.Object, height: float,
-                low, high, y: int = -200):
+                low, high, y: int = -200, mid=None):
     """A colour ramp driven by height in the vessel, `low` at the floor.
 
     Anchored to the vessel rather than to whatever object carries the
@@ -812,6 +820,9 @@ def height_ramp(tree, reference: bpy.types.Object, height: float,
     ramp.color_ramp.elements[0].color = rgba(low)
     ramp.color_ramp.elements[1].position = 1.0
     ramp.color_ramp.elements[1].color = rgba(high)
+    if mid is not None:
+        stop = ramp.color_ramp.elements.new(0.5)
+        stop.color = rgba(mid)
 
     tree.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
     tree.links.new(mapping.outputs["Vector"], sep.inputs["Vector"])
@@ -822,7 +833,7 @@ def height_ramp(tree, reference: bpy.types.Object, height: float,
 def wax_material(reference: bpy.types.Object, height: float, colour,
                  glow: float, heat: float, blob: float,
                  accent=None, gloss: float = 0.0,
-                 glass: float = 0.0) -> bpy.types.Material:
+                 glass: float = 0.0, crest=None) -> bpy.types.Material:
     """Translucent wax, hot at the floor and cooling as it climbs.
 
     Two things make wax read as wax rather than as plastic. The first is
@@ -846,7 +857,11 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     put(bsdf, ("Base Color",), rgba(colour))
     grade = None
     if accent is not None:
-        grade = height_ramp(tree, reference, height, accent, colour, -640)
+        # Three stops when a crest colour is given: the palette's own colour
+        # moves to the middle and the crest takes the top.
+        grade = height_ramp(tree, reference, height, accent,
+                            crest if crest is not None else colour, -640,
+                            mid=colour if crest is not None else None)
         tree.links.new(grade.outputs["Color"], bsdf.inputs["Base Color"])
     put(bsdf, ("Roughness",), 0.24 - 0.225 * gloss)
     put(bsdf, ("IOR",), 1.45 + 0.05 * gloss)
@@ -1467,7 +1482,7 @@ def build_wax(args, interior: list[tuple[float, float]], fill_z: float,
     typical = unit * args.blob_size * surface_fraction(args.threshold)
     wax = wax_material(basis, height, args.wax_rgb, args.glow,
                        args.glow_reach, typical, args.accent_rgb, args.gloss,
-                       args.glass)
+                       args.glass, args.crest_rgb)
     # Only the basis's material is used for the whole family; assigning to the
     # members as well would be dead data.
     basis.data.materials.append(wax)
