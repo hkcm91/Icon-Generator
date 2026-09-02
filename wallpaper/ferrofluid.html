@@ -366,12 +366,112 @@ if (needsPermission) {
 const poles = [];
 let ambientPoles = 0;
 
+/* The single poles the field is actually summed over. A magnet in `poles` is
+ * what the choreography moves, what a tap creates and what the filings
+ * normalise against; each one contributes either two sources (an ambient
+ * dipole) or one (a fingertip). Rebuilt once a step rather than unpacked
+ * inside the field evaluation, which runs once per drop per step. */
+const SRC_MAX = 24;
+const srcX = new Float64Array(SRC_MAX), srcY = new Float64Array(SRC_MAX);
+const srcZ = new Float64Array(SRC_MAX), srcQ = new Float64Array(SRC_MAX);
+let srcN = 0;
+
+function buildSources() {
+  srcN = 0;
+  for (let i = 0; i < poles.length && srcN + 2 <= SRC_MAX; i++) {
+    const p = poles[i];
+    if (!p.dip) {                              // a fingertip: one pole
+      srcX[srcN] = p.x; srcY[srcN] = p.y; srcZ[srcN] = p.z; srcQ[srcN] = p.q;
+      srcN++;
+      continue;
+    }
+    const h = DIPOLE_SEP * p.z * 0.5;
+    srcX[srcN] = p.x + p.ax * h; srcY[srcN] = p.y + p.ay * h;
+    srcZ[srcN] = p.z; srcQ[srcN] = p.q; srcN++;
+    srcX[srcN] = p.x - p.ax * h; srcY[srcN] = p.y - p.ay * h;
+    srcZ[srcN] = p.z; srcQ[srcN] = -p.q; srcN++;
+  }
+}
+
 /* What an ambient magnet is pulling with at the top of its cycle. Two things
  * read it and they have to agree: the magnets themselves, and the iron filings,
  * which weight their ink by how much of this the strongest magnet is currently
  * exerting. */
 const AMBIENT_FIELD = CONFIG.field * 1.3;
 const RING_NORM = Math.pow(1.5, 1.5) * Math.SQRT2;   // = 1/max(r/(r²+z²)^{3/2} · z²)
+
+/* A magnet can also be a *pair* of opposite poles a short way apart — a bar
+ * magnet rather than a single pole — and on a big screen it is.
+ *
+ * A single pole's field falls off as an inverse square. That is what grows a
+ * crown of spikes, and it is also what takes a large pool apart: the reach
+ * grows as the square of the standoff, so the broad near field the crown needs
+ * comes with a far field that drags liquid about a screen away. Two opposite
+ * poles cancel at a distance and fall off as an inverse *cube* instead, which
+ * removes that completely — 45 s at four large sizes, two seeds each, went from
+ * as low as 51% of drops in one body to 100% everywhere with none escaped.
+ *
+ * It does not save the spikes, and the hope that it would was wrong. The same
+ * cancellation weakens the near field, and measured over three seeds the
+ * surface goes from 7.6 peaks standing 55 px proud to 3.4 standing 27 px. Nor
+ * is there a setting in between: placing the return pole deeper, so it cancels
+ * less close to the glass, slides continuously back to the single pole's
+ * behaviour — spikes and tablet collapse together, in step. The field that
+ * lifts the surface a standoff away and the field that reaches across the
+ * screen are the same field, and the pool sits only a couple of standoffs from
+ * the magnet, so there is no gap between the two scales to work in.
+ *
+ * A fingertip stays a single pole either way. A touch is meant to be felt
+ * across the screen, and 1/r³ would not carry that far. */
+const DIPOLE_SEP = num("dip", 0.9);        // pole spacing, in standoffs
+
+/* And it is a bar magnet only on a big screen.
+ *
+ * The two shapes are a straight trade and there is no setting that wins both.
+ * A single pole reaches far, which is what grows a crown of spikes on a phone
+ * and what takes a tablet's pool apart; the pair cancels that reach, which
+ * saves the tablet and blunts the crown to a mound. Measured, the whole knob
+ * just slides between those two ends — a return pole placed deeper recovers
+ * the spikes exactly as fast as it gives the tablet back. That is not a
+ * failure to tune: the field that lifts the surface a standoff away and the
+ * field that drags liquid a screen away are the same field, and the pool sits
+ * only a couple of standoffs from the magnet, so there is no gap between the
+ * two scales to work in.
+ *
+ * So it is chosen by the thing that decides which end matters. Below the
+ * reference size the cell is a phone, nothing is far away, and the single pole
+ * costs nothing; above it the far reach is the whole problem and the crown is
+ * worth giving up to have a pool at all. The magnets are a fiction either way
+ * — no real magnet changes type with the size of the glass — but on a big cell
+ * the useful fiction is a bar magnet. */
+function dipoleOn() { return DIPOLE_SEP > 0 && U > PHYSICS_REF; }
+
+/* The peak in-plane field of a unit dipole at unit standoff, found once by
+ * scanning the plane, so that `strength` goes on meaning "the strongest field
+ * this magnet makes" as it did for a single pole. Everything downstream —
+ * saturation, the pull, the traction — is calibrated against that meaning, so
+ * getting it from a formula that no longer applies would silently rescale the
+ * whole model. Peak field goes as q/z² for any fixed pole spacing measured in
+ * standoffs, so one number covers every z. */
+const DIPOLE_NORM = (() => {
+  if (DIPOLE_SEP <= 0) return RING_NORM;
+  const h = DIPOLE_SEP * 0.5;
+  let best = 0;
+  for (let x = -4; x <= 4; x += 0.01) {
+    for (let y = 0; y <= 3; y += 0.01) {
+      let hx = 0, hy = 0;
+      for (const [sx, q] of [[h, 1], [-h, -1]]) {
+        const dx = x - sx, dy = y;
+        const r = Math.sqrt(dx * dx + dy * dy + 1);
+        const r3 = r * r * r;
+        hx += q * dx / r3; hy += q * dy / r3;
+      }
+      const m = Math.hypot(hx, hy);
+      if (m > best) best = m;
+    }
+  }
+  return 1 / best;
+})();
 
 /* Saturation, and the single most consequential number in the file.
  *
@@ -410,6 +510,8 @@ function buildPoles() {
       held: 0,                      // where across the cell it took hold
       down: null,                   // its height last step, for the speed limit
       crest: Infinity, tick: 0,     // the liquid under it, and when it was read
+      dip: false,                   // a bar magnet or a single pole, by size
+      ax: 1, ay: 0,                 // which way it is pointing, set each step
       life: Infinity, born: Infinity, peak: 0,
     });
   }
@@ -623,6 +725,12 @@ function stepPoles(t, dt) {
      * a crown of spikes rather than a broad mound. */
     p.z = mix(FAR_Z, NEAR_Z, strength);
     p.strength = AMBIENT_FIELD * strength * p.sign;
+    /* Which way the bar magnet points, laid out in the gravity frame with
+     * everything else. Across the cell rather than along it, though the two
+     * measured within noise of each other — the axis is not the lever the
+     * separation is. */
+    p.ax = tanx; p.ay = tany;
+    p.dip = dipoleOn();
   }
 
   // Transient poles decay, and are dropped once they do nothing.
@@ -634,7 +742,12 @@ function stepPoles(t, dt) {
     p.strength = p.peak * u * u * (3 - 2 * u);
   }
 
-  for (const p of poles) p.q = RING_NORM * p.strength * p.z * p.z;
+  /* A dipole and a single pole need different constants to make `strength`
+   * mean the same thing — the strongest field the magnet makes. */
+  for (const p of poles) {
+    p.q = (p.dip ? DIPOLE_NORM : RING_NORM) * p.strength * p.z * p.z;
+  }
+  buildSources();
 }
 
 /** Field and its gradient at a point. `out` gets hx, hy, h (the magnitude)
@@ -648,13 +761,12 @@ function stepPoles(t, dt) {
 const fld = { hx: 0, hy: 0, h: 0, gx: 0, gy: 0 };
 function fieldAt(x, y, out) {
   let hx = 0, hy = 0, jxx = 0, jxy = 0, jyy = 0;
-  for (let i = 0; i < poles.length; i++) {
-    const p = poles[i];
-    const dx = x - p.x, dy = y - p.y;
-    const r2 = dx * dx + dy * dy + p.z * p.z;
+  for (let i = 0; i < srcN; i++) {
+    const dx = x - srcX[i], dy = y - srcY[i], z = srcZ[i];
+    const r2 = dx * dx + dy * dy + z * z;
     const r = Math.sqrt(r2);
     const r3 = r2 * r, r5 = r3 * r2;
-    const q = p.q;
+    const q = srcQ[i];
     hx += q * dx / r3;
     hy += q * dy / r3;
     jxx += q * (1 / r3 - 3 * dx * dx / r5);
@@ -1991,7 +2103,7 @@ function placePole(x, y, strength, seconds) {
   const p = {
     x, y, z: refU() * 0.26, strength, q: 0,
     peak: strength, life: seconds, born: seconds,
-    phase: 0, period: 1,
+    phase: 0, period: 1, dip: false, ax: 1, ay: 0,
   };
   poles.push(p);
   // Cap the transient poles: a fast tapper should not be able to build up a

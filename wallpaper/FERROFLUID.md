@@ -59,6 +59,12 @@ of radius z/√2, and an inverse square beyond. The ring is worth knowing about,
 because it is why a magnet held against the glass grows a crown around itself
 instead of one spike in the middle.
 
+On a screen bigger than the reference size each magnet becomes a *pair* of
+opposite poles instead — a bar magnet rather than a single pole — whose field
+falls off as an inverse cube because the two cancel at a distance. That is the
+one thing that has ever made the wallpaper hold together on a tablet, and it
+costs the spikes; both halves of that are measured under **Known bad**.
+
 Two of them, on opposite polarities so the pair reads as a bar magnet rather
 than two of the same end, working the pool in turn. Each runs the same cycle,
 half a period apart, so that while one is carrying liquid upward the other is
@@ -379,14 +385,15 @@ Append as query parameters, e.g. `ferrofluid.html?spike=30&filings=0`.
 | `paper` | `#f2f2f3` | Everything else |
 | `poles` | `2` | Drifting magnets. `0` leaves a pool that only answers the phone |
 | `field` | `1` | Overall magnet strength |
-| `pull` | `3.2` | Magnetophoretic force near a pole, in gravities |
+| `pull` | `1.3` | Magnetophoretic force near a pole, in gravities. A *body* force, so raising it lifts the pool as one mass and drowns the spikes — see the geyser-versus-crown note above |
 | `spike` | `20` | Surface traction at full magnetisation, in gravities (capped at 3 in flight) |
 | `chain` | `0.1` | Dipole force between neighbouring drops |
 | `self` | `1` | How much of its own field the liquid makes — the spike/no-spike dial |
 | `hsat` | `0.8` | Saturation field. The applied field is deliberately kept near half of this; saturated, the liquid's response is flat and it has no reason to prefer a peak to a plain |
 | `gloss` | `1` | Specular sheen |
 | `shadow` | `1` | Drop shadow on the paper |
-| `filings` | `1` | Iron-filing hatch |
+| `filings` | `1` | Iron-filing hatch. Its ink is weighted by how hard the strongest magnet is actually pulling, so it fades out while they are away |
+| `dip` | `0.9` | Spacing of the two poles of a bar magnet, in standoffs. Used only above the reference size; `dip=0` forces a single pole everywhere, which is the spikier look and the one that tears a large pool apart |
 | `grid` | from the drop spacing | Simulation grid in CSS pixels — the performance knob; raising it coarsens the contour and the shading together |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `10%` of the short edge | Corner radius in pixels |
@@ -428,7 +435,7 @@ clock, so runs are comparable.
 
 | Property | Result |
 | --- | --- |
-| Runtime errors across 12 configurations and 8 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped, at the sizes the wallpaper supports — see **Known bad** |
+| Runtime errors across 12 configurations and 8 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped, at any size — tablets included, for the first time |
 | Drops leaving the cell — ever, in any of the below | 0 of 1000 |
 | A 2 s shake | 92% of drops in a body before, 90% immediately after, 89% ten seconds later; peak speed 911 px/s |
 | Four taps in nine seconds, the worst a user can do to it | 99% -> 92% -> 81%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
@@ -438,7 +445,7 @@ clock, so runs are comparable.
 | 45 s idle | 98% in a body, drop count constant |
 | 60 fps against 30 fps, 8 s idle | mean 2.6 px apart, max 11 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
 | JavaScript per frame, 1000 drops | 4.2 ms median, 4.7 ms at the 95th percentile, with a realistic gap between frames. `drops=700` takes it to 3.0 / 3.9 ms. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
-| Frame-to-frame change with the liquid at rest | 0.15/255 mean, 0.29% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
+| Frame-to-frame change with the liquid at rest | 0.17/255 mean, 0.36% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
 
 Two of those numbers were themselves wrong before this table was checked
 against how the thing runs. The frame cost was quoted as 8.5 ms, which was a
@@ -458,56 +465,72 @@ without bound — and neither is visible in a single frame.
 
 ## Known bad
 
-**Large screens.** Making the magnets broad enough to grow a crown cost
-stability above phone dimensions, and the numbers are worth writing down rather
-than rounding off. Driven 45 s at each size, two seeds each, before and after
-the widening:
+**Large screens are fixed, at a price, and the price is visible.** A single
+pole's field falls off as an inverse square; a *pair* of opposite poles a short
+way apart cancels to leading order and falls off as an inverse cube. That is
+exactly the shape of the problem — the far reach is what took a big pool apart —
+and it works completely. Driven 45 s at each size, two seeds each:
 
-| | choreographed only | with the crown |
+| | single pole | bar magnet |
 | --- | --- | --- |
-| 600×1000 | 100%, 100% | 86%, 73% |
-| 820×1180 | 100%, 46% | 97%, 51% |
-| 1024×1366 | 100%, 100% | 56%, 76% |
-| 1280×800 | 100%, 100% | 70%, 84% |
+| 600×1000 | 86%, 73% | 100%, 100% |
+| 820×1180 | 97%, 51% | 100%, 100% |
+| 1024×1366 | 56%, 76% | 100%, 100% |
+| 1280×800 | 70%, 84% | 100%, 100% |
 
-That is a real regression at three of the four and it was taken deliberately: a
-broader magnet's far field grows as the square of its standoff, so it reaches
-much further, and there is no way to widen the near field for the crown without
-also widening the reach. Backing the field off to compensate loses the spikes —
-measured — so the trade is between a wallpaper that looks like ferrofluid on a
-phone and one that holds together on a tablet, and the phone wins because that
-is what it is for.
+None escaped, at any size, on any seed. It also removes a performance cliff
+nobody had measured: at 820×1180 a frame cost 13.6 ms at the median and 457 ms
+at the 95th, because a pool in five hundred pieces is five hundred contours to
+trace. It is now 4.3 ms, the same as a phone.
+
+**The price is the crown.** The same cancellation that kills the far field
+weakens the near one, and the near field is what grows spikes. Measured on the
+surface, three seeds:
+
+| | single pole | bar magnet |
+| --- | --- | --- |
+| peaks at once | 7.6 | 3.4 |
+| how proud they stand | 55 px | 27 px |
+| height ÷ width | 1.15 | 0.84 |
+
+There is no setting in between that keeps both. Placing the return pole deeper,
+so it cancels less near the glass, slides continuously from one end to the
+other: at 3.6 standoffs deep the spikes are nearly back (aspect 1.02) and so is
+the tablet collapse (45% at 820×1180); at 1.8 the tablet holds and the spikes
+are gone again. Raising the field to compensate throws beads instead. This is
+not a failure to tune. The field that lifts the surface a standoff away and the
+field that drags liquid a screen away are the same field, and the pool sits only
+a couple of standoffs from the magnet, so there is no gap between the two scales
+to work in.
+
+**So the magnet type is chosen by the size of the cell**: a single pole below
+the reference size, a bar magnet above it. Below it nothing is far away and the
+reach costs nothing; above it the reach is the whole problem and a calm pool
+beats a scattered one. No real magnet changes type with the size of the glass —
+but the magnets here are a fiction chosen to make a picture, and on a big cell
+the useful fiction is a bar magnet.
+
+What a tablet gets, then, is a quieter piece: the liquid rises to meet the
+magnets in mounds rather than standing up in spikes. That is worth knowing
+before installing it on one. Phones are untouched — the switch never fires
+below the reference size, and the frame cost there is unchanged at 4.3 ms.
 
 **Every real phone viewport holds.** 320×568 through 448×998, two seeds each,
-45 s: 99–100% of drops in one body, none escaped. That range is unaffected by
-any of the above.
+45 s: 99–100% of drops in one body, none escaped.
 
-Note also how wide the seed spread is: 820×1180 gives 97% on one seed and 51%
-on another, in *both* columns. At these sizes a single run says almost nothing,
-which is why every number here is at least two, and why a green tablet row in
-the verifier should be read as "not this time" rather than "safe" — the
-verifier's window is shorter than 45 s and often lands before the collapse.
+The underlying instability was never explained, only avoided, and that is worth
+saying plainly. The obvious explanations were all wrong: not the drop spacing on
+its own — a tablet at 17 px of spacing was stable while a phone at 10.8 px was
+not — nor gravity per spacing, nor the pool depth in drops, nor the hydrostatic
+load against the stiffness. Each ordered some of the measurements and was
+contradicted by the rest. Two changes moved it a long way without naming it:
+capping the physics against a reference size, and now cutting the magnets' reach.
+Something at large sizes still makes the solver fragile, and a future change
+that restores long-range forcing will find it again.
 
-The cause is not pinned down, and the honest version of that is worth writing
-out because the obvious explanations are all wrong. It is not the drop spacing
-on its own — a tablet at 17 px of spacing is stable while a phone at 10.8 px is
-not. It is not gravity per spacing, nor the pool depth in drops, nor the
-hydrostatic load against the stiffness: each of those orders some of the
-measurements and is contradicted by the rest. Capping the physics against a
-reference size moved the boundary a long way — 600×1000 went from 13% of its
-drops in a body to 83%, which is why gravity and the magnets no longer grow
-without bound with the screen — but it did not remove it.
-
-What made it survive this long is that every viewport the verifier tested had
-about a phone's *area*, the landscape one included, that being the same screen
-turned over. The four large ones are there now.
-
-The most promising lead, untried: replace each pole with a closely-spaced
-opposite pair. A dipole's field falls off as 1/r³ where a monopole's falls off
-as 1/r², so the near field that grows the crown would survive while the far
-field that drags distant liquid about would die off much faster — which is the
-exact shape of the trade above. It is also what a real bar magnet is, so it
-would make the model less of a fiction rather than more.
+What made it survive undetected so long is that every viewport the verifier
+tested had about a phone's *area*, the landscape one included, that being the
+same screen turned over. The four large ones are there now.
 
 **More *coverage* is still blocked, though the reach is no longer the problem.**
 Choreographing the magnets took the crest from 29% of the screen's height to
