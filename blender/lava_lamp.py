@@ -83,8 +83,8 @@ LOOKS = {
         "threshold": 0.75, "stretch": 0.7, "pool": 0.10, "depth": 0.7,
         "gloss": 1.0, "swirl": 0,
         "glow": 0.7, "glow_reach": 0.75, "bulb": 2200.0, "crown": 300.0,
-        "backlight": 90.0, "glint": 0.0, "bloom": 0.3,
-        "env": 0.5, "haze": 0.15, "density": 1.6, "dof": 7.0,
+        "backlight": 90.0, "glint": 1200.0, "bloom": 0.3,
+        "env": 7.0, "haze": 0.15, "density": 1.6, "dof": 7.0,
         "liquid_colour": "0.14,0.03,0.24", "crest": "0.58,0.16,0.82",
         "backdrop": "0.012,0.005,0.03", "view_transform": "Standard",
     },
@@ -1814,6 +1814,16 @@ def build_lighting(args, height: float, r_max: float, centre: float,
         tree.links.new(up.outputs["Z"], span.inputs["Value"])
         tree.links.new(span.outputs["Result"], sky.inputs["Fac"])
         tree.links.new(sky.outputs["Color"], bg.inputs["Color"])
+        # The band exists to be *reflected*. Left visible to everything, it
+        # also lights the haze and every diffuse surface, so the only way to
+        # keep the ground dark was to dim it — which dimmed the highlights
+        # with it and put the wax back to matte. Reflection-only decouples
+        # the two: --env can be high for the specular without brightening
+        # the frame.
+        vis = getattr(world, "cycles_visibility", None)
+        if vis is not None:
+            vis.diffuse = False
+            vis.scatter = False
 
     bulb_data = bpy.data.lights.new("Bulb", "POINT")
     bulb_data.energy = args.bulb
@@ -1878,11 +1888,16 @@ def build_lighting(args, height: float, r_max: float, centre: float,
             glint = link(bpy.data.objects.new("Glint", glint_data))
             glint.location = (-reach * 0.5, -reach * 0.45, centre + height * 0.4)
             hide_from_camera(glint)
-            # A small source in front of a refracting column re-images
-            # through it as a bright spot. Keep it out of transmission rays;
-            # the highlight it exists for arrives by glossy rays regardless.
+            # A small source in front of the column reflects in the front
+            # glass wall as a bright spot, whatever ray flags it carries.
+            # Light-link it to the wax alone: it then puts a highlight on
+            # every blob and does not exist as far as the glass is concerned.
+            receivers = bpy.data.collections.new("Glint_Receivers")
+            for obj in bpy.data.objects:
+                if obj.name.startswith("Lava") and obj.type == "META":
+                    receivers.objects.link(obj)
             try:
-                glint.visible_transmission = False
+                glint.light_linking.receiver_collection = receivers
             except AttributeError:
                 pass
     else:
