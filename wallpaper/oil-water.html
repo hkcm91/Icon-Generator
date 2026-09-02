@@ -82,6 +82,7 @@
 const params = new URLSearchParams(location.search);
 const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
 const flag = (k, d) => { const v = params.get(k); return v === null ? d : !(v === "0" || v === "false"); };
+const str = (k, d) => { const v = params.get(k); return v === null ? d : v; };
 
 const CONFIG = {
   /* "full" — the screen is the cell, edge to edge. This is the wallpaper.
@@ -110,7 +111,9 @@ const CONFIG = {
    * reads as droplets that never quite build a layer; above two thirds the
    * water is the minority phase and the whole thing inverts, which is a real
    * emulsion behaviour and an odd-looking wallpaper. */
-  oilFraction: Math.max(0.08, Math.min(0.92, num("oil", 0.42))),
+  oilFraction: Math.max(0.08, Math.min(0.92, num("oil", 0.25))),
+  blobs: Math.max(1, Math.min(40, Math.round(num("blobs", 7)))),
+  layout: str("layout", "blobs"),
 
   /* Water, read along the gravity axis. The same parameter with the same
    * default as the other two pages, so a colourway is one URL across the
@@ -228,6 +231,15 @@ function gy(j) { return (CONFIG.mode === "full" ? 0 : CY - RY) + (j - 1) * cell;
  * the thing it looks like when nobody has touched it — should be the thing
  * on the product page. */
 function seedPhase() {
+  if (CONFIG.layout === "layer") return seedLayer();
+  return seedBlobs();
+}
+
+/* The layered start: oil floating on water, the two of them one boundary.
+ * Kept because it is what the cell settles back to whenever the buoyancy is
+ * turned up, and because it is the honest resting state of two liquids that
+ * differ in density. */
+function seedLayer() {
   const rnd = mulberry32(CONFIG.seed);
   const line = 1 + (GH - 2) * CONFIG.oilFraction;
   const a = 0.9 + rnd() * 0.5, b = 1.7 + rnd() * 0.9;
@@ -239,6 +251,91 @@ function seedPhase() {
       // energy and seeding anything else means the first frames are spent
       // relaxing into it.
       phi[k] = Math.tanh((line + wob - j) / 1.4);
+    }
+  }
+  targetMean = meanPhi();
+}
+
+/* Several blobs, which is the default, and which is a different toy from the
+ * layer above rather than a restyling of it.
+ *
+ * Placed rather than grown. Starting from a uniform mix and letting spinodal
+ * decomposition find the blobs is the tempting thing and it is wrong twice
+ * over: it takes several seconds of watching nothing, and the wallpaper's
+ * resting state -- what it looks like when nobody has touched it -- should be
+ * the thing on the product page.
+ *
+ * Poisson-disc rejection on the centres, because uniform random placement
+ * clumps: with n blobs thrown at a screen independently, some land touching
+ * and merge in the first second, and the count the page was built around is
+ * not the count anybody sees. A minimum separation of two radii plus an
+ * interface width keeps every pair apart by more than the field can bridge.
+ *
+ * Sizes are spread deliberately. Equal blobs read as a pattern -- as printed
+ * dots rather than as liquid -- and they are also wrong: a population of
+ * drops that has been through any kind of mixing has a broad size
+ * distribution, and the small ones feed the large ones from there.
+ */
+function seedBlobs() {
+  const rnd = mulberry32(CONFIG.seed);
+  const n = CONFIG.blobs;
+  const W2 = GW - 2, H2 = GH - 2;
+
+  /* Radii first, because the area has to come out at the requested oil
+   * fraction and the only free scale is the radius. Draw n relative sizes,
+   * then scale them all so that sum(pi r^2) is the target area. */
+  /* Stratified log-uniform over a five-to-one range of radii, rather than n
+   * independent draws. Independent draws routinely return a set that happens
+   * to be all one size, and n identical circles do not read as liquid -- they
+   * read as printed dots. One sample per octave-band, jittered inside its
+   * band, guarantees the spread for every seed while still varying. */
+  const SPREAD = 5;
+  const rel = [];
+  let relArea = 0;
+  for (let i = 0; i < n; i++) {
+    const r = Math.pow(SPREAD, (i + 0.2 + 0.6 * rnd()) / n);
+    rel.push(r); relArea += Math.PI * r * r;
+  }
+  const scale = Math.sqrt(W2 * H2 * CONFIG.oilFraction / relArea);
+  const rad = rel.map((r) => r * scale);
+
+  // Largest first: a big blob placed late has nowhere left to go.
+  const order = rad.map((r, i) => i).sort((x, y) => rad[y] - rad[x]);
+  const cx = [], cy = [], cr = [];
+  for (const oi of order) {
+    const r = rad[oi];
+    let placed = false;
+    for (let attempt = 0; attempt < 400 && !placed; attempt++) {
+      const x = r + 1 + rnd() * Math.max(0, W2 - 2 * r);
+      const y = r + 1 + rnd() * Math.max(0, H2 - 2 * r);
+      let ok = true;
+      for (let q = 0; q < cx.length; q++) {
+        const need = r + cr[q] + 2 * EPS + 1;
+        if ((x - cx[q]) ** 2 + (y - cy[q]) ** 2 < need * need) { ok = false; break; }
+      }
+      if (ok) { cx.push(x); cy.push(y); cr.push(r); placed = true; }
+    }
+    /* A blob that cannot be placed is dropped rather than overlapped. At a
+     * high oil fraction the screen genuinely runs out of room, and the
+     * alternative -- placing it anyway -- merges it into a neighbour on the
+     * first frame, which is the clumping this is here to avoid. The mass it
+     * would have carried is not replaced; `oil` is a request, and `stats()`
+     * reports what actually got seeded. */
+  }
+
+  for (let j = 0; j < GH; j++) {
+    for (let i = 0; i < GW; i++) {
+      /* The field is the largest of the blobs' individual profiles rather
+       * than their sum. Summing tanh profiles pushes phi past 1 wherever two
+       * are close and leaves a raised floor everywhere else, and both of
+       * those are states the free energy then has to spend frames undoing. */
+      let best = -1;
+      for (let q = 0; q < cx.length; q++) {
+        const d = Math.hypot(i - 0.5 - cx[q], j - 0.5 - cy[q]);
+        const v = Math.tanh((cr[q] - d) / (EPS * 0.78));
+        if (v > best) best = v;
+      }
+      phi[j * GW + i] = best;
     }
   }
   targetMean = meanPhi();
@@ -483,7 +580,35 @@ window.addEventListener("keydown", (e) => {
 
 /* ------------------------------------------------------------- the solver */
 
-const BUOY = 130;          // px/s^2 per g of effective gravity, between the phases
+/* Buoyancy: px/s^2 per g of effective gravity, acting on the density
+ * difference between the phases. It was 130, and it is now 4.
+ *
+ * This is the number that decides how long several blobs stay several blobs.
+ * Nothing in this model splits a drop -- measured, a longer shake takes the
+ * count from seven to three, because shaking drives blobs into each other and
+ * every contact is a permanent merge -- so the seed is the only source of
+ * blobs there is, and everything after it is decline. Buoyancy sets the rate:
+ * it is what makes the oil rise, and rising is what makes blobs meet.
+ *
+ * Halving it does not halve the shake, though, because the drive couples
+ * through the same term. Gravity-driven creaming goes as BUOY; the shake goes
+ * as BUOY * SHAKE_GAIN. Holding that product fixed while lowering BUOY buys
+ * blob lifetime for free. Measured, seven seeded blobs surviving to:
+ *
+ *   BUOY  gain   peak rms   +10s  +40s  +120s
+ *    130    25      206        6     1      1
+ *     46    71      165        6     3      1
+ *     20   167      181        7     5      1
+ *      9   357      202        7     6      1
+ *      4   833      207        7     6      4
+ *
+ * The peak speed during the shake does not move, which is the point.
+ *
+ * Physically this says the two liquids are nearly density-matched, which is
+ * what a liquid-motion toy actually contains -- the blobs in one drift rather
+ * than cream. The cost is that the amplification the shake needs rises in
+ * exact proportion, and SHAKE_GAIN goes up by the same factor to pay it. */
+const BUOY = 4;
 /* How many g of effective gravity a g of hand motion is worth, and the one
  * number on this page that is a lie. It is named here rather than buried
  * because it is worth being straight about which part is physics.
@@ -502,16 +627,16 @@ const BUOY = 130;          // px/s^2 per g of effective gravity, between the pha
  *
  * So the gain is dialled above life, deliberately. But it was dialled to 180,
  * and that was not a stylisation, it was the bug this page spent its whole
- * life chasing. At 180 a two-and-a-half second shake drives the cell at about
- * 1,500 px/s -- four screen widths a second. Nothing survives that as a
- * liquid: the oil is torn into thirty-odd stringy bodies, a third of it is
- * lost to the advection in the process, and the fragments are then too thin
- * for the interfacial tension to pull back together, so it never recovers.
- * Every "the oil is too skinny" reading traces back here.
+ * life chasing. At the buoyancy of the time a two-and-a-half second shake
+ * drove the cell at about 1,500 px/s -- four screen widths a second. Nothing
+ * survives that as a liquid: the oil was torn into thirty-odd stringy bodies,
+ * a third of it was lost to the advection in the process, and the fragments
+ * were then too thin for interfacial tension to pull back together.
  *
  * Measured on one seeded shake, deterministically (see the note on the test
  * harness in OIL-WATER.md -- until that harness existed none of these numbers
- * were reproducible, and the earlier tuning done against them was noise):
+ * were reproducible, and the earlier tuning done against them was noise), at
+ * the buoyancy this page then had:
  *
  *   gain   thickness after settling   oil kept   still moving at +10s
  *    180            28 px               68%          62 px/s
@@ -519,11 +644,12 @@ const BUOY = 130;          // px/s^2 per g of effective gravity, between the pha
  *     25           115 px              100%          22 px/s
  *     10           191 px              100%          12 px/s, never breaks up
  *
- * 25 is the corner. Below it a shake only sloshes the layers and they never
- * separate into bodies at all; above it the tearing starts and the thickness
- * falls off a cliff.
+ * 25 was the corner. The number here is 800 rather than 25 only because the
+ * buoyancy came down by the same factor to make several blobs last -- see the
+ * note on BUOY. What the fluid feels is the product, and the product is
+ * unchanged.
  */
-const SHAKE_GAIN = num("gain", 25);
+const SHAKE_GAIN = num("gain", 800);
 /* Momentum diffusivity, cells^2/s, and the knob that decides how many ridges
  * the oil's outline has.
  *

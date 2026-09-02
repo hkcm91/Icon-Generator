@@ -424,21 +424,89 @@ gone in a quarter second. Radius does most of the work — at five radii and
 2,600px/s the oil bulges by a fifth and heals over about three seconds, which
 is what a finger in a viscous liquid does.
 
+## Several blobs, and why the seed is the only source of them
+
+The page used to be one oil layer that a shake tore up and that rebuilt itself.
+It now starts as several separate blobs, which is a different toy, and getting
+there needed three things at once.
+
+**The seed places blobs rather than growing them.** Radii are drawn stratified
+log-uniform over a five-to-one range — one sample per band, jittered inside it
+— rather than as n independent draws, because independent draws routinely
+return a set that happens to be all one size, and n identical circles read as
+printed dots rather than as liquid. Centres are placed by Poisson-disc
+rejection, largest first, with a minimum separation of the two radii plus two
+interface widths, because uniform random placement clumps and a touching pair
+merges within the first second. The field is the *maximum* of the individual
+tanh profiles, not their sum: summing pushes `phi` past 1 wherever two are
+close and raises the floor everywhere else, and the free energy then spends
+frames undoing both.
+
+**Nothing splits a drop.** This is the important constraint and it was
+measured, not assumed: a longer shake takes the blob count *down*, from seven
+to three, because shaking drives blobs into each other and every contact is a
+permanent merge. There is no fragmentation to balance it — a drop at this
+grid, tension and viscosity deforms and recovers rather than breaking. So the
+count only ever declines, the seed is the only source of blobs there is, and a
+shake consolidates rather than resetting.
+
+That is a consequence of the two previous fixes rather than a separate choice.
+The viscosity that took the ridges out and the interfacial tension that took
+the thinness out are exactly the two things that stop a drop breaking up; at
+the old `nu = 32` and `tension = 600` a shake produced thirty-odd bodies, and
+they were the stringy, crenellated bodies that were the complaint. Fragmenting
+and blobby are the same dial, at opposite ends.
+
+**Buoyancy sets how long the blobs last, and it is nearly free.** Buoyancy is
+what makes oil rise, and rising is what makes blobs meet. But the shake
+couples through the same term: gravity-driven creaming goes as `BUOY`, the
+shake goes as `BUOY × SHAKE_GAIN`. Holding that product fixed while lowering
+`BUOY` buys lifetime at no cost to the shake. Seven seeded blobs surviving to:
+
+| `BUOY` | gain | peak RMS in the shake | +10s | +40s | +120s |
+| --- | --- | --- | --- | --- | --- |
+| 130 | 25 | 206 px/s | 6 | 1 | 1 |
+| 46 | 71 | 165 | 6 | 3 | 1 |
+| 20 | 167 | 181 | 7 | 5 | 1 |
+| 9 | 357 | 202 | 7 | 6 | 1 |
+| **4** | **833** | **207** | **7** | **6** | **4** |
+
+The shake does not weaken down the column, which is the whole point. What this
+says physically is that the two liquids are nearly density-matched — which is
+what a liquid-motion toy actually contains, and why the blobs in one drift
+rather than cream — and the amplification the shake needs rises in exact
+proportion to pay for it.
+
+**Mobility was tried as a fourth lever and is not one.** Lowering it slows
+Ostwald ripening, which is what removes the small blobs, but 0.10 gave *fewer*
+blobs at a minute than 0.25 and 0.04 leaked the oil away entirely — 0.25 → 0.01
+over seven minutes, as the advection loses mass faster than a weak relaxation
+can re-sharpen it. It stays at 0.25.
+
+**The honest limit:** the blobs decline. Seven hold for a minute, six at a
+minute, and after several minutes it is a few large ones. A wallpaper left
+alone for an hour is not showing seven blobs. Fixing that would mean either
+inventing a fragmentation mechanism the grid cannot support, or re-seeding on
+a shake, which would be oil teleporting into new drops. Neither is worth
+doing; `blobs` is a knob, and a shake is a deformation, not a reset.
+
 ## What it looks like
 
-`docs/video/oil-water.mp4` — 25 seconds, 30fps, one deterministic take from
+`docs/video/oil-water.mp4` — 22.5 seconds, 30fps, one deterministic take from
 `seed=17`: a second and a half at rest, a two-and-a-half second shake at
-2.5Hz, five seconds to settle, then the phone turned through a full
-revolution with a pause at each quarter.
+2.5Hz, four seconds to settle, then the phone turned through a full revolution
+with a pause at each quarter.
 
 The take is driven on the virtual clock, two 60Hz solver ticks per captured
 frame, so it plays at real speed and is reproducible rather than a recording
 of one particular run.
 
-The rotation is worth watching for its own sake: gravity is low-passed with a
-0.66s time constant, so the oil does not snap to the new "up" — it lags the
-turn by about a second and then climbs, which is what a real cell does and is
-a consequence of the sensor filter rather than anything drawn.
+Two things in it are worth watching. The shake deforms the blobs and slides
+them past each other without any of them breaking — which is the constraint
+described above, not a shortcoming of the take. And the rotation lags: gravity
+is low-passed with a 0.66s time constant, so the blobs do not snap to the new
+"up", they drift after it, which is a consequence of the sensor filter rather
+than anything drawn.
 
 ## Options
 
@@ -448,7 +516,9 @@ Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a squircle on a backdrop |
 | `grid` | `96` | Cells across, and the most important number here. It sets the smallest droplet that can exist — an interface is about three cells wide, so a bead is never smaller than four or five — and therefore whether this behaves like two liquids at all. At 56 a shaken ribbon is seven cells across with three of them interface: no bulk to neck, so it cannot break into drops |
-| `oil` | `0.42` | Oil as a fraction of the cell. Past about two thirds the water is the minority phase and the emulsion inverts, which is real and looks odd |
+| `oil` | `0.25` | Oil as a fraction of the cell. Past about a third the seeded blobs run out of room to be placed without touching; past about two thirds the water is the minority phase and the emulsion inverts, which is real and looks odd |
+| `blobs` | `7` | How many oil blobs to seed. This is the only source of blobs there is — see below |
+| `layout` | `blobs` | `blobs` seeds separate drops; `layer` seeds oil floating on water, the original arrangement |
 | `ramp` | shaker's blue | The water, along the gravity axis. Same parameter and same default across all three pages |
 | `tint` | `#e8806c` | The oil. Ember Glow — the two phases have to differ in *hue*, or the separation the physics works so hard at is invisible |
 | `tension` | `1` | Interfacial tension, as a multiple of 12,000. Low is ragged and slow to round up; above about 1.5 the oil re-separates into one layer within seconds of any shake, which is right and dull |
@@ -507,18 +577,21 @@ Driven headless in Chromium at 393×852 on the virtual clock described above.
 
 | Property | Result |
 | --- | --- |
-| Determinism from `seed` | three runs bit-identical: 0 ridges, thickness 192px, roundness 0.79, oil 0.422, rms 4 |
-| Sensor-rate independence (30 / 60 / 144 events per second) | 0 ridges at all three; skin fraction 0.05 / 0.06 / 0.06, thickness 192px at all three, oil 0.422 / 0.422 / 0.423. Before the filters were made time-based the skin fraction was 0.15 / 0.32 / 0.61 |
-| Mass, across a shake and 30s of settling | oil fraction 0.423 → 0.426 → 0.423; nothing lost. At the old shake gain a third of the oil disappeared |
+| Determinism from `seed` | three runs bit-identical: 7 blobs, 0 ridges, roundness 0.99, oil 0.247, rms 2 |
+| Sensor-rate independence (30 / 60 / 144 events per second) | 7 blobs and 0 ridges at all three; roundness 0.98 / 0.99 / 0.99, oil 0.249 / 0.247 / 0.247. Before the filters were made time-based the skin fraction spread 0.15 / 0.32 / 0.61 |
+| Mass, across a shake and 60s of settling | oil fraction 0.247 → 0.252 → 0.239; the loss is one small blob ripening away, not a leak. At the old shake gain a third of the oil disappeared |
 | Rest state | 2–3 px/s RMS |
-| Settling after a 2.5s shake | 210 → 105 → 32 → 4 → 1 px/s at +0 / +1 / +3 / +10 / +30s |
-| Thickness after a 2.5s shake | 120px at the end of the shake, recovering to 183px by +3s and 192px by +10s |
-| Oil with no interior ("tendrils") | 0.06 at the end of the shake, 0.10 at +30s; 0.02 at rest |
-| Ridges per body | 4 at the end of the shake, 6 at +1s and +3s, 0 once settled |
+| Settling after a 2.5s shake | 190 → 23 → 2 px/s at +0 / +2 / +10s |
+| Blob count across a 2.5s shake | 7 at rest, 7 at the end of the shake, 7 at +10s, 6 at +60s |
+| Roundness across a 2.5s shake | 1.00 at rest, 0.73 mid-shake, 0.98 by +2s, 0.99 by +10s |
+| Oil with no interior ("tendrils") | 0.23 at the end of the shake, 0.20 at +10s. Higher than the layer scored, and correctly so: small blobs are mostly interface |
+| Ridges per body | 4.2 at the end of the shake, 0 once settled |
 | A planted square, no gravity | isoperimetric quotient 0.81 → 0.99 in 2s, 1.00 by 4s |
 | A planted plus-sign, no gravity | 0.69 → 1.00 in 2s |
 | Five planted droplets, no gravity, 40s | 4 of 5 survive (was 2 of 5 under the global multiplier) |
-| Tap and page-offset interaction, then pause/resume | no error, state finite; a tap raises RMS from 4 to 16 px/s and puts 4 ridges on the settled outline, which heal |
+| Tap and page-offset interaction, then pause/resume | no error, state finite; a tap raises RMS to 12 px/s and deforms the blobs without merging them |
+| `layout=layer` still works | 1 body, thickness 192px, roundness 0.79, oil 0.423 |
+| Three different seeds | 7 blobs each, oil 0.250 / 0.250 / 0.251, all with a visible spread of sizes |
 | Mobility set to zero | interface smears to 96% of the cell and never separates — i.e. it becomes the shaker's dye |
 
 **The roundness metric was itself wrong for most of this work.** It computed
@@ -541,6 +614,22 @@ grid went from 13 to 26fps, which is what a full-screen blend over every pixel
 was costing. The ms column is step plus render together, in a headless
 software rasteriser, so the render half of it is the part a GPU makes nearly
 free and the part that does not transfer to a phone.
+
+Blobs cost more to draw than a layer does, and the cost is the edge:
+
+| | fps (software) |
+| --- | --- |
+| 1 blob | 29 |
+| 3 blobs | 20 |
+| 7 blobs (default) | 17 |
+| 14 blobs | 15 |
+
+That is inherent rather than a bug. `drawOil` strokes the boundary three times
+— meniscus, wet line, rim — so its cost is proportional to total perimeter,
+and *n* blobs of a fixed total area have √n times the perimeter of one. Seven
+is 2.6×. Strokes are also close to the worst case for a software rasteriser
+and close to free on a GPU, so this is the measurement least likely to
+transfer to a handset.
 
 The eight viscosity sub-passes that the ridge fix needs are not what costs
 anything: the same frame with one pass instead of eight is 10.6ms against
