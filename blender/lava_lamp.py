@@ -78,11 +78,12 @@ LOOKS = {
     # falls, it does not orbit.
     "lava": {
         "palette": "bubblegum", "accent": "1.0,0.32,0.03", "glass": 0.85,
-        "bulb_colour": "1.0,0.30,0.02", "ember": 3.5,
+        "bulb_colour": "1.0,0.30,0.02", "ember": 0.0,
+        "bulb_size": 0.18, "bulb_depth": 0.10,
         "blobs": 14, "droplets": 5, "blob_size": 0.32, "size_spread": 0.5,
         "threshold": 0.75, "stretch": 0.7, "pool": 0.04, "depth": 0.7,
         "gloss": 1.0, "swirl": 0,
-        "glow": 0.7, "glow_reach": 0.75, "bulb": 1000.0, "crown": 300.0,
+        "glow": 0.7, "glow_reach": 0.75, "bulb": 2600.0, "crown": 300.0,
         "backlight": 90.0, "glint": 1200.0, "bloom": 0.35,
         "env": 7.0, "haze": 0.22, "density": 1.6, "dof": 7.0,
         "liquid_colour": "0.14,0.03,0.24", "crest": "0.58,0.16,0.82",
@@ -338,6 +339,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                           "vessel, hot at the centre and dying to red at the "
                           "rim. The bulb is a light and lights things; this "
                           "is the thing you see emitting. 0 disables it")
+    out.add_argument("--bulb-size", type=float, default=0.55,
+                     help="the bulb's radius as a fraction of the vessel's. "
+                          "In a scattering medium a light this size *is* a "
+                          "glowing ball of that size; keep it small if the "
+                          "source is meant to stay out of the picture")
+    out.add_argument("--bulb-depth", type=float, default=0.0,
+                     help="how far below the vessel's floor the bulb sits, "
+                          "as a fraction of the vessel's height. 0 puts it "
+                          "just inside the floor, under the pool; more sinks "
+                          "it out of frame so only its light comes up")
     out.add_argument("--bulb-colour", default="1.0,0.63,0.32",
                      help="colour of that bulb as r,g,b. It is the one honest "
                           "way to put a colour at the floor of the vessel: "
@@ -1881,11 +1892,11 @@ def build_lighting(args, height: float, r_max: float, centre: float,
     # A big soft source. A point-sized bulb under a pool of wax burns a
     # white hole through the middle of it; widening the emitter spreads the
     # same energy over the whole floor and the pool keeps its colour.
-    bulb_data.shadow_soft_size = r_max * 0.8
+    bulb_data.shadow_soft_size = r_max * args.bulb_size
     bulb = link(bpy.data.objects.new("Bulb", bulb_data))
     # Just under the pool. Above it and the pool is backlit into a bright
     # smear; far below it and the glass floor eats most of the throw.
-    bulb.location = (0.0, 0.0, height * 0.008)
+    bulb.location = (0.0, 0.0, height * (0.008 - args.bulb_depth))
     hide_from_camera(bulb)
 
     def area(name, location, rotation, size_m, energy, colour=(1.0, 1.0, 1.0)):
