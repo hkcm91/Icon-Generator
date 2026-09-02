@@ -119,11 +119,25 @@ lets go when a jet hits it harder than `--release`. Every term is something
 you can point at in the render, and being ours it is deterministic — the same
 seed gives the same loop every time, with no cache to bake.
 
-**Catching is judged on screen.** The camera is orthographic and dead-on, so a
-ring is on a peg exactly when the peg appears inside its hole. `--catch` is
-therefore measured in the screen plane, with a separate depth test for whether
-the ring is near enough to be threaded at all. That is the same question the
-viewer is answering.
+**A ring goes on over the tip and slides down.** It is caught when the peg's
+end is inside its hole on screen, with the ring at or above the tip and near
+enough in depth to go on; its target then walks from the tip down the axis to
+its place, never straight across through the shaft. The taper does the rest of
+the work it does on a real peg: a ring coming down with the tip somewhere under
+its stock is funnelled onto it, because without that a landing needs the ring
+to arrive already centred, which it almost never is.
+
+**Rings settle at the base and pile up.** Each lands on the one below and the
+pile climbs the peg, up to `--stack` rings or the peg's length. A ring's place
+in the pile is recomputed every frame, so when one below it is knocked off the
+ones above settle down to fill the gap.
+
+**Nothing passes through a post.** A free ring whose stock meets a shaft is
+projected out to the surface and loses whatever velocity was carrying it in —
+a push was a force, and a ring arriving faster than the force could turn it
+went through. The same treatment keeps rings out of the glass bevel at the
+side walls and off the buttons, which sit outside the glass but on screen read
+as through it.
 
 **The pegs lean out of the back wall** by `--hook-tilt`, and that lean is what
 makes them visible. A peg pointing straight at an orthographic camera is a

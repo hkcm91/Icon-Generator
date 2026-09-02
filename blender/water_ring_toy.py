@@ -201,9 +201,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     play = p.add_argument_group("rings and pegs")
     play.add_argument("--rings", type=int, default=9)
-    play.add_argument("--ring-radius", type=float, default=0.235,
+    play.add_argument("--ring-radius", type=float, default=0.205,
                       help="ring outer radius in metres")
-    play.add_argument("--ring-tube", type=float, default=0.046,
+    play.add_argument("--ring-tube", type=float, default=0.040,
                       help="ring stock radius in metres")
     play.add_argument("--hooks", type=int, default=5,
                       help="pegs to land rings on")
@@ -218,7 +218,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                            "small turns it into a spike. The cap is a "
                            "hemisphere of exactly this radius, so it never "
                            "becomes a bulb sitting on the shaft")
-    play.add_argument("--hook-seat", type=float, default=0.16,
+    play.add_argument("--stack", type=int, default=4,
+                      help="most rings one peg will hold. Each lands on the "
+                           "one below and the pile climbs the peg; past "
+                           "this, or past the peg's length, a ring cannot "
+                           "be caught there")
+    play.add_argument("--hook-seat", type=float, default=0.05,
                       help="where a hooked ring sits along the peg, 0 at the "
                            "base and 1 at the tip")
     play.add_argument("--hook-length", type=float, default=1.05,
@@ -311,12 +316,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="water drag on a ring, per second. With "
                              "--ring-gravity it fixes the sinking speed: a "
                              "ring settles at gravity over drag")
-    motion.add_argument("--catch", type=float, default=0.85,
+    motion.add_argument("--catch", type=float, default=1.0,
                         help="how close a ring's centre must come to a peg "
                              "to be caught, as a fraction of its hole. It is "
                              "measured on screen, because that is where a "
                              "ring either looks threaded or does not")
-    motion.add_argument("--catch-speed", type=float, default=0.62,
+    motion.add_argument("--catch-speed", type=float, default=0.9,
                         help="fastest a ring can be moving and still be "
                              "caught, in m/s. A ring flying past a peg does "
                              "not land on it")
@@ -1331,8 +1336,11 @@ def build_rings(args, built: dict, fill_z: float,
                                    rng.uniform(-0.06, 0.06))
             ring.location = hang_point(args, hook, inner)
         else:
+            # Between the buttons, not behind them: the opening pose is
+            # rendered as-is in look-dev, before the solver can push a ring
+            # clear of anything.
             ring.location = (
-                rng.uniform(-1.0, 1.0) * inner.x * 0.32,
+                rng.uniform(-1.0, 1.0) * inner.x * 0.26,
                 rng.uniform(-0.28, 0.28) * inner.y,
                 -inner.z * 0.5 + radius * (1.4 + 1.9 * rng.random()))
             ring.rotation_euler = (rng.uniform(-0.2, 0.2),
@@ -1870,8 +1878,13 @@ def drift_field(args, p: Vector, phase: float) -> Vector:
     ))
 
 
+def stack_step(args) -> float:
+    """How far up the peg each ring in a pile sits above the one below."""
+    return args.ring_tube * 2.15
+
+
 def hang_point(args, hook: bpy.types.Object, inner: Vector,
-               offset: Vector | None = None) -> Vector:
+               offset: Vector | None = None, stack: int = 0) -> Vector:
     """Where a ring sits once it is on a peg.
 
     Some way down the taper — `--hook-seat` — and hanging by the inside of
@@ -1882,7 +1895,10 @@ def hang_point(args, hook: bpy.types.Object, inner: Vector,
     """
     axis = hook.matrix_world.to_3x3() @ Vector((0.0, -1.0, 0.0))
     hole = ring_hole(args)
-    along = hook_length(args, inner) * args.hook_seat
+    # At the base, plus one ring's thickness for every ring already under
+    # it — a pile climbs the peg.
+    along = hook_length(args, inner) * args.hook_seat + \
+        stack * stack_step(args)
     base = Vector(hook.location) + (offset or Vector((0.0, 0.0, 0.0)))
     seat = base + axis * along
     down = Vector((0.0, 0.0, -1.0))
@@ -1938,7 +1954,10 @@ def simulate_rings(args, built: dict) -> None:
     # The box a ring centre may occupy. Depth is the tight one: the chamber
     # is only a few ring-thicknesses deep, and that is what holds the rings
     # face-on instead of letting them turn edge-on and disappear.
-    bound_x = inner.x * 0.5 - radius
+    # Held a little off the side walls: under a perspective lens the thick
+    # glass bevel eats the last few centimetres, and a ring parked against
+    # the wall reads as cut off by it.
+    bound_x = inner.x * 0.5 - radius * 1.9
     bound_y = inner.y * 0.5 - tube * 1.6
     bound_lo = floor + radius
     bound_hi = fill_z - radius * 0.15
@@ -1953,6 +1972,9 @@ def simulate_rings(args, built: dict) -> None:
             "euler": Vector(ring.rotation_euler),
             "spin": rng.uniform(-0.4, 0.4),
             "hook": None,
+            "hook_at": 0,
+            "stack": 0,
+            "slide": 1.0,
             "cool": 0,
         })
 
@@ -1978,14 +2000,34 @@ def simulate_rings(args, built: dict) -> None:
         offsets = [hook_offset(args, i, len(hooks), t)
                    for i in range(len(hooks))]
 
+        # Who is on which peg, in the order they landed. A ring's place in
+        # the pile is recomputed every frame, so when one below it is
+        # knocked off the ones above settle down to fill the gap.
+        piles: dict[int, list] = {}
+        for entry in sorted(state, key=lambda e: e["hook_at"]):
+            if entry["hook"] is not None:
+                piles.setdefault(entry["hook"], []).append(entry)
+        for pile in piles.values():
+            for place, entry in enumerate(pile):
+                entry["stack"] = place
+
         for index, entry in enumerate(state):
             p, v = entry["p"], entry["v"]
             push = jet_push(args, jets, levels, p)
 
             if entry["hook"] is not None:
                 hook = hooks[entry["hook"]]
-                target = hang_point(args, hook, inner,
-                                    offsets[entry["hook"]])
+                seat = hang_point(args, hook, inner,
+                                  offsets[entry["hook"]], entry["stack"])
+                # A ring goes on over the tip and slides down the peg. It
+                # is caught at the tip, and its target walks from there to
+                # its place in the pile — never straight across through
+                # the shaft.
+                axis = hook.matrix_world.to_3x3() @ Vector((0.0, -1.0, 0.0))
+                tip = Vector(hook.location) + offsets[entry["hook"]] + \
+                    axis * hook_length(args, inner)
+                entry["slide"] = min(1.0, entry["slide"] + 1.9 * dt)
+                target = tip.lerp(seat, smoothstep(entry["slide"]))
                 # A press strong enough to lift the ring off the peg is a
                 # press strong enough to take it off; anything less only
                 # rocks it, which is what the toy does too.
@@ -2049,10 +2091,30 @@ def simulate_rings(args, built: dict) -> None:
                 flat = Vector((p.x - near.x, 0.0, p.z - near.z))
                 gap = flat.length
                 thick = hook_radius_at(args, inner, along)
+                # The funnel. A ring coming down onto the tip with the tip
+                # somewhere under its stock is guided onto it: its inner
+                # edge rides the cone and the ring centres itself. This is
+                # what the taper is for, and without it a landing needs the
+                # ring to arrive already centred, which it almost never is.
+                tip = base + axis * peg_length
+                if entry["cool"] == 0 and p.z > tip.z - tube and \
+                        along > peg_length * 0.6:
+                    to_tip = Vector((tip.x - p.x, 0.0, tip.z - p.z))
+                    reach = to_tip.length
+                    if hole * 0.5 < reach < radius + thick:
+                        entry["v"] += to_tip * (2.6 / max(reach, 1e-4)) * dt
+                        continue
                 if gap <= hole or gap >= radius + thick:
                     continue
-                entry["v"] += flat * (
-                    (radius + thick - gap) / gap * 3.0) * dt
+                # Projected out, not nudged: a nudge is a force, and a ring
+                # arriving faster than the force can turn it goes through
+                # the post. This moves it to the surface and drops whatever
+                # velocity was carrying it in.
+                out = flat / gap
+                p += out * (radius + thick - gap)
+                inward = entry["v"].dot(out)
+                if inward < 0.0:
+                    entry["v"] -= out * inward
 
         for index, entry in enumerate(state):
             entry["p"] = entry["p"] + entry["v"] * dt
@@ -2071,21 +2133,50 @@ def simulate_rings(args, built: dict) -> None:
                         p[axis_i] = hi
                         v[axis_i] = -abs(v[axis_i]) * 0.28
 
+                # Off the buttons. They sit outside the glass, but on
+                # screen a ring settled behind one reads as through it.
+                for jet in jets:
+                    button = jet["button"]
+                    keep = button.dimensions.x * 0.5 * 1.15 + radius
+                    away = Vector((p.x - button.location.x, 0.0,
+                                   p.z - button.location.z))
+                    dist = away.length
+                    if 1e-5 < dist < keep:
+                        out = away / dist
+                        p += out * (keep - dist)
+                        inward = v.dot(out)
+                        if inward < 0.0:
+                            v -= out * inward
+
                 if entry["cool"] > 0:
                     entry["cool"] -= 1
                 elif v.length < args.catch_speed:
                     for hook_i, hook in enumerate(hooks):
-                        if any(other["hook"] == hook_i for other in state):
+                        # Land on top of whatever is already there, if the
+                        # pile is not full and the peg is long enough.
+                        place = len(piles.get(hook_i, []))
+                        top = hook_length(args, inner) * args.hook_seat + \
+                            place * stack_step(args)
+                        if place >= args.stack or \
+                                top > hook_length(args, inner) * 0.86:
                             continue
-                        target = hang_point(args, hook, inner,
-                                            offsets[hook_i])
-                        # Caught on what the camera sees: the peg has to be
-                        # inside the ring's hole on screen, and the ring has
-                        # to be near enough in depth to be threaded on it.
-                        flat = Vector((p.x - target.x, 0.0, p.z - target.z))
+                        # Caught at the tip: the peg's end has to be inside
+                        # the ring's hole on screen, with the ring at or
+                        # above it and near enough in depth to go on. From
+                        # there it slides down to its place.
+                        axis = hook.matrix_world.to_3x3() @ \
+                            Vector((0.0, -1.0, 0.0))
+                        tip = Vector(hook.location) + offsets[hook_i] + \
+                            axis * hook_length(args, inner)
+                        flat = Vector((p.x - tip.x, 0.0, p.z - tip.z))
                         if flat.length < catch and \
-                                abs(p.y - target.y) < radius * 0.9:
+                                p.z > tip.z - tube * 1.5 and \
+                                abs(p.y - tip.y) < radius * 0.9:
                             entry["hook"] = hook_i
+                            entry["hook_at"] = frame
+                            entry["stack"] = place
+                            entry["slide"] = 0.0
+                            piles.setdefault(hook_i, []).append(entry)
                             break
 
             # Orientation. A free ring spins slowly in its own plane and
