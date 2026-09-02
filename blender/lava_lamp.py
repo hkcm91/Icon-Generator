@@ -77,14 +77,14 @@ LOOKS = {
     # neighbours join, elongation with speed, and no swirl — lava rises and
     # falls, it does not orbit.
     "lava": {
-        "palette": "bubblegum", "accent": "", "glass": 0.85,
-        "bulb_colour": "1.0,0.40,0.04",
+        "palette": "bubblegum", "accent": "1.0,0.32,0.03", "glass": 0.85,
+        "bulb_colour": "1.0,0.30,0.02", "ember": 3.5,
         "blobs": 14, "droplets": 5, "blob_size": 0.32, "size_spread": 0.5,
         "threshold": 0.75, "stretch": 0.7, "pool": 0.04, "depth": 0.7,
         "gloss": 1.0, "swirl": 0,
-        "glow": 0.7, "glow_reach": 0.75, "bulb": 1500.0, "crown": 300.0,
-        "backlight": 90.0, "glint": 1200.0, "bloom": 0.3,
-        "env": 7.0, "haze": 0.15, "density": 1.6, "dof": 7.0,
+        "glow": 0.7, "glow_reach": 0.75, "bulb": 1000.0, "crown": 300.0,
+        "backlight": 90.0, "glint": 1200.0, "bloom": 0.35,
+        "env": 7.0, "haze": 0.22, "density": 1.6, "dof": 7.0,
         "liquid_colour": "0.14,0.03,0.24", "crest": "0.58,0.16,0.82",
         "backdrop": "0.012,0.005,0.03", "view_transform": "Standard",
     },
@@ -333,6 +333,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                             "within")
     out.add_argument("--bulb", type=float, default=140.0,
                      help="wattage of the bulb under the wax")
+    out.add_argument("--ember", type=float, default=0.0,
+                     help="strength of a glowing disc on the floor of the "
+                          "vessel, hot at the centre and dying to red at the "
+                          "rim. The bulb is a light and lights things; this "
+                          "is the thing you see emitting. 0 disables it")
     out.add_argument("--bulb-colour", default="1.0,0.63,0.32",
                      help="colour of that bulb as r,g,b. It is the one honest "
                           "way to put a colour at the floor of the vessel: "
@@ -1695,6 +1700,7 @@ def build_scene(args) -> dict:
                         args.accent_rgb))
 
     wax = build_wax(args, interior, fill_z, height)
+    build_ember(args, interior, interior[0][1], radius_sampler(interior))
     scene.frame_end = args.loop
 
     metal = metal_material(args.metal_rgb)
@@ -1739,6 +1745,50 @@ def build_fittings(args, height: float, r_max: float,
     ], args.segments)
     cap.data.materials.append(metal)
     return [base, cap]
+
+
+def build_ember(args, interior, floor_z: float, radius_at) -> None:
+    """A visible emitter under the wax.
+
+    A point light is invisible; what the camera sees of it is its halo in the
+    haze, which clips to a white blob under a hard view transform. This is
+    the source itself: a disc on the floor, a hot orange core dying to a dark
+    red rim, so the glow has a shape and a colour that survives exposure.
+    """
+    if args.ember <= 0.0:
+        return
+    r = radius_at(floor_z) * 0.92
+    bpy.ops.mesh.primitive_circle_add(vertices=96, radius=r, fill_type="NGON",
+                                      location=(0.0, 0.0, floor_z + 0.01))
+    disc = bpy.context.active_object
+    disc.name = "Lava_Ember"
+
+    mat, tree = new_material("lava_ember")
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (400, 0)
+    coord = tree.nodes.new("ShaderNodeTexCoord")
+    coord.location = (-600, 0)
+    mapping = tree.nodes.new("ShaderNodeMapping")
+    mapping.location = (-420, 0)
+    mapping.inputs["Scale"].default_value = (1.0 / r, 1.0 / r, 1.0)
+    grad = tree.nodes.new("ShaderNodeTexGradient")
+    grad.location = (-240, 0)
+    grad.gradient_type = "SPHERICAL"
+    ramp = tree.nodes.new("ShaderNodeValToRGB")
+    ramp.location = (-60, 0)
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color = rgba((0.35, 0.03, 0.0))
+    ramp.color_ramp.elements[1].position = 1.0
+    ramp.color_ramp.elements[1].color = rgba((1.0, 0.30, 0.03))
+    emit = tree.nodes.new("ShaderNodeEmission")
+    emit.location = (200, 0)
+    emit.inputs["Strength"].default_value = args.ember
+    tree.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
+    tree.links.new(mapping.outputs["Vector"], grad.inputs["Vector"])
+    tree.links.new(grad.outputs["Fac"], ramp.inputs["Fac"])
+    tree.links.new(ramp.outputs["Color"], emit.inputs["Color"])
+    tree.links.new(emit.outputs["Emission"], out.inputs["Surface"])
+    disc.data.materials.append(mat)
 
 
 def build_camera(args, ortho: float, centre: float) -> bpy.types.Object:
