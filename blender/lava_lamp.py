@@ -77,12 +77,13 @@ LOOKS = {
     # neighbours join, elongation with speed, and no swirl — lava rises and
     # falls, it does not orbit.
     "lava": {
-        "palette": "bubblegum", "accent": "1.0,0.34,0.02",
+        "palette": "bubblegum", "accent": "", "glass": 0.85,
+        "bulb_colour": "1.0,0.40,0.04",
         "blobs": 14, "droplets": 5, "blob_size": 0.32, "size_spread": 0.5,
         "threshold": 0.75, "stretch": 0.7, "pool": 0.10, "depth": 0.7,
         "gloss": 1.0, "swirl": 0,
-        "glow": 0.6, "glow_reach": 0.75, "bulb": 60.0, "crown": 400.0,
-        "env": 5.0, "haze": 0.1, "density": 1.8, "dof": 7.0,
+        "glow": 0.15, "glow_reach": 0.75, "bulb": 3200.0, "crown": 400.0,
+        "env": 5.0, "haze": 0.3, "density": 1.1, "dof": 7.0,
         "liquid_colour": "0.16,0.03,0.26", "crest": "0.58,0.16,0.82",
         "backdrop": "0.006,0.004,0.014", "view_transform": "Standard",
     },
@@ -331,6 +332,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                             "within")
     out.add_argument("--bulb", type=float, default=140.0,
                      help="wattage of the bulb under the wax")
+    out.add_argument("--bulb-colour", default="1.0,0.63,0.32",
+                     help="colour of that bulb as r,g,b. It is the one honest "
+                          "way to put a colour at the floor of the vessel: "
+                          "translucent wax lit from below carries the light "
+                          "up through itself, where a painted gradient just "
+                          "sits on the surface")
     out.add_argument("--dof", type=float, default=0.0,
                      help="aperture f-stop for depth of field; 0 disables it. "
                           "Focus sits on the vessel's axis, so wax nearer the "
@@ -403,6 +410,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                        else _colour(args.accent, (1.0, 1.0, 1.0)))
     args.crest_rgb = (None if args.crest.strip().lower() in ("", "none")
                       else _colour(args.crest, (1.0, 1.0, 1.0)))
+    args.bulb_rgb = _colour(args.bulb_colour, (1.0, 0.63, 0.32))
     if args.fill <= 0.0:
         args.fill = 0.94 if args.shape == "lamp" else 1.0
     if args.depth <= 0.0:
@@ -856,12 +864,15 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     bsdf.location = (300, 0)
     put(bsdf, ("Base Color",), rgba(colour))
     grade = None
-    if accent is not None:
-        # Three stops when a crest colour is given: the palette's own colour
-        # moves to the middle and the crest takes the top.
-        grade = height_ramp(tree, reference, height, accent,
+    if accent is not None or crest is not None:
+        # Three stops when both are given: the palette's own colour moves to
+        # the middle. With only a crest, the wax grades from its own colour
+        # at the floor to the crest at the top.
+        grade = height_ramp(tree, reference, height,
+                            accent if accent is not None else colour,
                             crest if crest is not None else colour, -640,
-                            mid=colour if crest is not None else None)
+                            mid=colour if (accent is not None
+                                           and crest is not None) else None)
         tree.links.new(grade.outputs["Color"], bsdf.inputs["Base Color"])
     put(bsdf, ("Roughness",), 0.24 - 0.225 * gloss)
     put(bsdf, ("IOR",), 1.45 + 0.05 * gloss)
@@ -1785,7 +1796,7 @@ def build_lighting(args, height: float, r_max: float, centre: float,
 
     bulb_data = bpy.data.lights.new("Bulb", "POINT")
     bulb_data.energy = args.bulb
-    bulb_data.color = (1.0, 0.63, 0.32)      # a warm incandescent, ~2400K
+    bulb_data.color = args.bulb_rgb
     # A big soft source. A point-sized bulb under a pool of wax burns a
     # white hole through the middle of it; widening the emitter spreads the
     # same energy over the whole floor and the pool keeps its colour.
