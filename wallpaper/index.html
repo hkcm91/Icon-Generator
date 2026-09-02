@@ -999,6 +999,20 @@ const SLOSH = 1900;        // px/s^2 per g, per unit of surface slope
 const FLUID_SWIRL = 0.4;    // rad/s^2 per unit of twist; was 1.6
 const FLUID_VISC = 1.18;    // 1/s; a glitter gel, not free-running water
 const FLUID_WALL_DRAG = 4.8; // 1/s, applied only in cells touching glass
+/* Microglitter that a shake has pressed against the glass does not reliably
+ * come back: the post-shake roll delivers it faster than any drain removes
+ * it, and once the flow in the wall cells has been damped there is nothing
+ * left to carry it off. Measured after a hard (clamp-ceiling) shake, the
+ * outer 14% of the width held 30-50% of all glitter a full minute later, as
+ * a bright column down one wall. Rather than keep tuning the fluid, treat a
+ * micro grain that has sat in that band at rest for longer than a real
+ * fleck could as stuck, and let it fall again from inside the body. The
+ * micro layer is already an approximation (batched, 15 Hz, sub-pixel), so
+ * this is the honest place for a rule that is not physics. Grains resting
+ * on the bed near the floor are left alone, since a corner of settled
+ * glitter is real. */
+const MICRO_WALL_DWELL = 3.0;    // s at rest in the wall band before recycling
+const MICRO_WALL_RECYCLE = 0.6;  // 1/s: fades the column out over ~2s, no pop
 /* Particle reaction fed back to the fluid. Roughly three times what it was:
  * at the old strength the convection a settling suspension drives could not
  * go unstable, so the flow after a flip decayed from 357px/s to 29 and
@@ -4288,6 +4302,31 @@ function fixedStep(dt, time) {
           (0.90 + 1.25 * motionActivity + 1.6 * inversionGuard);
         tx -= tan.x * wallReturn;
         ty -= tan.y * wallReturn;
+        /* Stuck-grain recycling, see MICRO_WALL_DWELL. Only counts while the
+         * toy is at rest and the grain is above the bed: a shake legitimately
+         * throws glitter onto the glass, and the corners of a settled bed are
+         * real. */
+        const vert = ((p.x - CX) * up.x + (p.y - CY) * up.y) / upExtent;
+        if (motionActivity < 0.15 && vert > -0.78) {
+          p.wallDwell = (p.wallDwell || 0) + mdt;
+          if (p.wallDwell > MICRO_WALL_DWELL &&
+              Math.random() < mdt * MICRO_WALL_RECYCLE) {
+            // Back into the body, away from either wall, to fall again.
+            settleSpawn(p, Math.max(1, p.r), 1.0);
+            const a2 = (p.x - CX) * tan.x + (p.y - CY) * tan.y;
+            if (Math.abs(a2) > span * 0.7) {
+              const s2 = Math.sign(a2) * span * (0.2 + Math.random() * 0.5);
+              p.x += tan.x * (s2 - a2); p.y += tan.y * (s2 - a2);
+              clampInside(p, glitterPad);
+            }
+            p.vx = 0; p.vy = 0; p.wallDwell = 0;
+            continue;
+          }
+        } else {
+          p.wallDwell = 0;
+        }
+      } else {
+        p.wallDwell = 0;
       }
       const depth = depthOf(p.x, p.y);
       if (depth > -p.r) {

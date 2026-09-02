@@ -503,6 +503,21 @@ body with a bias toward the downhill glass. The opening frame therefore reads
 as a shaker that has been resting, while still leaving enough suspended foil
 for the first movement to catch and circulate.
 
+**Microglitter that a shake leaves on the glass is recycled.** A shake's
+shove becomes a roll under the pressure projection, the roll centrifuges
+dense grains onto the walls, and the damped no-slip layer there gives them
+nothing to ride back off on. After a hard shake the outer 14% of the width
+held 30–50% of all glitter a full minute later, drawn as a bright column down
+one wall. Every fluid-side lever tried — the wall shed rate, the wall drag,
+the twist response — either helped only for gentle shakes or helped on one
+seed and not the next. So the micro layer, which is already an approximation
+(batched, 15 Hz, sub-pixel), carries one rule that is not physics: a grain
+that has sat in that band at rest for longer than `MICRO_WALL_DWELL` is
+treated as stuck and dropped back into the body to fall again, at a rate
+that fades the column out over a couple of seconds rather than popping it.
+Grains resting on the bed near the floor are exempt, because a corner of
+settled glitter is real.
+
 **A flake must not hinder itself.** The concentration field is built by
 dropping each flake's whole area into the cell it sits in, and a big flake
 covers several cells' worth on its own: 35px of radius against a 14px cell
