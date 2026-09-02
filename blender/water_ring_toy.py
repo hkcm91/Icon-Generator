@@ -81,8 +81,8 @@ WATER_DEEP = (0.055, 0.408, 0.678)
 # blue in one of these toys actually comes from: the chamber holds maybe a
 # centimetre of water, which tints almost nothing, and the field you see the
 # rings against is a sheet of coloured plastic at the back.
-PLATE_TOP = (0.396, 0.831, 0.898)
-PLATE_DEEP = (0.114, 0.478, 0.722)
+PLATE_TOP = (0.66, 0.90, 0.97)
+PLATE_DEEP = (0.20, 0.52, 0.88)
 
 # The case. These toys were moulded in flat, saturated primaries — the coral
 # reads warmest against the aqua and is the one most people picture.
@@ -90,19 +90,34 @@ CASE_COLOUR = (0.898, 0.286, 0.278)
 # Deliberately a deep amber rather than the bright yellow it looks like
 # when pressed. The press is shown by the button lighting up, and a button
 # that already renders at the top of the range has nowhere to light up to.
-BUTTON_COLOUR = (0.847, 0.565, 0.086)
+BUTTON_COLOUR = (0.97, 0.72, 0.80)
 
-# Ring plastic. Object Info → Random picks one per ring.
+# Ring plastic — pearl, not flat colour. Object Info → Random picks one
+# base tint per ring, and the nacre sweep below runs over whichever it got.
+# They are all pale and low-saturation on purpose: a pearl is mostly white
+# with a colour cast, and the hue you actually read comes off the sheen.
 RING_HUES = [
-    (0.98, 0.42, 0.62),   # candy pink
-    (0.99, 0.83, 0.33),   # butter yellow
-    (0.46, 0.93, 0.66),   # mint
-    (0.99, 0.58, 0.26),   # tangerine
-    (0.66, 0.62, 0.98),   # lilac
-    (0.96, 0.98, 0.99),   # milky white
+    (0.96, 0.60, 0.72),   # rose pearl
+    (0.70, 0.60, 0.96),   # lilac pearl
+    (0.52, 0.92, 0.80),   # mint pearl
+    (0.98, 0.80, 0.50),   # champagne pearl
+    (0.52, 0.76, 0.97),   # ice-blue pearl
 ]
 
-HOOK_COLOUR = (0.96, 0.96, 0.94)
+# The sheen. A nacre surface is a stack of thin layers, and what comes back
+# off it is an interference colour that walks through the spectrum as the
+# angle changes — so this is a sweep, not a tint, and it is what makes the
+# ring read as pearl rather than as shiny plastic.
+NACRE_SWEEP = [
+    (1.00, 0.63, 0.78),   # blush
+    (0.78, 0.62, 0.99),   # lilac
+    (0.55, 0.76, 1.00),   # periwinkle
+    (0.62, 0.99, 0.86),   # sea mint
+    (1.00, 0.93, 0.60),   # butter
+    (1.00, 0.72, 0.62),   # peach
+]
+
+HOOK_COLOUR = (0.99, 0.97, 0.94)
 
 
 # --------------------------------------------------------------------------
@@ -133,7 +148,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     case.add_argument("--height", type=float, default=0.0,
                       help="case height in metres (Z); 0 derives it from the "
                            "render aspect so the case fills the frame")
-    case.add_argument("--thickness", type=float, default=0.62,
+    case.add_argument("--thickness", type=float, default=0.74,
                       help="case depth in metres (Y). It is what limits how "
                            "long the pegs can be, so a shallow toy has short "
                            "pegs whatever else you set")
@@ -157,23 +172,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                            "since the button then lives in the chin")
     case.add_argument("--segments", type=int, default=96,
                       help="mesh resolution around the plan curve")
-    case.add_argument("--glass", type=float, default=0.022,
+    case.add_argument("--glass", type=float, default=0.055,
                       help="window glass thickness in metres")
     case.add_argument("--case-colour", default="",
                       help="case colour as r,g,b in 0-1; empty uses the "
                            "retro coral")
 
     water = p.add_argument_group("water")
-    water.add_argument("--fill", type=float, default=0.95,
+    water.add_argument("--fill", type=float, default=0.958,
                        help="water level as a fraction of chamber height. "
                             "The air gap at the top is where the jet breaks "
                             "the surface, so 1.0 costs the splash")
-    water.add_argument("--density", type=float, default=2.5,
+    water.add_argument("--density", type=float, default=1.1,
                        help="water absorption density. It is a tint, not the "
                             "colour of the toy: crank it and the rings go to "
                             "silhouettes, because every photon that reaches "
                             "one has crossed the volume twice")
-    water.add_argument("--plate", type=float, default=0.6,
+    water.add_argument("--plate", type=float, default=0.28,
                        help="backing-plate glow. The plate is lit from the "
                             "front through the water, so it arrives dimmer "
                             "than the rings in front of it; a little "
@@ -186,9 +201,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     play = p.add_argument_group("rings and pegs")
     play.add_argument("--rings", type=int, default=9)
-    play.add_argument("--ring-radius", type=float, default=0.155,
+    play.add_argument("--ring-radius", type=float, default=0.205,
                       help="ring outer radius in metres")
-    play.add_argument("--ring-tube", type=float, default=0.028,
+    play.add_argument("--ring-tube", type=float, default=0.040,
                       help="ring stock radius in metres")
     play.add_argument("--hooks", type=int, default=5,
                       help="pegs to land rings on")
@@ -203,7 +218,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                            "small turns it into a spike. The cap is a "
                            "hemisphere of exactly this radius, so it never "
                            "becomes a bulb sitting on the shaft")
-    play.add_argument("--hook-seat", type=float, default=0.16,
+    play.add_argument("--stack", type=int, default=4,
+                      help="most rings one peg will hold. Each lands on the "
+                           "one below and the pile climbs the peg; past "
+                           "this, or past the peg's length, a ring cannot "
+                           "be caught there")
+    play.add_argument("--hook-seat", type=float, default=0.05,
                       help="where a hooked ring sits along the peg, 0 at the "
                            "base and 1 at the tip")
     play.add_argument("--hook-length", type=float, default=1.05,
@@ -228,6 +248,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     play.add_argument("--hook-bob", type=float, default=0.022,
                       help="how far the pegs drift on their stalks, in "
                            "metres; 0 bolts them down")
+    play.add_argument("--pearl", type=float, default=0.58,
+                      help="how strongly the nacre sheen shows over a ring's "
+                           "base tint, 0 to 1. At 0 the rings are flat pearl "
+                           "colours; at 1 the sheen swamps the tint and "
+                           "every ring cycles the same rainbow")
+    play.add_argument("--pearl-cycles", type=float, default=2.1,
+                      help="how many times the sheen runs through the "
+                           "spectrum across a ring. One pass gives three fat "
+                           "bands and reads as a gradient; nacre cycles, "
+                           "because the layer stack is many wavelengths "
+                           "thick")
     play.add_argument("--seed", type=int, default=7,
                       help="seed for ring placement and peg layout")
 
@@ -285,12 +316,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="water drag on a ring, per second. With "
                              "--ring-gravity it fixes the sinking speed: a "
                              "ring settles at gravity over drag")
-    motion.add_argument("--catch", type=float, default=0.85,
+    motion.add_argument("--catch", type=float, default=1.0,
                         help="how close a ring's centre must come to a peg "
                              "to be caught, as a fraction of its hole. It is "
                              "measured on screen, because that is where a "
                              "ring either looks threaded or does not")
-    motion.add_argument("--catch-speed", type=float, default=0.62,
+    motion.add_argument("--catch-speed", type=float, default=0.9,
                         help="fastest a ring can be moving and still be "
                              "caught, in m/s. A ring flying past a peg does "
                              "not land on it")
@@ -318,7 +349,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     fizz.add_argument("--bubble-size", type=float, default=0.022)
     fizz.add_argument("--bubble-life", type=int, default=44,
                       help="frames a jet bubble lasts")
-    fizz.add_argument("--cling", type=int, default=40,
+    fizz.add_argument("--cling", type=int, default=90,
                       help="bubbles stuck to the inside of the glass, which "
                            "do not move and cost nothing")
 
@@ -361,6 +392,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                      choices=["Khronos PBR Neutral", "Standard", "AgX",
                               "Filmic"])
     out.add_argument("--exposure", type=float, default=0.0)
+    out.add_argument("--lens", type=float, default=50.0,
+                     help="camera focal length in mm; 0 is orthographic. "
+                          "Perspective is what gives the glass a thickness "
+                          "and the pegs a length — dead-on ortho flattens "
+                          "both into a diagram")
+    out.add_argument("--vignette", type=float, default=0.32,
+                     help="corner darkening, 0 to 1")
 
     args = p.parse_args(argv)
 
@@ -555,9 +593,13 @@ def button_body(name: str, radius: float, depth: float) -> bpy.types.Object:
         rotation=(math.radians(90.0), 0.0, 0.0))
     obj = bpy.context.active_object
     obj.name = name
-    bevel = obj.modifiers.new("soften", "BEVEL")
-    bevel.width = min(radius, depth) * 0.28
-    bevel.segments = 4
+    bevel = obj.modifiers.new("chamfer", "BEVEL")
+    # A flat face with a distinct rounded chamfer round its rim — a button,
+    # not a ball. The width is off the radius so the face stays flat; off
+    # the depth, as it was, the whole thing rolled into a dome.
+    bevel.width = radius * 0.24
+    bevel.segments = 6
+    bevel.profile = 0.55
     bevel.limit_method = "ANGLE"
     activate(obj)
     bpy.ops.object.shade_smooth()
@@ -653,55 +695,166 @@ def water_material(reference: bpy.types.Object, size: Vector,
     return mat
 
 
-def ring_material() -> bpy.types.Material:
-    """Translucent injection-moulded plastic, one hue per ring.
+def mix_colour(tree, factor, colour_a, colour_b, blend: str = "MIX"):
+    """Mix two colour sockets, across the node rename in Blender 4.
 
-    The hue is picked by Object Info → Random, which is per-object, so every
-    ring is a different colour from one material — and a ring keeps its
-    colour for the whole loop instead of strobing.
+    `ShaderNodeMix` carries three sets of A/B sockets — float, vector and
+    colour — all sharing the same names, so looking them up by name gets you
+    whichever comes first rather than the one you meant. They are addressed
+    by index here for that reason.
+    """
+    node = tree.nodes.new("ShaderNodeMix")
+    node.data_type = "RGBA"
+    node.blend_type = blend
+    node.clamp_result = True
+    if isinstance(factor, float):
+        node.inputs[0].default_value = factor
+    else:
+        tree.links.new(factor, node.inputs[0])
+    tree.links.new(colour_a, node.inputs[6])
+    tree.links.new(colour_b, node.inputs[7])
+    return node, node.outputs[2]
+
+
+def ring_material(strength: float, args_cycles: float
+                  ) -> bpy.types.Material:
+    """Pearl. A pale base tint per ring, under a nacre sheen.
+
+    Two things make a pearl look like a pearl, and neither is its colour.
+
+    The first is that the hue moves with the angle. A nacre surface is a
+    stack of thin layers and what comes back off it is an interference
+    colour, so the sweep is driven by two angular terms at once: how much
+    the surface faces the camera, which varies across the ring's stock, and
+    where the normal points, which varies around its circumference. One term
+    alone gives a flat band; together they give the shimmer that runs both
+    ways round a ring.
+
+    The second is that it is a *pale* thing with a colour cast, not a
+    coloured thing. The base tints are all near-white, and the hue you read
+    comes off the sheen — which is also what lets five pearls stay
+    distinguishable while all reading as the same material.
+
+    The base tint is picked by Object Info → Random, which is per-object, so
+    every ring is a different pearl from one material and keeps it for the
+    whole loop instead of strobing.
     """
     mat, tree = new_material("ringtoy_ring")
     out = tree.nodes.new("ShaderNodeOutputMaterial")
-    out.location = (500, 0)
+    out.location = (900, 0)
 
     info = tree.nodes.new("ShaderNodeObjectInfo")
-    info.location = (-300, 0)
+    info.location = (-800, 200)
 
-    ramp = tree.nodes.new("ShaderNodeValToRGB")
-    ramp.location = (-100, 0)
-    ramp.color_ramp.interpolation = "CONSTANT"
-    elements = ramp.color_ramp.elements
+    base = tree.nodes.new("ShaderNodeValToRGB")
+    base.location = (-600, 200)
+    base.color_ramp.interpolation = "CONSTANT"
+    elements = base.color_ramp.elements
     while len(elements) > 1:
         elements.remove(elements[-1])
     elements[0].position = 0.0
     elements[0].color = rgba(lin(RING_HUES[0]))
     for i, hue in enumerate(RING_HUES[1:], start=1):
         elements.new(i / len(RING_HUES)).color = rgba(lin(hue))
+    tree.links.new(info.outputs["Random"], base.inputs["Fac"])
+
+    # Angular term one: across the stock. Facing is 1 head-on and 0 at the
+    # silhouette, so this sweeps the hue over the tube's cross-section.
+    weight = tree.nodes.new("ShaderNodeLayerWeight")
+    weight.location = (-800, -140)
+    weight.inputs["Blend"].default_value = 0.42
+
+    # Angular term two: around the ring. The rings stand in the screen
+    # plane, so the stock's normal turns through the whole of XZ as you go
+    # round one, and its Z runs the sweep around the circumference.
+    geometry = tree.nodes.new("ShaderNodeNewGeometry")
+    geometry.location = (-800, -360)
+    split = tree.nodes.new("ShaderNodeSeparateXYZ")
+    split.location = (-620, -360)
+    tree.links.new(geometry.outputs["Normal"], split.inputs["Vector"])
+
+    around = tree.nodes.new("ShaderNodeMapRange")
+    around.location = (-440, -360)
+    around.inputs["From Min"].default_value = -1.0
+    around.inputs["From Max"].default_value = 1.0
+    tree.links.new(split.outputs["Z"], around.inputs["Value"])
+
+    blend = tree.nodes.new("ShaderNodeMath")
+    blend.location = (-260, -240)
+    blend.operation = "MULTIPLY_ADD"
+    blend.inputs[1].default_value = 0.62      # weight of the facing term
+    tree.links.new(weight.outputs["Facing"], blend.inputs[0])
+
+    scaled = tree.nodes.new("ShaderNodeMath")
+    scaled.location = (-260, -420)
+    scaled.operation = "MULTIPLY"
+    scaled.inputs[1].default_value = 0.75     # weight of the normal term
+    tree.links.new(around.outputs["Result"], scaled.inputs[0])
+    tree.links.new(scaled.outputs["Value"], blend.inputs[2])
+
+    # Run the sweep through the spectrum more than once. A single pass over
+    # the whole surface gives three fat bands and reads as a gradient; real
+    # nacre cycles, because the layer stack is many wavelengths thick. Ping
+    # pong rather than wrap, so the spectrum reverses at each turn instead
+    # of cutting back to the start and leaving a seam round the ring.
+    cycles = tree.nodes.new("ShaderNodeMath")
+    cycles.location = (-80, -140)
+    cycles.operation = "MULTIPLY"
+    cycles.inputs[1].default_value = max(0.25, args_cycles)
+    tree.links.new(blend.outputs["Value"], cycles.inputs[0])
+
+    fold = tree.nodes.new("ShaderNodeMath")
+    fold.location = (80, -140)
+    fold.operation = "PINGPONG"
+    fold.inputs[1].default_value = 1.0
+    tree.links.new(cycles.outputs["Value"], fold.inputs[0])
+
+    sweep = tree.nodes.new("ShaderNodeValToRGB")
+    sweep.location = (-80, -300)
+    sweep.color_ramp.interpolation = "EASE"
+    stops = sweep.color_ramp.elements
+    while len(stops) > 1:
+        stops.remove(stops[-1])
+    stops[0].position = 0.0
+    stops[0].color = rgba(lin(NACRE_SWEEP[0]))
+    for i, hue in enumerate(NACRE_SWEEP[1:], start=1):
+        stops.new(i / (len(NACRE_SWEEP) - 1)).color = rgba(lin(hue))
+    tree.links.new(fold.outputs["Value"], sweep.inputs["Fac"])
+
+    # The sheen sits over the tint rather than replacing it, so a rose pearl
+    # stays rose through the sweep instead of every ring cycling the same
+    # rainbow and becoming indistinguishable.
+    tinted, tinted_out = mix_colour(tree, strength, base.outputs["Color"],
+                                    sweep.outputs["Color"], "MIX")
+    tinted.location = (240, 0)
 
     bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.location = (200, 0)
-    put(bsdf, ("Roughness",), 0.16)
-    put(bsdf, ("IOR",), 1.5)
-    # Part-transmissive: a solid ring goes flat and dark once it is behind a
-    # metre of absorbing water, and a fully clear one disappears into it.
-    put(bsdf, ("Transmission Weight", "Transmission"), 0.32)
-    put(bsdf, ("Coat Weight", "Clearcoat"), 0.8)
-    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.06)
-    # A little emission, to hold the hue against the plate behind. Any
-    # more and the rings stop looking like plastic and start looking like
-    # they are lit from inside.
-    put(bsdf, ("Emission Strength",), 0.28)
+    bsdf.location = (560, 0)
+    # Metallic enough to have a pearl's depth, short of a mirror: fully
+    # metallic and it stops carrying a colour of its own and just reflects
+    # the water it is in.
+    put(bsdf, ("Metallic",), 0.25)
+    put(bsdf, ("Roughness",), 0.06)
+    put(bsdf, ("IOR",), 1.55)
+    # The lacquer over the nacre, and most of the reason it reads as glossy
+    # rather than merely bright.
+    put(bsdf, ("Coat Weight", "Clearcoat"), 1.0)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.03)
+    # Enough emission that a ring's colour spills onto the plate and the
+    # water around it: the rings are where the colour in this scene comes
+    # from, and they should be seen to give it off.
+    put(bsdf, ("Emission Strength",), 0.7)
 
-    tree.links.new(info.outputs["Random"], ramp.inputs["Fac"])
-    tree.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
+    tree.links.new(tinted_out, bsdf.inputs["Base Color"])
     emission = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
     if emission is not None:
-        tree.links.new(ramp.outputs["Color"], emission)
+        tree.links.new(tinted_out, emission)
     tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return mat
 
 
-def plate_material(size: Vector, boost: float) -> bpy.types.Material:
+def plate_material(size: Vector, boost: float,
+                   drift: bpy.types.Object) -> bpy.types.Material:
     """The backing plate: a vertical aqua-to-blue ramp on matte plastic.
 
     Diffuse rather than emissive, and lit from the front through the same
@@ -711,7 +864,7 @@ def plate_material(size: Vector, boost: float) -> bpy.types.Material:
     """
     mat, tree = new_material("ringtoy_plate")
     out = tree.nodes.new("ShaderNodeOutputMaterial")
-    out.location = (500, 0)
+    out.location = (700, 0)
 
     coord = tree.nodes.new("ShaderNodeTexCoord")
     coord.location = (-600, 0)
@@ -731,21 +884,56 @@ def plate_material(size: Vector, boost: float) -> bpy.types.Material:
     ramp.color_ramp.elements[1].position = 1.0
     ramp.color_ramp.elements[1].color = rgba(lin(PLATE_TOP))
 
+    # Caustics: the web of light that water focuses onto whatever is under
+    # it. Distance-to-edge Voronoi is that web almost exactly — bright on
+    # the cell walls, dark in the cells — and its coordinates come from the
+    # same drifting empty as the surface ripple, so the light on the plate
+    # moves with the water it is supposedly coming through, and returns
+    # with it at the seam.
+    flow = tree.nodes.new("ShaderNodeTexCoord")
+    flow.location = (-600, -300)
+    flow.object = drift
+    flow_map = tree.nodes.new("ShaderNodeMapping")
+    flow_map.location = (-400, -300)
+    flow_map.inputs["Scale"].default_value = (12.0, 12.0, 12.0)
+    tree.links.new(flow.outputs["Object"], flow_map.inputs["Vector"])
+
+    cells = tree.nodes.new("ShaderNodeTexVoronoi")
+    cells.location = (-200, -300)
+    cells.feature = "DISTANCE_TO_EDGE"
+    cells.inputs["Scale"].default_value = 1.0
+    tree.links.new(flow_map.outputs["Vector"], cells.inputs["Vector"])
+
+    web = tree.nodes.new("ShaderNodeValToRGB")
+    web.location = (0, -300)
+    web.color_ramp.interpolation = "EASE"
+    web.color_ramp.elements[0].position = 0.0
+    web.color_ramp.elements[0].color = (1.0, 1.0, 1.0, 1.0)
+    web.color_ramp.elements[1].position = 0.5
+    web.color_ramp.elements[1].color = (0.0, 0.0, 0.0, 1.0)
+    tree.links.new(cells.outputs["Distance"], web.inputs["Fac"])
+
+    lit, lit_out = mix_colour(tree, 0.025, ramp.outputs["Color"],
+                              web.outputs["Color"], "ADD")
+    lit.location = (250, -150)
+
     bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.location = (250, 0)
-    put(bsdf, ("Roughness",), 0.52)
-    put(bsdf, ("Coat Weight", "Clearcoat"), 0.25)
+    bsdf.location = (450, 0)
+    put(bsdf, ("Roughness",), 0.38)
+    put(bsdf, ("Coat Weight", "Clearcoat"), 0.5)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.12)
 
     tree.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
     tree.links.new(mapping.outputs["Vector"], sep.inputs["Vector"])
     tree.links.new(sep.outputs["Z"], ramp.inputs["Fac"])
-    tree.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
-    if boost > 0.0:
-        put(bsdf, ("Emission Strength",), boost)
-        socket = bsdf.inputs.get("Emission Color") or \
-            bsdf.inputs.get("Emission")
-        if socket is not None:
-            tree.links.new(ramp.outputs["Color"], socket)
+    tree.links.new(lit_out, bsdf.inputs["Base Color"])
+    # The plate's own glow follows the gradient with the web faintly in
+    # it — never the web alone. Emitting the web directly turns the whole
+    # plate into lace the moment the glow is raised at all.
+    put(bsdf, ("Emission Strength",), max(boost, 0.0))
+    socket = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
+    if socket is not None:
+        tree.links.new(lit_out, socket)
     tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return mat
 
@@ -783,16 +971,55 @@ def button_material(name: str):
     out = tree.nodes.new("ShaderNodeOutputMaterial")
     out.location = (300, 0)
     bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    # Frosted rose-quartz glass rather than opaque plastic: light gets into
+    # it and scatters, so the glow on a press comes from inside the button
+    # instead of sitting on its face.
     put(bsdf, ("Base Color",), rgba(lin(BUTTON_COLOUR)))
-    put(bsdf, ("Roughness",), 0.28)
-    put(bsdf, ("Coat Weight", "Clearcoat"), 0.6)
-    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.08)
+    put(bsdf, ("Roughness",), 0.32)
+    put(bsdf, ("IOR",), 1.47)
+    put(bsdf, ("Transmission Weight", "Transmission"), 0.55)
+    put(bsdf, ("Subsurface Weight", "Subsurface"), 0.35)
+    put(bsdf, ("Coat Weight", "Clearcoat"), 1.0)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.05)
     socket = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
     if socket is not None:
         socket.default_value = rgba(lin(BUTTON_COLOUR))
     put(bsdf, ("Emission Strength",), 0.0)
     tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return mat, bsdf
+
+
+def milk_glass_material(name: str,
+                        colour: tuple[float, float, float]) -> bpy.types.Material:
+    """Opal glass: light gets a little way in and comes back soft.
+
+    Flat white plastic in front of a blue plate reads as a cut-out. Subsurface
+    gives the post a body, a low transmission lets the plate tint its edges,
+    and a hard coat over a matte core is what porcelain and sea glass share.
+    """
+    mat, tree = new_material(name)
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (300, 0)
+    bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+    put(bsdf, ("Base Color",), rgba(lin(colour)))
+    put(bsdf, ("Roughness",), 0.26)
+    put(bsdf, ("IOR",), 1.5)
+    put(bsdf, ("Subsurface Weight", "Subsurface"), 0.55)
+    radius = bsdf.inputs.get("Subsurface Radius")
+    if radius is not None:
+        radius.default_value = (0.12, 0.08, 0.06)
+    put(bsdf, ("Subsurface Scale",), 0.6)
+    # Almost no transmission. Any real amount lets the blue plate through
+    # and the post reads as smoked grey rather than opal white.
+    put(bsdf, ("Transmission Weight", "Transmission"), 0.03)
+    put(bsdf, ("Coat Weight", "Clearcoat"), 0.9)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.06)
+    put(bsdf, ("Emission Strength",), 0.32)
+    socket = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
+    if socket is not None:
+        socket.default_value = rgba(lin(colour))
+    tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
 
 
 def simple_material(name: str, colour: tuple[float, float, float],
@@ -890,7 +1117,8 @@ def build_plate(args, built: dict) -> bpy.types.Object:
     inner = built["interior"]
     plate = prism("Ringtoy_Plate", built["interior_plan"], inner.y * 0.02)
     plate.location = (0.0, inner.y * 0.5 - inner.y * 0.02, 0.0)
-    plate.data.materials.append(plate_material(inner, args.plate))
+    plate.data.materials.append(
+        plate_material(inner, args.plate, built["ripple_drift"]))
     return plate
 
 
@@ -936,10 +1164,7 @@ def build_water(args, built: dict, fill_z: float) -> dict:
     # object the modifier takes its coordinates from. Drive that on a
     # sinusoid and the ripple pattern returns exactly to where it started at
     # the end of the loop, which a scrolling offset never would.
-    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
-    drift = bpy.context.active_object
-    drift.name = "Ripple_Drift"
-    drift.empty_display_size = 0.1
+    drift = built["ripple_drift"]
 
     displace = water.modifiers.new("ripple", "DISPLACE")
     displace.texture = texture
@@ -1054,7 +1279,7 @@ def build_hooks(args, built: dict, fill_z: float) -> list[bpy.types.Object]:
     base_r = hook_base(args)
     # The pegs sit against the back wall, which is the deepest water in
     # the chamber; a plain white plastic reads as charcoal from there.
-    material = simple_material("ringtoy_hook", HOOK_COLOUR, 0.22, 0.35)
+    material = milk_glass_material("ringtoy_hook", HOOK_COLOUR)
 
     back = hook_mount(args, inner)
     # Leaning the post up means -Y rotates toward +Z, so a ring that slides
@@ -1082,7 +1307,7 @@ def build_rings(args, built: dict, fill_z: float,
     """
     rng = random.Random(args.seed + 1)
     inner = built["interior"]
-    material = ring_material()
+    material = ring_material(args.pearl, args.pearl_cycles)
     radius = args.ring_radius
     tube = args.ring_tube
 
@@ -1111,8 +1336,11 @@ def build_rings(args, built: dict, fill_z: float,
                                    rng.uniform(-0.06, 0.06))
             ring.location = hang_point(args, hook, inner)
         else:
+            # Between the buttons, not behind them: the opening pose is
+            # rendered as-is in look-dev, before the solver can push a ring
+            # clear of anything.
             ring.location = (
-                rng.uniform(-1.0, 1.0) * inner.x * 0.32,
+                rng.uniform(-1.0, 1.0) * inner.x * 0.26,
                 rng.uniform(-0.28, 0.28) * inner.y,
                 -inner.z * 0.5 + radius * (1.4 + 1.9 * rng.random()))
             ring.rotation_euler = (rng.uniform(-0.2, 0.2),
@@ -1181,9 +1409,21 @@ def build_jets(args, built: dict, fill_z: float) -> list[dict]:
         nozzle.show_instancer_for_render = False
         nozzle.show_instancer_for_viewport = False
 
-        button = button_body(f"Ringtoy_Button_{i}", button_r,
-                             size.y * 0.55)
-        button.location = (x, -size.y * 0.5 - size.y * 0.12, button_z)
+        depth = size.y * 0.16
+        button = button_body(f"Ringtoy_Button_{i}", button_r, depth)
+        button.location = (x, -size.y * 0.5 - depth * 0.45, button_z)
+        # A collar round the base, so the button is mounted in something
+        # rather than stuck to the glass.
+        bpy.ops.mesh.primitive_torus_add(
+            major_radius=button_r * 1.14, minor_radius=button_r * 0.11,
+            major_segments=48, minor_segments=12,
+            location=(x, -size.y * 0.5 - button_r * 0.04, button_z),
+            rotation=(math.radians(90.0), 0.0, 0.0))
+        collar = bpy.context.active_object
+        collar.name = f"Ringtoy_Collar_{i}"
+        collar.data.materials.append(
+            milk_glass_material(f"ringtoy_collar_{i}", HOOK_COLOUR))
+        bpy.ops.object.shade_smooth()
         material, shader = button_material(f"ringtoy_button_{i}")
         button.data.materials.append(material)
 
@@ -1305,14 +1545,26 @@ def build_drift(args, inner: Vector) -> bpy.types.Object | None:
 def build_camera(args, size: Vector) -> bpy.types.Object:
     """Orthographic and dead-on. The toy is held flat; so is the camera."""
     data = bpy.data.cameras.new("Ringtoy_Cam")
-    data.type = "ORTHO"
-    # ortho_scale maps to the longer edge, which on a portrait frame is the
-    # height — so framing on height alone crops the case sideways.
     aspect = args.res_y / max(1, args.res_x)
-    data.ortho_scale = max(size.z * args.margin,
-                           size.x * args.margin * aspect)
+    if args.lens > 0:
+        # Perspective, still dead-on. The front face of the case fills the
+        # frame; everything behind it is a little smaller, which is what
+        # shows the glass as a thick bevel round the edge and the pegs as
+        # posts rather than dots.
+        data.type = "PERSP"
+        data.lens = args.lens
+        data.sensor_fit = "VERTICAL"
+        data.sensor_height = 36.0
+        fit = max(size.z, size.x * aspect) * args.margin
+        distance = fit * args.lens / 36.0
+        cam_y = -size.y * 0.5 - distance
+    else:
+        data.type = "ORTHO"
+        data.ortho_scale = max(size.z * args.margin,
+                               size.x * args.margin * aspect)
+        cam_y = -8.0
     cam = link(bpy.data.objects.new("Ringtoy_Cam", data))
-    cam.location = (0.0, -8.0, 0.0)
+    cam.location = (0.0, cam_y, 0.0)
     cam.rotation_euler = (math.radians(90.0), 0.0, 0.0)
     bpy.context.scene.camera = cam
     return cam
@@ -1345,13 +1597,22 @@ def build_lighting(args, size: Vector) -> None:
         light.rotation_euler = rotation
         return light
 
-    area("Key", (-3.0, -4.4, 3.4),
-         (math.radians(54), 0.0, math.radians(-36)), 4.0, 460)
-    area("Fill", (3.4, -3.6, -1.4),
-         (math.radians(102), 0.0, math.radians(44)), 5.0, 240)
+    # Product-shot rig: everything is big, so every highlight is a soft
+    # window rather than a hot dot, and the key and fill are split warm and
+    # cool so a white post and a pearl ring have two colours of light to
+    # turn through instead of one.
+    key = area("Key", (-3.4, -3.2, 7.8),
+               (math.radians(34), 0.0, math.radians(-38)), 4.5, 1300)
+    key.data.color = lin((1.0, 0.94, 0.88))
+    fill = area("Fill", (3.6, -3.8, -1.2),
+                (math.radians(102), 0.0, math.radians(44)), 8.0, 260)
+    fill.data.color = lin((0.86, 0.94, 1.0))
+    # A high, soft skylight: the top edge of every ring and post catches it,
+    # which is what separates them from the plate.
+    area("Top", (0.0, -1.6, 6.5), (math.radians(14), 0.0, 0.0), 6.0, 300)
     # Back light is what makes the water glow rather than sit there as a
     # dark slab, and it is what puts the bright rim on every bubble.
-    area("Rim", (0.0, 5.2, 1.4), (math.radians(-108), 0.0, 0.0), 6.0, 700)
+    area("Rim", (0.0, 5.2, 1.4), (math.radians(-108), 0.0, 0.0), 6.0, 600)
 
     if args.transparent:
         scene.render.film_transparent = True
@@ -1617,8 +1878,13 @@ def drift_field(args, p: Vector, phase: float) -> Vector:
     ))
 
 
+def stack_step(args) -> float:
+    """How far up the peg each ring in a pile sits above the one below."""
+    return args.ring_tube * 2.15
+
+
 def hang_point(args, hook: bpy.types.Object, inner: Vector,
-               offset: Vector | None = None) -> Vector:
+               offset: Vector | None = None, stack: int = 0) -> Vector:
     """Where a ring sits once it is on a peg.
 
     Some way down the taper — `--hook-seat` — and hanging by the inside of
@@ -1629,7 +1895,10 @@ def hang_point(args, hook: bpy.types.Object, inner: Vector,
     """
     axis = hook.matrix_world.to_3x3() @ Vector((0.0, -1.0, 0.0))
     hole = ring_hole(args)
-    along = hook_length(args, inner) * args.hook_seat
+    # At the base, plus one ring's thickness for every ring already under
+    # it — a pile climbs the peg.
+    along = hook_length(args, inner) * args.hook_seat + \
+        stack * stack_step(args)
     base = Vector(hook.location) + (offset or Vector((0.0, 0.0, 0.0)))
     seat = base + axis * along
     down = Vector((0.0, 0.0, -1.0))
@@ -1685,7 +1954,10 @@ def simulate_rings(args, built: dict) -> None:
     # The box a ring centre may occupy. Depth is the tight one: the chamber
     # is only a few ring-thicknesses deep, and that is what holds the rings
     # face-on instead of letting them turn edge-on and disappear.
-    bound_x = inner.x * 0.5 - radius
+    # Held a little off the side walls: under a perspective lens the thick
+    # glass bevel eats the last few centimetres, and a ring parked against
+    # the wall reads as cut off by it.
+    bound_x = inner.x * 0.5 - radius * 1.9
     bound_y = inner.y * 0.5 - tube * 1.6
     bound_lo = floor + radius
     bound_hi = fill_z - radius * 0.15
@@ -1700,6 +1972,9 @@ def simulate_rings(args, built: dict) -> None:
             "euler": Vector(ring.rotation_euler),
             "spin": rng.uniform(-0.4, 0.4),
             "hook": None,
+            "hook_at": 0,
+            "stack": 0,
+            "slide": 1.0,
             "cool": 0,
         })
 
@@ -1725,14 +2000,34 @@ def simulate_rings(args, built: dict) -> None:
         offsets = [hook_offset(args, i, len(hooks), t)
                    for i in range(len(hooks))]
 
+        # Who is on which peg, in the order they landed. A ring's place in
+        # the pile is recomputed every frame, so when one below it is
+        # knocked off the ones above settle down to fill the gap.
+        piles: dict[int, list] = {}
+        for entry in sorted(state, key=lambda e: e["hook_at"]):
+            if entry["hook"] is not None:
+                piles.setdefault(entry["hook"], []).append(entry)
+        for pile in piles.values():
+            for place, entry in enumerate(pile):
+                entry["stack"] = place
+
         for index, entry in enumerate(state):
             p, v = entry["p"], entry["v"]
             push = jet_push(args, jets, levels, p)
 
             if entry["hook"] is not None:
                 hook = hooks[entry["hook"]]
-                target = hang_point(args, hook, inner,
-                                    offsets[entry["hook"]])
+                seat = hang_point(args, hook, inner,
+                                  offsets[entry["hook"]], entry["stack"])
+                # A ring goes on over the tip and slides down the peg. It
+                # is caught at the tip, and its target walks from there to
+                # its place in the pile — never straight across through
+                # the shaft.
+                axis = hook.matrix_world.to_3x3() @ Vector((0.0, -1.0, 0.0))
+                tip = Vector(hook.location) + offsets[entry["hook"]] + \
+                    axis * hook_length(args, inner)
+                entry["slide"] = min(1.0, entry["slide"] + 1.9 * dt)
+                target = tip.lerp(seat, smoothstep(entry["slide"]))
                 # A press strong enough to lift the ring off the peg is a
                 # press strong enough to take it off; anything less only
                 # rocks it, which is what the toy does too.
@@ -1796,10 +2091,30 @@ def simulate_rings(args, built: dict) -> None:
                 flat = Vector((p.x - near.x, 0.0, p.z - near.z))
                 gap = flat.length
                 thick = hook_radius_at(args, inner, along)
+                # The funnel. A ring coming down onto the tip with the tip
+                # somewhere under its stock is guided onto it: its inner
+                # edge rides the cone and the ring centres itself. This is
+                # what the taper is for, and without it a landing needs the
+                # ring to arrive already centred, which it almost never is.
+                tip = base + axis * peg_length
+                if entry["cool"] == 0 and p.z > tip.z - tube and \
+                        along > peg_length * 0.6:
+                    to_tip = Vector((tip.x - p.x, 0.0, tip.z - p.z))
+                    reach = to_tip.length
+                    if hole * 0.5 < reach < radius + thick:
+                        entry["v"] += to_tip * (2.6 / max(reach, 1e-4)) * dt
+                        continue
                 if gap <= hole or gap >= radius + thick:
                     continue
-                entry["v"] += flat * (
-                    (radius + thick - gap) / gap * 3.0) * dt
+                # Projected out, not nudged: a nudge is a force, and a ring
+                # arriving faster than the force can turn it goes through
+                # the post. This moves it to the surface and drops whatever
+                # velocity was carrying it in.
+                out = flat / gap
+                p += out * (radius + thick - gap)
+                inward = entry["v"].dot(out)
+                if inward < 0.0:
+                    entry["v"] -= out * inward
 
         for index, entry in enumerate(state):
             entry["p"] = entry["p"] + entry["v"] * dt
@@ -1818,21 +2133,50 @@ def simulate_rings(args, built: dict) -> None:
                         p[axis_i] = hi
                         v[axis_i] = -abs(v[axis_i]) * 0.28
 
+                # Off the buttons. They sit outside the glass, but on
+                # screen a ring settled behind one reads as through it.
+                for jet in jets:
+                    button = jet["button"]
+                    keep = button.dimensions.x * 0.5 * 1.15 + radius
+                    away = Vector((p.x - button.location.x, 0.0,
+                                   p.z - button.location.z))
+                    dist = away.length
+                    if 1e-5 < dist < keep:
+                        out = away / dist
+                        p += out * (keep - dist)
+                        inward = v.dot(out)
+                        if inward < 0.0:
+                            v -= out * inward
+
                 if entry["cool"] > 0:
                     entry["cool"] -= 1
                 elif v.length < args.catch_speed:
                     for hook_i, hook in enumerate(hooks):
-                        if any(other["hook"] == hook_i for other in state):
+                        # Land on top of whatever is already there, if the
+                        # pile is not full and the peg is long enough.
+                        place = len(piles.get(hook_i, []))
+                        top = hook_length(args, inner) * args.hook_seat + \
+                            place * stack_step(args)
+                        if place >= args.stack or \
+                                top > hook_length(args, inner) * 0.86:
                             continue
-                        target = hang_point(args, hook, inner,
-                                            offsets[hook_i])
-                        # Caught on what the camera sees: the peg has to be
-                        # inside the ring's hole on screen, and the ring has
-                        # to be near enough in depth to be threaded on it.
-                        flat = Vector((p.x - target.x, 0.0, p.z - target.z))
+                        # Caught at the tip: the peg's end has to be inside
+                        # the ring's hole on screen, with the ring at or
+                        # above it and near enough in depth to go on. From
+                        # there it slides down to its place.
+                        axis = hook.matrix_world.to_3x3() @ \
+                            Vector((0.0, -1.0, 0.0))
+                        tip = Vector(hook.location) + offsets[hook_i] + \
+                            axis * hook_length(args, inner)
+                        flat = Vector((p.x - tip.x, 0.0, p.z - tip.z))
                         if flat.length < catch and \
-                                abs(p.y - target.y) < radius * 0.9:
+                                p.z > tip.z - tube * 1.5 and \
+                                abs(p.y - tip.y) < radius * 0.9:
                             entry["hook"] = hook_i
+                            entry["hook_at"] = frame
+                            entry["stack"] = place
+                            entry["slide"] = 0.0
+                            piles.setdefault(hook_i, []).append(entry)
                             break
 
             # Orientation. A free ring spins slowly in its own plane and
@@ -1908,6 +2252,14 @@ def build_scene(args) -> dict:
     inner = built["interior"]
     fill_z = -inner.z * 0.5 + inner.z * args.fill
 
+    # One periodic drift drives both the ripple on the surface and the
+    # caustics on the plate, so the light on the floor moves with the water
+    # it is supposedly coming through.
+    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
+    built["ripple_drift"] = bpy.context.active_object
+    built["ripple_drift"].name = "Flow_Drift"
+    built["ripple_drift"].empty_display_size = 0.1
+
     built["plate"] = build_plate(args, built)
     built["fill_z"] = fill_z
     built.update(build_water(args, built, fill_z))
@@ -1944,6 +2296,55 @@ def build_scene(args) -> dict:
 # --------------------------------------------------------------------------
 # output
 # --------------------------------------------------------------------------
+
+
+def build_vignette(args, scene: bpy.types.Scene) -> None:
+    """Corner darkening in the compositor.
+
+    The cheapest thing that separates a photograph from a diagram: the eye
+    goes to the middle because the edges are quieter. Done here rather than
+    in the scene so it sits on the final pixels regardless of what the glass
+    does at the frame edge.
+    """
+    if args.vignette <= 0.0:
+        return
+    scene.use_nodes = True
+    tree = scene.node_tree
+    tree.nodes.clear()
+    layers = tree.nodes.new("CompositorNodeRLayers")
+    layers.location = (-600, 0)
+
+    mask = tree.nodes.new("CompositorNodeEllipseMask")
+    mask.location = (-600, -300)
+    mask.width = 1.55
+    mask.height = 1.25
+
+    blur = tree.nodes.new("CompositorNodeBlur")
+    blur.location = (-400, -300)
+    blur.filter_type = "GAUSS"
+    blur.use_relative = True
+    blur.factor_x = 32.0
+    blur.factor_y = 32.0
+    tree.links.new(mask.outputs["Mask"], blur.inputs["Image"])
+
+    # mask*v + (1-v): 1 in the middle, (1-v) in the corners.
+    lift = tree.nodes.new("CompositorNodeMath")
+    lift.location = (-200, -300)
+    lift.operation = "MULTIPLY_ADD"
+    lift.inputs[1].default_value = args.vignette
+    lift.inputs[2].default_value = 1.0 - args.vignette
+    tree.links.new(blur.outputs["Image"], lift.inputs[0])
+
+    darken = tree.nodes.new("CompositorNodeMixRGB")
+    darken.location = (0, 0)
+    darken.blend_type = "MULTIPLY"
+    darken.inputs[0].default_value = 1.0
+    tree.links.new(layers.outputs["Image"], darken.inputs[1])
+    tree.links.new(lift.outputs["Value"], darken.inputs[2])
+
+    composite = tree.nodes.new("CompositorNodeComposite")
+    composite.location = (200, 0)
+    tree.links.new(darken.outputs["Image"], composite.inputs["Image"])
 
 
 def render_loop(args, scene: bpy.types.Scene) -> None:
@@ -1997,6 +2398,7 @@ def main() -> None:
     args = parse_args()
     built = build_scene(args)
     configure_render(args, built["scene"])
+    build_vignette(args, built["scene"])
 
     if not args.static and not args.no_sim:
         simulate_rings(args, built)

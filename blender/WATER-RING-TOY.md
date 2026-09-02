@@ -14,12 +14,12 @@ materials, the ring motion, the button presses, the jet, the bubbles, the
 lighting and the camera — from CLI flags, so a change is a flag rather than a
 trip through the UI.
 
-![A frame from the loop, ten frames after a press](../docs/screenshots/water-ring-toy.png)
+![The opening pose, with pearl rings on the pegs](../docs/screenshots/water-ring-toy.png)
 
-Above: ten frames into a press of the left button. The rings are streaming up
-the chamber and the first two have reached the surface; the pegs they came off
-are empty, and they will land back on them as they sink over the rest of the
-loop.
+Above: the opening pose. Each ring is a pearl — a pale base tint under a nacre
+sheen that walks through the spectrum as the surface turns away from you — and
+the rings are where the colour in the scene comes from: they carry enough
+emission to spill it onto the plate and the water around them.
 
 It is built on [`liquid_shaker.py`](./liquid_shaker.py) and imports its plan
 curve, pillow loft, fill-line boolean and render plumbing directly rather than
@@ -79,9 +79,9 @@ show. The travel stays, because it is what is really going on, but the press
 is carried by the two things that do survive: the button lights up, and it
 bulges. The bulge is across the face rather than through it — a rubber button
 squashes wider as it goes in, and width is the part of that the camera can
-see. The rest colour is a deep amber rather than the bright yellow it looks
-like when lit, because a button already rendering at the top of the range has
-nowhere to light up to.
+see. The rest colour is a soft rose rather than the near-white it goes when lit,
+because a button already rendering at the top of the range has nowhere to
+light up to.
 
 **A press carries rings to the surface.** That is what the jet is for, and
 getting there took more force than it looks: with the drag a ring feels, a
@@ -119,11 +119,25 @@ lets go when a jet hits it harder than `--release`. Every term is something
 you can point at in the render, and being ours it is deterministic — the same
 seed gives the same loop every time, with no cache to bake.
 
-**Catching is judged on screen.** The camera is orthographic and dead-on, so a
-ring is on a peg exactly when the peg appears inside its hole. `--catch` is
-therefore measured in the screen plane, with a separate depth test for whether
-the ring is near enough to be threaded at all. That is the same question the
-viewer is answering.
+**A ring goes on over the tip and slides down.** It is caught when the peg's
+end is inside its hole on screen, with the ring at or above the tip and near
+enough in depth to go on; its target then walks from the tip down the axis to
+its place, never straight across through the shaft. The taper does the rest of
+the work it does on a real peg: a ring coming down with the tip somewhere under
+its stock is funnelled onto it, because without that a landing needs the ring
+to arrive already centred, which it almost never is.
+
+**Rings settle at the base and pile up.** Each lands on the one below and the
+pile climbs the peg, up to `--stack` rings or the peg's length. A ring's place
+in the pile is recomputed every frame, so when one below it is knocked off the
+ones above settle down to fill the gap.
+
+**Nothing passes through a post.** A free ring whose stock meets a shaft is
+projected out to the surface and loses whatever velocity was carrying it in —
+a push was a force, and a ring arriving faster than the force could turn it
+went through. The same treatment keeps rings out of the glass bevel at the
+side walls and off the buttons, which sit outside the glass but on screen read
+as through it.
 
 **The pegs lean out of the back wall** by `--hook-tilt`, and that lean is what
 makes them visible. A peg pointing straight at an orthographic camera is a
@@ -152,6 +166,58 @@ keyframer and the solver cannot disagree about where a peg is.
 face-on to a leaning peg starts the sim intersecting it — and nothing needs it
 now. On a peg leaning 62° a square ring is seen almost edge-on, and gravity
 would hang it much closer to flat anyway.
+
+**It is photographed, not diagrammed.** The camera is a 50 mm lens rather
+than orthographic — `--lens 0` gets the old view back — and that is what
+gives the glass a thickness you can see as a bevel round the frame, and the
+pegs a length instead of a dot. The glass wall is thick enough to refract.
+The plate is lit by the key rather than painted with a gradient, with a
+faint caustic web on it whose coordinates come from the same drifting empty
+as the surface ripple, so the light on the floor moves with the water it is
+supposedly coming through and returns with it at the seam. There is a
+vignette in the compositor (`--vignette`), because the cheapest thing that
+separates a photograph from a diagram is that its edges are quieter than its
+middle.
+
+Two things tried and reverted: AgX crushes this palette to slate grey, so
+the view transform stays Khronos PBR Neutral; and a large key panel reflects
+in the front glass as a grey slab under a perspective lens, so the key is
+small and high enough that its reflection leaves the frame.
+
+**Everything else is glass.** The posts are opal glass — subsurface for a
+body, a hard coat over a matte core, and almost no transmission, because any
+real amount lets the blue plate through and a white post reads as smoked
+grey. The buttons are frosted rose quartz, part transmissive, so the glow on a
+press comes from inside the button rather than sitting on its face. The plate
+behind is a pastel gradient rather than a saturated one, and the light rig is
+a product-shot rig: every source is large, so every highlight is a soft window
+rather than a hot dot, the key is warm and the fill is cool so a white post
+and a pearl ring have two colours of light to turn through, and a high
+skylight catches the top edge of every ring and post, which is what lifts
+them off the plate.
+
+**The rings are pearl, not flat colour.** Two things make a pearl look like a
+pearl and neither is its colour. The first is that the hue moves with the
+angle: a nacre surface is a stack of thin layers, and what comes back off it
+is an interference colour. So the sheen is driven by two angular terms at
+once — how much the surface faces the camera, which varies across a ring's
+stock, and where its normal points, which varies around the circumference. One
+term alone gives a flat band; together they give the shimmer that runs both
+ways round a ring. It is then run through the spectrum `--pearl-cycles` times
+and folded with a ping-pong rather than wrapped, so the sweep reverses at each
+turn instead of cutting back to the start and leaving a seam round the ring.
+
+The second is that a pearl is a pale thing with a colour cast, not a coloured
+thing. The five base tints are low-saturation, the hue you read comes mostly
+off the sheen, and `--pearl` sets how far the sheen covers the tint — at 0 the
+rings are flat pearl colours, at 1 the sheen swamps the tint and every ring
+cycles the same rainbow and stops being distinguishable.
+
+It is only part metallic. Fully metallic, a ring stops carrying a colour of
+its own and just mirrors the water it is in; the depth comes from a hard coat
+over a low roughness instead. There is a little emission for the same reason
+the shaker's confetti has some: anything in this chamber is seen through
+absorbing water, and without it a pearl arrives grey.
 
 **A peg is a slim, gently tapering shaft with a rounded end.** The taper is
 what holds a ring: one dropped over the end slides down until the shaft is as
@@ -216,12 +282,22 @@ out of. A shallow toy has short pegs whatever else you set.
 **`--fill`** is the water level. The air gap at the top is where the jet
 breaks the surface, so 1.0 gives you a beautiful still and no splash.
 
-**`--density`** is the water's absorption, and it is a tint rather than the
-colour of the toy. The blue you see is mostly the backing plate: a real one of
-these holds about a centimetre of water, which tints almost nothing, and the
+**`--density`** is the water's absorption, and it is a faint tint rather than
+the colour of the toy. The blue you see is mostly the backing plate: a real one
+of these holds about a centimetre of water, which tints almost nothing, and the
 field the rings are seen against is a sheet of coloured plastic at the back.
-Crank the density and every ring becomes a silhouette, because the light that
-reaches one has crossed the volume twice.
+The default is low for that reason — enough that the bottom of the chamber
+reads deeper than the top, and no more. Crank it and every ring becomes a
+silhouette, because the light that reaches one has crossed the volume twice;
+take it to zero and the water stops having a body at all and the chamber
+flattens into one even field of cyan.
+
+The emission on the rings and the pegs is tied to this. It exists only to hold
+them against the absorption, so it comes down as the density does — otherwise
+clearing the water leaves everything in it looking lit from inside. What does
+*not* come down is `--plate`: the plate is the light the whole field is seen
+by, not something compensating for the water, and dimming it alongside the
+density just makes a clear chamber look dull.
 
 **`--plate`** glows the backing plate slightly. It is lit from the front
 through the water, so without it it arrives dimmer than the rings in front of
