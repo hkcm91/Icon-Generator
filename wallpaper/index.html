@@ -988,13 +988,15 @@ const SLOSH = 1900;        // px/s^2 per g, per unit of surface slope
                           // body follows tilt without racing down the glass
 /* Twist, not shove, is what throws glitter onto the glass. A shake's shove
  * becomes a roll under the projection and the roll centrifuges dense grains
- * outward; the twist term feeds that roll directly. Halving it stopped the
- * walls locking after a 3s shake in every seed tried (outer-band share at
- * +60s: mean 28% -> 9%, worst seed 51% -> 19%), with corners quieter too.
- * Halving FLUID_DRIVE instead did not: it was non-monotonic, still locked
- * on one seed in three, and at 775 pumped the corners. The slosh is left
+ * outward; the twist term feeds that roll directly. At a quarter of the old
+ * value the walls no longer lock after a 3s shake in any seed tried
+ * (outer-band share at +60s: mean 28% -> 6%, worst seed 51% -> 15%, lower
+ * in every paired seed), and the corners are quieter too. The response is
+ * monotonic: 0.8 already removed the lock (mean 9%), 0.4 tightened it.
+ * Halving FLUID_DRIVE instead did not work: non-monotonic, still locked on
+ * one seed in three, and at 775 it pumped the corners. The slosh is left
  * exactly as it was; only how hard a twist stirs the liquid changed. */
-const FLUID_SWIRL = 0.8;    // rad/s^2 per unit of twist; was 1.6
+const FLUID_SWIRL = 0.4;    // rad/s^2 per unit of twist; was 1.6
 const FLUID_VISC = 1.18;    // 1/s; a glitter gel, not free-running water
 const FLUID_WALL_DRAG = 4.8; // 1/s, applied only in cells touching glass
 /* Particle reaction fed back to the fluid. Roughly three times what it was:
