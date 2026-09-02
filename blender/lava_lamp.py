@@ -85,9 +85,10 @@ LOOKS = {
         "gloss": 1.0, "swirl": 0,
         "glow": 0.7, "glow_reach": 0.75, "bulb": 2600.0, "crown": 140.0,
         "backlight": 0.0, "glint": 1200.0, "bloom": 0.35,
-        "env": 7.0, "haze": 0.04, "density": 3.0, "dof": 7.0,
+        "env": 7.0, "haze": 0.12, "density": 2.6, "dof": 7.0,
         "liquid_colour": "0.05,0.03,0.20", "crest": "0.40,0.22,0.92",
-        "backdrop": "0.001,0.002,0.009", "view_transform": "Standard",
+        "backdrop": "0.001,0.002,0.009", "backdrop_floor": "0.16,0.04,0.20",
+        "view_transform": "Standard",
     },
     "bubbles": {
         "palette": "bubblegum", "no_pool": True,
@@ -327,6 +328,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                           "backdrop")
     out.add_argument("--backdrop", default="0.020,0.022,0.030",
                      help="backdrop colour as r,g,b in 0-1")
+    out.add_argument("--backdrop-floor", default="",
+                     help="a second backdrop colour for the bottom of the "
+                          "frame, as r,g,b. The backdrop then grades from it "
+                          "at the floor to --backdrop at the top")
     out.add_argument("--env", type=float, default=0.30,
                      help="world lighting strength. A lava lamp is a light "
                             "source in a dim room, so this stays low; raise "
@@ -445,6 +450,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.crest_rgb = (None if args.crest.strip().lower() in ("", "none")
                       else _colour(args.crest, (1.0, 1.0, 1.0)))
     args.bulb_rgb = _colour(args.bulb_colour, (1.0, 0.63, 0.32))
+    args.backdrop_floor_rgb = (
+        None if args.backdrop_floor.strip().lower() in ("", "none")
+        else _colour(args.backdrop_floor, (0.0, 0.0, 0.0)))
     args.backlight_rgb = _colour(args.backlight_colour, (0.55, 0.12, 0.85))
     if args.fill <= 0.0:
         args.fill = 0.94 if args.shape == "lamp" else 1.0
@@ -1043,7 +1051,8 @@ def metal_material(colour) -> bpy.types.Material:
     return mat
 
 
-def backdrop_material(colour, extent: float) -> bpy.types.Material:
+def backdrop_material(colour, extent: float,
+                      floor=None) -> bpy.types.Material:
     """A dark room with a soft pool of light behind the lamp.
 
     The shaker emits a white sweep because a product shot wants one. A lava
@@ -1089,7 +1098,35 @@ def backdrop_material(colour, extent: float) -> bpy.types.Material:
     tree.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
     tree.links.new(mapping.outputs["Vector"], gradient.inputs["Vector"])
     tree.links.new(gradient.outputs["Fac"], ramp.inputs["Fac"])
-    tree.links.new(ramp.outputs["Color"], emit.inputs["Color"])
+    source = ramp
+    if floor is not None:
+        # A vertical grade on top of the vignette. The panel is a plane
+        # stood up by a quarter turn about X, so its local Y is world up;
+        # scaled by the framed extent, 0 is the bottom of the picture and 1
+        # the top.
+        up = tree.nodes.new("ShaderNodeSeparateXYZ")
+        up.location = (-400, -260)
+        span = tree.nodes.new("ShaderNodeMapRange")
+        span.location = (-240, -260)
+        span.inputs["From Min"].default_value = -extent * 0.6
+        span.inputs["From Max"].default_value = extent * 0.6
+        vert = tree.nodes.new("ShaderNodeValToRGB")
+        vert.location = (-60, -260)
+        vert.color_ramp.elements[0].position = 0.0
+        vert.color_ramp.elements[0].color = rgba(floor)
+        vert.color_ramp.elements[1].position = 1.0
+        vert.color_ramp.elements[1].color = rgba(colour)
+        add = tree.nodes.new("ShaderNodeMixRGB")
+        add.location = (0, 0)
+        add.blend_type = "ADD"
+        add.inputs["Fac"].default_value = 1.0
+        tree.links.new(coord.outputs["Object"], up.inputs["Vector"])
+        tree.links.new(up.outputs["Y"], span.inputs["Value"])
+        tree.links.new(span.outputs["Result"], vert.inputs["Fac"])
+        tree.links.new(ramp.outputs["Color"], add.inputs["Color1"])
+        tree.links.new(vert.outputs["Color"], add.inputs["Color2"])
+        source = add
+    tree.links.new(source.outputs["Color"], emit.inputs["Color"])
     tree.links.new(emit.outputs["Emission"], out.inputs["Surface"])
     return mat
 
@@ -1977,7 +2014,8 @@ def build_lighting(args, height: float, r_max: float, centre: float,
 
     colour = tuple(float(c) for c in args.backdrop.split(","))
     span = max(reach * 4.0, ortho * 2.4)
-    material = backdrop_material(colour, ortho * 0.85)
+    material = backdrop_material(colour, ortho * 0.85,
+                                 args.backdrop_floor_rgb)
     panels = [("Backdrop", (0.0, span * 0.32, centre),
                (math.radians(90), 0, 0))]
     if not fullbleed:
