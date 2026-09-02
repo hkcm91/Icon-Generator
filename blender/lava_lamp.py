@@ -905,9 +905,9 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     # (subsurface), a wet skin (coat), and some see-through (transmission).
     # Glass here brings subsurface back up rather than removing it.
     put(bsdf, ("Subsurface Weight", "Subsurface"),
-        0.7 * (1.0 - 0.85 * gloss) * (1.0 - glass) + 0.5 * glass)
-    put(bsdf, ("Transmission Weight", "Transmission"), 0.55 * glass)
-    glow = glow * (1.0 - 0.4 * glass)
+        0.7 * (1.0 - 0.85 * gloss) * (1.0 - glass) + 0.3 * glass)
+    put(bsdf, ("Transmission Weight", "Transmission"), 0.9 * glass)
+    glow = glow * (1.0 - 0.6 * glass)
     # Scattering distance is measured against the blob, which is why it is
     # passed in rather than guessed from the bottle. Set it to the blob radius
     # and light walks clean through everything, every blob washes out to the
