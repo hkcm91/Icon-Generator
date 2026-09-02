@@ -82,10 +82,11 @@ LOOKS = {
         "blobs": 14, "droplets": 5, "blob_size": 0.32, "size_spread": 0.5,
         "threshold": 0.75, "stretch": 0.7, "pool": 0.10, "depth": 0.7,
         "gloss": 1.0, "swirl": 0,
-        "glow": 0.15, "glow_reach": 0.75, "bulb": 3200.0, "crown": 400.0,
-        "env": 5.0, "haze": 0.3, "density": 1.1, "dof": 7.0,
-        "liquid_colour": "0.16,0.03,0.26", "crest": "0.58,0.16,0.82",
-        "backdrop": "0.006,0.004,0.014", "view_transform": "Standard",
+        "glow": 0.7, "glow_reach": 0.75, "bulb": 2200.0, "crown": 300.0,
+        "backlight": 90.0, "glint": 0.0, "bloom": 0.3,
+        "env": 0.5, "haze": 0.15, "density": 1.6, "dof": 7.0,
+        "liquid_colour": "0.14,0.03,0.24", "crest": "0.58,0.16,0.82",
+        "backdrop": "0.012,0.005,0.03", "view_transform": "Standard",
     },
     "bubbles": {
         "palette": "bubblegum", "no_pool": True,
@@ -338,6 +339,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                           "translucent wax lit from below carries the light "
                           "up through itself, where a painted gradient just "
                           "sits on the surface")
+    out.add_argument("--backlight", type=float, default=0.0,
+                     help="fullbleed only: wattage of a wide light behind the "
+                          "column, facing the camera. It lights the haze from "
+                          "within so the ground becomes lit medium rather "
+                          "than dark medium with a wall behind it, and it "
+                          "rims every blob. 0 disables it")
+    out.add_argument("--backlight-colour", default="0.55,0.12,0.85",
+                     help="colour of that backlight as r,g,b")
+    out.add_argument("--glint", type=float, default=0.0,
+                     help="wattage of one small hard light, high and to the "
+                          "front-left. Every other source here is broad and "
+                          "gives a broad sheen; a wet highlight is a small "
+                          "bright point. 0 disables it")
+    out.add_argument("--bloom", type=float, default=0.0,
+                     help="0-1 glow bleeding off bright areas, via the "
+                          "compositor. Cycles has none of its own, and it is "
+                          "most of what makes luminous read on a phone")
     out.add_argument("--dof", type=float, default=0.0,
                      help="aperture f-stop for depth of field; 0 disables it. "
                           "Focus sits on the vessel's axis, so wax nearer the "
@@ -411,6 +429,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.crest_rgb = (None if args.crest.strip().lower() in ("", "none")
                       else _colour(args.crest, (1.0, 1.0, 1.0)))
     args.bulb_rgb = _colour(args.bulb_colour, (1.0, 0.63, 0.32))
+    args.backlight_rgb = _colour(args.backlight_colour, (0.55, 0.12, 0.85))
     if args.fill <= 0.0:
         args.fill = 0.94 if args.shape == "lamp" else 1.0
     if args.depth <= 0.0:
@@ -880,13 +899,15 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     # surface from reading as polished: light that goes in and comes out
     # somewhere else softens exactly the contrast a highlight needs. Gloss
     # takes most of it away.
+    # Gel, not glass. Pure transmission shows what is behind the blob, and
+    # what is behind it is dark medium — so the first version of this went
+    # grey. Jelly is three things at once: light diffusing inside it
+    # (subsurface), a wet skin (coat), and some see-through (transmission).
+    # Glass here brings subsurface back up rather than removing it.
     put(bsdf, ("Subsurface Weight", "Subsurface"),
-        0.7 * (1.0 - 0.85 * gloss) * (1.0 - glass))
-    # Transmission is what makes a sphere a bubble rather than an egg: the
-    # ground shows through it, tinted. Emission fights it, so the glow the
-    # look asks for is scaled down as glass goes up.
-    put(bsdf, ("Transmission Weight", "Transmission"), glass)
-    glow = glow * (1.0 - 0.8 * glass)
+        0.7 * (1.0 - 0.85 * gloss) * (1.0 - glass) + 0.5 * glass)
+    put(bsdf, ("Transmission Weight", "Transmission"), 0.55 * glass)
+    glow = glow * (1.0 - 0.4 * glass)
     # Scattering distance is measured against the blob, which is why it is
     # passed in rather than guessed from the bottle. Set it to the blob radius
     # and light walks clean through everything, every blob washes out to the
@@ -1800,7 +1821,7 @@ def build_lighting(args, height: float, r_max: float, centre: float,
     # A big soft source. A point-sized bulb under a pool of wax burns a
     # white hole through the middle of it; widening the emitter spreads the
     # same energy over the whole floor and the pool keeps its colour.
-    bulb_data.shadow_soft_size = r_max * 0.55
+    bulb_data.shadow_soft_size = r_max * 0.8
     bulb = link(bpy.data.objects.new("Bulb", bulb_data))
     # Just under the pool. Above it and the pool is backlit into a bright
     # smear; far below it and the glass floor eats most of the throw.
@@ -1843,6 +1864,27 @@ def build_lighting(args, height: float, r_max: float, centre: float,
         # highlight it puts on the crown of every bubble is the entire read.
         if args.gloss <= 0.0:
             hide_from_glossy(crown)
+        if args.backlight > 0.0:
+            # Behind the column, facing the camera, between the glass and the
+            # backdrop. Lights the haze from within and rims the wax.
+            back = area("Backlight", (0.0, reach * 0.55, centre),
+                        (math.radians(-90), 0.0, 0.0), ortho * 0.9,
+                        args.backlight, args.backlight_rgb)
+        if args.glint > 0.0:
+            glint_data = bpy.data.lights.new("Glint", "POINT")
+            glint_data.energy = args.glint
+            glint_data.shadow_soft_size = 0.05
+            glint_data.color = (1.0, 0.97, 0.95)
+            glint = link(bpy.data.objects.new("Glint", glint_data))
+            glint.location = (-reach * 0.5, -reach * 0.45, centre + height * 0.4)
+            hide_from_camera(glint)
+            # A small source in front of a refracting column re-images
+            # through it as a bright spot. Keep it out of transmission rays;
+            # the highlight it exists for arrives by glossy rays regardless.
+            try:
+                glint.visible_transmission = False
+            except AttributeError:
+                pass
     else:
         # Key: low and camera-left, cool against the bulb's warmth.
         area("Key", (-reach * 0.55, -reach * 0.42, centre + height * 0.12),
@@ -1944,6 +1986,25 @@ def configure_render(args, scene: bpy.types.Scene) -> None:
                     for device in cprefs.devices:
                         device.use = device.type != "CPU"
                     break
+
+
+def configure_bloom(args, scene: bpy.types.Scene) -> None:
+    """Glow off bright areas. Cycles has no bloom; the compositor's Glare
+    node in fog-glow mode is the standard stand-in."""
+    if args.bloom <= 0.0:
+        return
+    scene.use_nodes = True
+    tree = scene.node_tree
+    tree.nodes.clear()
+    layers = tree.nodes.new("CompositorNodeRLayers")
+    glare = tree.nodes.new("CompositorNodeGlare")
+    glare.glare_type = "FOG_GLOW"
+    glare.threshold = 0.9
+    glare.size = 8
+    glare.mix = -1.0 + min(1.0, args.bloom)
+    out = tree.nodes.new("CompositorNodeComposite")
+    tree.links.new(layers.outputs["Image"], glare.inputs["Image"])
+    tree.links.new(glare.outputs["Image"], out.inputs["Image"])
 
 
 def render_loop(args, scene: bpy.types.Scene) -> None:
@@ -2074,6 +2135,7 @@ def main() -> None:
     args = parse_args()
     built = build_scene(args)
     configure_render(args, built["scene"])
+    configure_bloom(args, built["scene"])
     print(f"[lava] {args.blobs} blobs + {args.droplets} droplets, "
           f"{args.loop} frames at {args.fps}fps, loop closes exactly")
 
