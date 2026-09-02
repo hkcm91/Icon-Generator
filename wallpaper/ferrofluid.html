@@ -109,10 +109,18 @@ const CONFIG = {
    * that drives the normal-field instability, and `chain` the dipole force
    * between neighbours. Those last two are shape, not motion: turning both
    * off leaves a liquid a magnet still drags about but that never grows a
-   * single peak. */
+   * single peak.
+   *
+   * The balance between the first and the second is the whole difference
+   * between a geyser and a crown, and it does not go the way it looks. `pull`
+   * is a *body* force: it acts on all the liquid at once, so more of it lifts
+   * the pool as one mass and drowns the instability that makes the peaks. It
+   * came down from 3.2 to 1.3 when the magnets were widened, and the surface
+   * went from four blunt mounds to eight spikes standing twice as proud.
+   * Measured, over three seeds — see the notes. */
   poles: Math.round(num("poles", 2)),
   field: num("field", 1),          // overall magnet strength
-  pull: num("pull", 3.2),
+  pull: num("pull", 1.3),
   spike: num("spike", 20),
   chain: num("chain", 0.1),
   /* How much of its own field the liquid makes. This is the one that turns a
@@ -192,7 +200,7 @@ const accel = { x: 0, y: 0, z: 0 };
 let haveAccelGravity = false;
 let swirlInput = 0;
 const GRAVITY_DIRECTION_FLOOR = 0.06;
-const GRAVITY_FLOOR = 0.34;
+const GRAVITY_FLOOR = 0.55;
 
 /* Screen size past which the physics stops growing with the screen.
  *
@@ -253,9 +261,14 @@ function setGravityVector(x, y) {
    * plate, and there is no plate in a two-dimensional model to have friction
    * against.
    *
-   * So the weight has a floor. A third of a gravity along whichever way was
-   * last down keeps it a pool that a magnet can lift, instead of a liquid with
-   * nothing to fall back to. */
+   * So the weight has a floor: half a gravity along whichever way was last
+   * down, which keeps it a pool that a magnet can lift instead of a liquid
+   * with nothing to fall back to. It was a third until the magnets were
+   * widened to make a crown rather than a dome — a broader magnet's far field
+   * grows as the square of its standoff, so it reaches much further, and flat
+   * on a desk it walked the liquid a sixth of the way further up the screen
+   * than before. Upright this constant does nothing at all: real gravity is
+   * 1 g and the floor never binds. */
   gMag = Math.max(GRAVITY_FLOOR, m);
 }
 
@@ -476,9 +489,25 @@ function stepPoles(t, dt) {
   const GRAB = surface - 14 * OVER;
   const TOP = surface - 150 * OVER;              // further than it usually gets
 
+  /* The magnet's standoff while it is working, and while it is away.
+   *
+   * The near one is the difference between a geyser and a crown, and it is
+   * backwards until you see why: a *broader* magnet makes sharper spikes. Held
+   * tight and strong the field is effectively a point, the pool is hauled up
+   * bodily underneath it as one mass, and what rises is a dome. Held broader, a
+   * whole band of surface sits above the instability threshold at once and the
+   * surface gets to pick its own wavelength across it — which is what a crown
+   * of spikes is. The same argument says the body force has to come down as
+   * this goes up, since bulk pull is exactly what lifts the pool as one mass;
+   * that is why CONFIG.pull is 1.3 and not 3.2.
+   *
+   * Wider still is not better: at 0.13 and below the band is so wide the tips
+   * pinch off and it throws beads instead of growing spikes, confirmed across
+   * three seeds. */
+  const NEAR_Z = refU() * 0.16, FAR_Z = refU() * 0.2;
+
   /* How far above the liquid a magnet is allowed to be while it is carrying
-   * it, and how fast it may move to get there. Everything about the lift hangs
-   * off these two.
+   * it, and how fast it may move to get there.
    *
    * The speed limit is not a smoothing. Following the crest is a feedback loop
    * — the liquid climbs, so the magnet climbs, so the liquid climbs — and with
@@ -487,7 +516,6 @@ function stepPoles(t, dt) {
    * the crest again. Unbounded it took a 600x1000 cell entirely off the floor
    * and left a spray of beads over the whole screen. A hand cannot do that
    * because a hand cannot move that fast, and neither can this. */
-  const NEAR_Z = refU() * 0.095, FAR_Z = refU() * 0.2;
   const REACH = NEAR_Z / Math.SQRT2 * OVER;
   const RATE = 190 * OVER * dt;                  // px per second, in these units
   const WIN = refU() * 0.17;                     // how wide "under it" is

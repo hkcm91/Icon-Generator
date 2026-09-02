@@ -42,7 +42,7 @@ const W = 420, H = 880, FPS = 60, DT = 1000 / FPS;
  * along the floor of whatever shape it is given, so a square viewport puts the
  * pool where a crop would have had to go looking for it. */
 const THUMB_SIZE = 192;
-const THUMB_AT = Number(process.env.FF_THUMB_AT ?? 5.2);  // a moment with a crest well up
+const THUMB_AT = Number(process.env.FF_THUMB_AT ?? 18.2); // a moment with the crown up
 
 /* The page's own clock, and a seeded Math.random, so a run is reproducible.
  * Without the seed the drop jitter differs every time and no two sheets can

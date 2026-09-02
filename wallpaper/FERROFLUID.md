@@ -118,6 +118,32 @@ crest rather than beside it. Measured over a minute at five phone sizes,
 anything from 20 to 50 px produced the same crest statistics to within the
 run-to-run scatter, so there was nothing to tune and the physics chose it.
 
+**A broader magnet makes sharper spikes**, which is backwards until you see
+why. Held tight and strong, the field is effectively a point: the pool is
+hauled bodily up underneath it and what rises is a dome — a geyser. Held
+broader, a whole band of surface sits above the instability threshold at once,
+and the surface gets to pick its own wavelength across that band, which is what
+a crown of spikes *is*. The same logic says the body force has to come down as
+the magnet widens, because bulk pull is exactly the thing that lifts the pool
+as one mass and drowns the instability; `pull` went from 3.2 to 1.3 for that
+reason.
+
+Measured over three seeds, against the version that only choreographed the
+magnets:
+
+| | before | after |
+| --- | --- | --- |
+| peaks on the surface at once | 4.5 | 7.6 |
+| how far they stand above their flanks | 30 px | 55 px |
+| height ÷ width | 0.60 | 1.15 |
+| beads adrift in the air | ~1 | ~1 |
+
+Push it further and it stops being spikes: at a standoff of 0.13 of the
+reference size the band is so wide the tips pinch off and it throws beads
+instead — confirmed across seeds, so that is the edge and not one unlucky run.
+Backing the field off instead of the geometry does not help either; at 0.85 of
+full field the aspect falls back to 0.93 and buys nothing.
+
 The crest it follows is where the top *three percent* of the liquid within a
 magnet's reach sideways is, not the topmost drop. A spray of beads thrown clear
 by a tap is not a column, and a magnet that took one for a column would leave
@@ -152,10 +178,17 @@ starburst, with the icons somewhere underneath.
 It is not even wrong — a horizontal Hele-Shaw cell really does that. What
 holds a real one down is friction against the plate, and a two-dimensional
 model has no plate to have friction against. So the in-plane weight has a
-floor of a third of a gravity, along whichever way was last down. The pool
-stays a pool, and lying flat becomes a livelier version of the same piece
-rather than a different one: measured over a minute, the liquid averages the
-bottom 55% of the screen with 2% of its drops above the midline.
+floor of half a gravity, along whichever way was last down. The pool stays a
+pool, and lying flat becomes a livelier version of the same piece rather than a
+different one: measured over a minute, the liquid's top averages 50% down the
+screen.
+
+The floor was a third until the magnets were widened to make a crown. A broader
+magnet's far field grows as the square of its standoff, so it reaches much
+further, and flat on the desk it walked the liquid a sixth of the screen higher
+than before — enough to fail this check. Upright the constant does nothing at
+all: real gravity is a full *g* and the floor never binds, so this is a lever on
+the flat case alone.
 
 ### The liquid
 
@@ -397,15 +430,15 @@ clock, so runs are comparable.
 | --- | --- |
 | Runtime errors across 12 configurations and 8 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped, at the sizes the wallpaper supports — see **Known bad** |
 | Drops leaving the cell — ever, in any of the below | 0 of 1000 |
-| A 2 s shake | 94% of drops in a body before, 96% immediately after, 89% ten seconds later; peak speed 876 px/s |
-| Four taps in nine seconds, the worst a user can do to it | 97% -> 95% -> 95%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
-| Five home-screen swipes arriving in one frame | 94% -> 92% -> 97%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
-| 52° of tilt held 12 s | 99% in a body, occupying 69,356–416,876 of 420×880 |
-| Face up on a desk for a minute | 88% in a body, and the liquid's top averages 60% down the screen. Before the weight had a floor it covered the screen |
+| A 2 s shake | 92% of drops in a body before, 90% immediately after, 89% ten seconds later; peak speed 911 px/s |
+| Four taps in nine seconds, the worst a user can do to it | 99% -> 92% -> 81%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
+| Five home-screen swipes arriving in one frame | 92% -> 88% -> 99%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
+| 52° of tilt held 12 s | 99% in a body, occupying 42,307–416,876 of 420×880 |
+| Face up on a desk for a minute | 81% in a body, and the liquid's top averages 50% down the screen. Before the weight had a floor it covered the screen |
 | 45 s idle | 98% in a body, drop count constant |
-| 60 fps against 30 fps, 8 s idle | mean 2.9 px apart, max 9 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
-| JavaScript per frame, 1000 drops | 4.3 ms median, 5.2 ms at the 95th percentile, with a realistic gap between frames. `drops=700` takes it to 3.4 / 3.9 ms. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
-| Frame-to-frame change with the liquid at rest | 0.16/255 mean, 0.34% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
+| 60 fps against 30 fps, 8 s idle | mean 2.6 px apart, max 11 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
+| JavaScript per frame, 1000 drops | 4.2 ms median, 4.7 ms at the 95th percentile, with a realistic gap between frames. `drops=700` takes it to 3.0 / 3.9 ms. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
+| Frame-to-frame change with the liquid at rest | 0.15/255 mean, 0.29% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
 
 Two of those numbers were themselves wrong before this table was checked
 against how the thing runs. The frame cost was quoted as 8.5 ms, which was a
@@ -425,21 +458,35 @@ without bound — and neither is visible in a single frame.
 
 ## Known bad
 
-**Large screens, on a long enough run.** The verifier's three tablet viewports
-now pass everything it asks of them — 92%, 93% and 95% of drops in a body with
-none escaped, where before the magnets were choreographed they were 53%, 91%
-and 12% with 47 and 20 drops lost. That is a real improvement and it is *not* a
-fix, and the difference matters:
+**Large screens.** Making the magnets broad enough to grow a crown cost
+stability above phone dimensions, and the numbers are worth writing down rather
+than rounding off. Driven 45 s at each size, two seeds each, before and after
+the widening:
 
-Driven for 45 s instead of the verifier's window, 720×1120, 820×1180,
-1024×1366 and 1280×800 all still come apart, and **so does the version before
-any of this work** — on the same sizes, to the same terminal state, with every
-drop pinned at the speed limit. The collapse is pre-existing and untouched.
-What the choreography changed is *when* it arrives, and the verifier's window
-happens to fall on the good side of it now. Which size goes first also moves
-with any parameter you touch, in no order that means anything: at one field
-strength 540×960 dies and 660×1050 lives, at the next it is the other way
-round. Treat a green tablet row as "not yet", not as "safe".
+| | choreographed only | with the crown |
+| --- | --- | --- |
+| 600×1000 | 100%, 100% | 86%, 73% |
+| 820×1180 | 100%, 46% | 97%, 51% |
+| 1024×1366 | 100%, 100% | 56%, 76% |
+| 1280×800 | 100%, 100% | 70%, 84% |
+
+That is a real regression at three of the four and it was taken deliberately: a
+broader magnet's far field grows as the square of its standoff, so it reaches
+much further, and there is no way to widen the near field for the crown without
+also widening the reach. Backing the field off to compensate loses the spikes —
+measured — so the trade is between a wallpaper that looks like ferrofluid on a
+phone and one that holds together on a tablet, and the phone wins because that
+is what it is for.
+
+**Every real phone viewport holds.** 320×568 through 448×998, two seeds each,
+45 s: 99–100% of drops in one body, none escaped. That range is unaffected by
+any of the above.
+
+Note also how wide the seed spread is: 820×1180 gives 97% on one seed and 51%
+on another, in *both* columns. At these sizes a single run says almost nothing,
+which is why every number here is at least two, and why a green tablet row in
+the verifier should be read as "not this time" rather than "safe" — the
+verifier's window is shorter than 45 s and often lands before the collapse.
 
 The cause is not pinned down, and the honest version of that is worth writing
 out because the obvious explanations are all wrong. It is not the drop spacing
@@ -451,12 +498,16 @@ reference size moved the boundary a long way — 600×1000 went from 13% of its
 drops in a body to 83%, which is why gravity and the magnets no longer grow
 without bound with the screen — but it did not remove it.
 
-Every real phone viewport tested (320×568 through 448×998) holds at 98–100%
-over 45 s, which is the range the wallpaper is for.
-
 What made it survive this long is that every viewport the verifier tested had
 about a phone's *area*, the landscape one included, that being the same screen
 turned over. The four large ones are there now.
+
+The most promising lead, untried: replace each pole with a closely-spaced
+opposite pair. A dipole's field falls off as 1/r³ where a monopole's falls off
+as 1/r², so the near field that grows the crown would survive while the far
+field that drags distant liquid about would die off much faster — which is the
+exact shape of the trade above. It is also what a real bar magnet is, so it
+would make the model less of a fiction rather than more.
 
 **More *coverage* is still blocked, though the reach is no longer the problem.**
 Choreographing the magnets took the crest from 29% of the screen's height to
