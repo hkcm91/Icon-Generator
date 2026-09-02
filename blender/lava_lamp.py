@@ -77,7 +77,7 @@ LOOKS = {
     # neighbours join, elongation with speed, and no swirl — lava rises and
     # falls, it does not orbit.
     "lava": {
-        "palette": "bubblegum", "accent": "1.0,0.32,0.03", "glass": 0.85,
+        "palette": "bubblegum", "accent": "1.0,0.32,0.03", "glass": 1.0,
         "bulb_colour": "1.0,0.30,0.02", "ember": 0.0,
         "bulb_size": 0.18, "bulb_depth": 0.10,
         "blobs": 14, "droplets": 5, "blob_size": 0.32, "size_spread": 0.5,
@@ -928,15 +928,16 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     # surface from reading as polished: light that goes in and comes out
     # somewhere else softens exactly the contrast a highlight needs. Gloss
     # takes most of it away.
-    # Gel, not glass. Pure transmission shows what is behind the blob, and
-    # what is behind it is dark medium — so the first version of this went
-    # grey. Jelly is three things at once: light diffusing inside it
-    # (subsurface), a wet skin (coat), and some see-through (transmission).
-    # Glass here brings subsurface back up rather than removing it.
+    # Glass at 1 is glass: no subsurface, nothing but transmission under
+    # the coat. Any subsurface at all diffuses the light that went in, and
+    # that is exactly what stops you seeing through. Emission goes the
+    # same way, since a surface that emits reads as solid whatever its
+    # transmission is; what is left is a faint tint so the blob is not
+    # invisible against its own colour.
     put(bsdf, ("Subsurface Weight", "Subsurface"),
-        0.7 * (1.0 - 0.85 * gloss) * (1.0 - glass) + 0.3 * glass)
-    put(bsdf, ("Transmission Weight", "Transmission"), 0.9 * glass)
-    glow = glow * (1.0 - 0.6 * glass)
+        0.7 * (1.0 - 0.85 * gloss) * (1.0 - glass))
+    put(bsdf, ("Transmission Weight", "Transmission"), glass)
+    glow = glow * (1.0 - 0.85 * glass)
     # Scattering distance is measured against the blob, which is why it is
     # passed in rather than guessed from the bottle. Set it to the blob radius
     # and light walks clean through everything, every blob washes out to the
