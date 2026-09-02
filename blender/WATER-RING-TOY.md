@@ -153,6 +153,23 @@ face-on to a leaning peg starts the sim intersecting it — and nothing needs it
 now. On a peg leaning 62° a square ring is seen almost edge-on, and gravity
 would hang it much closer to flat anyway.
 
+**It is photographed, not diagrammed.** The camera is a 50 mm lens rather
+than orthographic — `--lens 0` gets the old view back — and that is what
+gives the glass a thickness you can see as a bevel round the frame, and the
+pegs a length instead of a dot. The glass wall is thick enough to refract.
+The plate is lit by the key rather than painted with a gradient, with a
+faint caustic web on it whose coordinates come from the same drifting empty
+as the surface ripple, so the light on the floor moves with the water it is
+supposedly coming through and returns with it at the seam. There is a
+vignette in the compositor (`--vignette`), because the cheapest thing that
+separates a photograph from a diagram is that its edges are quieter than its
+middle.
+
+Two things tried and reverted: AgX crushes this palette to slate grey, so
+the view transform stays Khronos PBR Neutral; and a large key panel reflects
+in the front glass as a grey slab under a perspective lens, so the key is
+small and high enough that its reflection leaves the frame.
+
 **Everything else is glass.** The posts are opal glass — subsurface for a
 body, a hard coat over a matte core, and almost no transmission, because any
 real amount lets the blue plate through and a white post reads as smoked

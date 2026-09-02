@@ -81,8 +81,8 @@ WATER_DEEP = (0.055, 0.408, 0.678)
 # blue in one of these toys actually comes from: the chamber holds maybe a
 # centimetre of water, which tints almost nothing, and the field you see the
 # rings against is a sheet of coloured plastic at the back.
-PLATE_TOP = (0.76, 0.93, 0.96)
-PLATE_DEEP = (0.24, 0.55, 0.86)
+PLATE_TOP = (0.66, 0.90, 0.97)
+PLATE_DEEP = (0.20, 0.52, 0.88)
 
 # The case. These toys were moulded in flat, saturated primaries — the coral
 # reads warmest against the aqua and is the one most people picture.
@@ -148,7 +148,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     case.add_argument("--height", type=float, default=0.0,
                       help="case height in metres (Z); 0 derives it from the "
                            "render aspect so the case fills the frame")
-    case.add_argument("--thickness", type=float, default=0.62,
+    case.add_argument("--thickness", type=float, default=0.74,
                       help="case depth in metres (Y). It is what limits how "
                            "long the pegs can be, so a shallow toy has short "
                            "pegs whatever else you set")
@@ -172,7 +172,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                            "since the button then lives in the chin")
     case.add_argument("--segments", type=int, default=96,
                       help="mesh resolution around the plan curve")
-    case.add_argument("--glass", type=float, default=0.022,
+    case.add_argument("--glass", type=float, default=0.055,
                       help="window glass thickness in metres")
     case.add_argument("--case-colour", default="",
                       help="case colour as r,g,b in 0-1; empty uses the "
@@ -188,7 +188,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                             "colour of the toy: crank it and the rings go to "
                             "silhouettes, because every photon that reaches "
                             "one has crossed the volume twice")
-    water.add_argument("--plate", type=float, default=0.6,
+    water.add_argument("--plate", type=float, default=0.28,
                        help="backing-plate glow. The plate is lit from the "
                             "front through the water, so it arrives dimmer "
                             "than the rings in front of it; a little "
@@ -201,9 +201,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     play = p.add_argument_group("rings and pegs")
     play.add_argument("--rings", type=int, default=9)
-    play.add_argument("--ring-radius", type=float, default=0.175,
+    play.add_argument("--ring-radius", type=float, default=0.235,
                       help="ring outer radius in metres")
-    play.add_argument("--ring-tube", type=float, default=0.034,
+    play.add_argument("--ring-tube", type=float, default=0.046,
                       help="ring stock radius in metres")
     play.add_argument("--hooks", type=int, default=5,
                       help="pegs to land rings on")
@@ -344,7 +344,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     fizz.add_argument("--bubble-size", type=float, default=0.022)
     fizz.add_argument("--bubble-life", type=int, default=44,
                       help="frames a jet bubble lasts")
-    fizz.add_argument("--cling", type=int, default=40,
+    fizz.add_argument("--cling", type=int, default=90,
                       help="bubbles stuck to the inside of the glass, which "
                            "do not move and cost nothing")
 
@@ -387,6 +387,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                      choices=["Khronos PBR Neutral", "Standard", "AgX",
                               "Filmic"])
     out.add_argument("--exposure", type=float, default=0.0)
+    out.add_argument("--lens", type=float, default=50.0,
+                     help="camera focal length in mm; 0 is orthographic. "
+                          "Perspective is what gives the glass a thickness "
+                          "and the pegs a length — dead-on ortho flattens "
+                          "both into a diagram")
+    out.add_argument("--vignette", type=float, default=0.32,
+                     help="corner darkening, 0 to 1")
 
     args = p.parse_args(argv)
 
@@ -582,7 +589,9 @@ def button_body(name: str, radius: float, depth: float) -> bpy.types.Object:
     obj = bpy.context.active_object
     obj.name = name
     bevel = obj.modifiers.new("soften", "BEVEL")
-    bevel.width = min(radius, depth) * 0.28
+    # Most of the depth goes into the bevel, so the button is a dome rather
+    # than a drum — under a perspective lens a drum shows its whole side.
+    bevel.width = depth * 0.46
     bevel.segments = 4
     bevel.limit_method = "ANGLE"
     activate(obj)
@@ -837,7 +846,8 @@ def ring_material(strength: float, args_cycles: float
     return mat
 
 
-def plate_material(size: Vector, boost: float) -> bpy.types.Material:
+def plate_material(size: Vector, boost: float,
+                   drift: bpy.types.Object) -> bpy.types.Material:
     """The backing plate: a vertical aqua-to-blue ramp on matte plastic.
 
     Diffuse rather than emissive, and lit from the front through the same
@@ -847,7 +857,7 @@ def plate_material(size: Vector, boost: float) -> bpy.types.Material:
     """
     mat, tree = new_material("ringtoy_plate")
     out = tree.nodes.new("ShaderNodeOutputMaterial")
-    out.location = (500, 0)
+    out.location = (700, 0)
 
     coord = tree.nodes.new("ShaderNodeTexCoord")
     coord.location = (-600, 0)
@@ -867,21 +877,56 @@ def plate_material(size: Vector, boost: float) -> bpy.types.Material:
     ramp.color_ramp.elements[1].position = 1.0
     ramp.color_ramp.elements[1].color = rgba(lin(PLATE_TOP))
 
+    # Caustics: the web of light that water focuses onto whatever is under
+    # it. Distance-to-edge Voronoi is that web almost exactly — bright on
+    # the cell walls, dark in the cells — and its coordinates come from the
+    # same drifting empty as the surface ripple, so the light on the plate
+    # moves with the water it is supposedly coming through, and returns
+    # with it at the seam.
+    flow = tree.nodes.new("ShaderNodeTexCoord")
+    flow.location = (-600, -300)
+    flow.object = drift
+    flow_map = tree.nodes.new("ShaderNodeMapping")
+    flow_map.location = (-400, -300)
+    flow_map.inputs["Scale"].default_value = (12.0, 12.0, 12.0)
+    tree.links.new(flow.outputs["Object"], flow_map.inputs["Vector"])
+
+    cells = tree.nodes.new("ShaderNodeTexVoronoi")
+    cells.location = (-200, -300)
+    cells.feature = "DISTANCE_TO_EDGE"
+    cells.inputs["Scale"].default_value = 1.0
+    tree.links.new(flow_map.outputs["Vector"], cells.inputs["Vector"])
+
+    web = tree.nodes.new("ShaderNodeValToRGB")
+    web.location = (0, -300)
+    web.color_ramp.interpolation = "EASE"
+    web.color_ramp.elements[0].position = 0.0
+    web.color_ramp.elements[0].color = (1.0, 1.0, 1.0, 1.0)
+    web.color_ramp.elements[1].position = 0.5
+    web.color_ramp.elements[1].color = (0.0, 0.0, 0.0, 1.0)
+    tree.links.new(cells.outputs["Distance"], web.inputs["Fac"])
+
+    lit, lit_out = mix_colour(tree, 0.025, ramp.outputs["Color"],
+                              web.outputs["Color"], "ADD")
+    lit.location = (250, -150)
+
     bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.location = (250, 0)
-    put(bsdf, ("Roughness",), 0.52)
-    put(bsdf, ("Coat Weight", "Clearcoat"), 0.25)
+    bsdf.location = (450, 0)
+    put(bsdf, ("Roughness",), 0.38)
+    put(bsdf, ("Coat Weight", "Clearcoat"), 0.5)
+    put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.12)
 
     tree.links.new(coord.outputs["Generated"], mapping.inputs["Vector"])
     tree.links.new(mapping.outputs["Vector"], sep.inputs["Vector"])
     tree.links.new(sep.outputs["Z"], ramp.inputs["Fac"])
-    tree.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
-    if boost > 0.0:
-        put(bsdf, ("Emission Strength",), boost)
-        socket = bsdf.inputs.get("Emission Color") or \
-            bsdf.inputs.get("Emission")
-        if socket is not None:
-            tree.links.new(ramp.outputs["Color"], socket)
+    tree.links.new(lit_out, bsdf.inputs["Base Color"])
+    # The plate's own glow follows the gradient with the web faintly in
+    # it — never the web alone. Emitting the web directly turns the whole
+    # plate into lace the moment the glow is raised at all.
+    put(bsdf, ("Emission Strength",), max(boost, 0.0))
+    socket = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
+    if socket is not None:
+        tree.links.new(lit_out, socket)
     tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return mat
 
@@ -1065,7 +1110,8 @@ def build_plate(args, built: dict) -> bpy.types.Object:
     inner = built["interior"]
     plate = prism("Ringtoy_Plate", built["interior_plan"], inner.y * 0.02)
     plate.location = (0.0, inner.y * 0.5 - inner.y * 0.02, 0.0)
-    plate.data.materials.append(plate_material(inner, args.plate))
+    plate.data.materials.append(
+        plate_material(inner, args.plate, built["ripple_drift"]))
     return plate
 
 
@@ -1111,10 +1157,7 @@ def build_water(args, built: dict, fill_z: float) -> dict:
     # object the modifier takes its coordinates from. Drive that on a
     # sinusoid and the ripple pattern returns exactly to where it started at
     # the end of the loop, which a scrolling offset never would.
-    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
-    drift = bpy.context.active_object
-    drift.name = "Ripple_Drift"
-    drift.empty_display_size = 0.1
+    drift = built["ripple_drift"]
 
     displace = water.modifiers.new("ripple", "DISPLACE")
     displace.texture = texture
@@ -1356,9 +1399,9 @@ def build_jets(args, built: dict, fill_z: float) -> list[dict]:
         nozzle.show_instancer_for_render = False
         nozzle.show_instancer_for_viewport = False
 
-        button = button_body(f"Ringtoy_Button_{i}", button_r,
-                             size.y * 0.55)
-        button.location = (x, -size.y * 0.5 - size.y * 0.12, button_z)
+        depth = size.y * 0.22
+        button = button_body(f"Ringtoy_Button_{i}", button_r, depth)
+        button.location = (x, -size.y * 0.5 - depth * 0.4, button_z)
         material, shader = button_material(f"ringtoy_button_{i}")
         button.data.materials.append(material)
 
@@ -1480,14 +1523,26 @@ def build_drift(args, inner: Vector) -> bpy.types.Object | None:
 def build_camera(args, size: Vector) -> bpy.types.Object:
     """Orthographic and dead-on. The toy is held flat; so is the camera."""
     data = bpy.data.cameras.new("Ringtoy_Cam")
-    data.type = "ORTHO"
-    # ortho_scale maps to the longer edge, which on a portrait frame is the
-    # height — so framing on height alone crops the case sideways.
     aspect = args.res_y / max(1, args.res_x)
-    data.ortho_scale = max(size.z * args.margin,
-                           size.x * args.margin * aspect)
+    if args.lens > 0:
+        # Perspective, still dead-on. The front face of the case fills the
+        # frame; everything behind it is a little smaller, which is what
+        # shows the glass as a thick bevel round the edge and the pegs as
+        # posts rather than dots.
+        data.type = "PERSP"
+        data.lens = args.lens
+        data.sensor_fit = "VERTICAL"
+        data.sensor_height = 36.0
+        fit = max(size.z, size.x * aspect) * args.margin
+        distance = fit * args.lens / 36.0
+        cam_y = -size.y * 0.5 - distance
+    else:
+        data.type = "ORTHO"
+        data.ortho_scale = max(size.z * args.margin,
+                               size.x * args.margin * aspect)
+        cam_y = -8.0
     cam = link(bpy.data.objects.new("Ringtoy_Cam", data))
-    cam.location = (0.0, -8.0, 0.0)
+    cam.location = (0.0, cam_y, 0.0)
     cam.rotation_euler = (math.radians(90.0), 0.0, 0.0)
     bpy.context.scene.camera = cam
     return cam
@@ -1524,8 +1579,8 @@ def build_lighting(args, size: Vector) -> None:
     # window rather than a hot dot, and the key and fill are split warm and
     # cool so a white post and a pearl ring have two colours of light to
     # turn through instead of one.
-    key = area("Key", (-3.2, -4.6, 3.6),
-               (math.radians(54), 0.0, math.radians(-36)), 7.0, 520)
+    key = area("Key", (-3.4, -3.2, 7.8),
+               (math.radians(34), 0.0, math.radians(-38)), 4.5, 1300)
     key.data.color = lin((1.0, 0.94, 0.88))
     fill = area("Fill", (3.6, -3.8, -1.2),
                 (math.radians(102), 0.0, math.radians(44)), 8.0, 260)
@@ -2092,6 +2147,14 @@ def build_scene(args) -> dict:
     inner = built["interior"]
     fill_z = -inner.z * 0.5 + inner.z * args.fill
 
+    # One periodic drift drives both the ripple on the surface and the
+    # caustics on the plate, so the light on the floor moves with the water
+    # it is supposedly coming through.
+    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, 0))
+    built["ripple_drift"] = bpy.context.active_object
+    built["ripple_drift"].name = "Flow_Drift"
+    built["ripple_drift"].empty_display_size = 0.1
+
     built["plate"] = build_plate(args, built)
     built["fill_z"] = fill_z
     built.update(build_water(args, built, fill_z))
@@ -2128,6 +2191,55 @@ def build_scene(args) -> dict:
 # --------------------------------------------------------------------------
 # output
 # --------------------------------------------------------------------------
+
+
+def build_vignette(args, scene: bpy.types.Scene) -> None:
+    """Corner darkening in the compositor.
+
+    The cheapest thing that separates a photograph from a diagram: the eye
+    goes to the middle because the edges are quieter. Done here rather than
+    in the scene so it sits on the final pixels regardless of what the glass
+    does at the frame edge.
+    """
+    if args.vignette <= 0.0:
+        return
+    scene.use_nodes = True
+    tree = scene.node_tree
+    tree.nodes.clear()
+    layers = tree.nodes.new("CompositorNodeRLayers")
+    layers.location = (-600, 0)
+
+    mask = tree.nodes.new("CompositorNodeEllipseMask")
+    mask.location = (-600, -300)
+    mask.width = 1.55
+    mask.height = 1.25
+
+    blur = tree.nodes.new("CompositorNodeBlur")
+    blur.location = (-400, -300)
+    blur.filter_type = "GAUSS"
+    blur.use_relative = True
+    blur.factor_x = 32.0
+    blur.factor_y = 32.0
+    tree.links.new(mask.outputs["Mask"], blur.inputs["Image"])
+
+    # mask*v + (1-v): 1 in the middle, (1-v) in the corners.
+    lift = tree.nodes.new("CompositorNodeMath")
+    lift.location = (-200, -300)
+    lift.operation = "MULTIPLY_ADD"
+    lift.inputs[1].default_value = args.vignette
+    lift.inputs[2].default_value = 1.0 - args.vignette
+    tree.links.new(blur.outputs["Image"], lift.inputs[0])
+
+    darken = tree.nodes.new("CompositorNodeMixRGB")
+    darken.location = (0, 0)
+    darken.blend_type = "MULTIPLY"
+    darken.inputs[0].default_value = 1.0
+    tree.links.new(layers.outputs["Image"], darken.inputs[1])
+    tree.links.new(lift.outputs["Value"], darken.inputs[2])
+
+    composite = tree.nodes.new("CompositorNodeComposite")
+    composite.location = (200, 0)
+    tree.links.new(darken.outputs["Image"], composite.inputs["Image"])
 
 
 def render_loop(args, scene: bpy.types.Scene) -> None:
@@ -2181,6 +2293,7 @@ def main() -> None:
     args = parse_args()
     built = build_scene(args)
     configure_render(args, built["scene"])
+    build_vignette(args, built["scene"])
 
     if not args.static and not args.no_sim:
         simulate_rings(args, built)
