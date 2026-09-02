@@ -56,23 +56,26 @@
  */
 
 const CONFIG = {
-  blobs: 11,          // the family that circulates
-  droplets: 5,        // small fast ones
-  blobSize: 0.19,     // radius of the reference blob, lamp units (width = 2)
-  sizeSpread: 0.45,
+  blobs: 7,           // the family that circulates
+  droplets: 2,        // small fast ones
+  blobSize: 0.36,     // radius of the reference blob, lamp units (width = 2)
+  sizeSpread: 0.4,
+  stretch: 0.45,      // how far a rising blob draws out along its rise
+  floorWax: [[0.0, -0.74, 0.82]],  // static wax at the floor, x, y, r
   // physics, in the reference blob's terms (see ../blender/LAVA_LAMP.md)
-  lift: 0.42,         // rise speed of a fully hot reference blob, lamp units/s
-  neutral: 0.42,      // temperature at which wax matches the liquid
-  lag: 9.0,           // seconds for a reference blob to take the liquid's temperature
-  heat: 0.42,         // decay length of the liquid's temperature, fraction of height
+  lift: 0.6,          // rise speed of a fully hot reference blob, lamp units/s
+  neutral: 0.75,      // temperature at which wax matches the liquid: only pool-hot wax rises
+  lag: 20.0,          // seconds for a reference blob to take the liquid's temperature
+  heat: 0.3,          // decay length of the liquid's temperature, fraction of height
   pool: 0.07,         // heated pool, fraction of height
   contact: 0.3,       // heat time constant multiplier while in the pool
+  circulation: 0.35,  // the convection roll, as a fraction of the reference rise speed
   // look
   accent: [1.0, 0.32, 0.03],   // orange, from the bulb
   colour: [1.0, 0.30, 0.68],   // bubblegum, the wax itself
   crest: [0.40, 0.22, 0.92],   // violet, at the top
-  backdrop: [0.010, 0.006, 0.040],
-  floor: [0.16, 0.04, 0.20],
+  backdrop: [0.008, 0.005, 0.038],
+  floor: [0.30, 0.07, 0.34],
   renderScale: 0.5,   // fragment work per pixel is the whole cost; half is plenty
 };
 
@@ -109,6 +112,12 @@ function seed() {
       theta: hash(i, 4),
       vx: 0, vy: 0,
       phase: hash(i, 5) * Math.PI * 2,
+      // Two rim harmonics with their own phases, how lumpy, and which of
+      // the two depth layers it lives in. Alternating layers means blobs
+      // pass in front of and behind each other, which is where the glass
+      // gets to show what it is.
+      wob: [hash(i, 6) * Math.PI * 2, hash(i, 7) * Math.PI * 2,
+            droplet ? 0.05 : 0.09 + 0.07 * hash(i, 8), i % 2],
     });
   }
 }
@@ -252,6 +261,25 @@ function step(dt) {
     const buoy = CONFIG.lift * (b.theta - CONFIG.neutral) * scale * pull;
     let vx = -gDir.x * buoy, vy = -gDir.y * buoy;
 
+    /* The convection roll: up the middle, out at the top, down the walls,
+     * in at the floor. Buoyancy alone finds the height where the wax
+     * matches the liquid and hovers there; it is the roll that carries a
+     * blob over the top and back down, which is the circulation a lamp
+     * has. It lives in the gravity frame, so a tilted lamp rolls about
+     * a tilted axis. */
+    const upx = -gDir.x, upy = -gDir.y, sdx = upy, sdy = -upx;
+    const hn = Math.max(0, Math.min(1, ((b.x - cx) * upx + (b.y - cy) * upy) / Y + 0.5));
+    const rn = Math.max(-1, Math.min(1, (b.x - cx) * sdx + (b.y - cy) * sdy));
+    // The roll is the heater's: it is driven from the floor of the lamp,
+    // so it fades as the phone leans until, on its side, there is none
+    // and buoyancy alone sorts the wax — cold to the low side, hot to the
+    // high one.
+    const roll = CONFIG.circulation * CONFIG.lift * pull * Math.max(0, -gDir.y);
+    const uz = roll * (1 - 2 * rn * rn) * Math.sin(Math.PI * hn);
+    const ur = -roll * 0.5 * Math.PI * rn * (1 - rn * rn) * Math.cos(Math.PI * hn);
+    vx += upx * uz + sdx * ur;
+    vy += upy * uz + sdy * ur;
+
     // Carried by the liquid: translation, and the twist as solid rotation
     // about the middle of the lamp.
     vx += flow.x - flow.w * (b.y - cy) * 0.5;
@@ -270,12 +298,13 @@ function step(dt) {
     const a = blobs[i];
     for (let j = i + 1; j < n; j++) {
       const c = blobs[j];
+      // Different depths pass each other; only wax on the same layer meets.
+      if (a.wob[3] !== c.wob[3]) continue;
       const dx = c.x - a.x, dy = c.y - a.y;
       const d = Math.hypot(dx, dy) || 1e-6;
       const sum = a.r + c.r;
       let f = 0;
-      if (d < sum * 0.78) f = (sum * 0.78 - d) * 2.6;          // apart
-      else if (d < sum * 1.15) f = -(d - sum * 0.78) * 0.08;   // together
+      if (d < sum * 0.82) f = (sum * 0.82 - d) * 2.6;          // apart
       if (!f) continue;
       const ma = a.r * a.r, mc = c.r * c.r, mt = ma + mc;
       const ux = dx / d, uy = dy / d;
@@ -310,7 +339,8 @@ precision highp float;
 #define N 24
 uniform vec2 uRes;          // canvas pixels
 uniform float uY;           // lamp height, lamp units
-uniform vec4 uBlob[N];      // x, y, r, heat
+uniform vec4 uBlob[N];      // x, y, r, stretch along the rise
+uniform vec4 uWob[N];       // two lump phases, lump amplitude, layer (0 back, 1 front)
 uniform int uCount;
 uniform vec2 uDown;         // gravity direction, lamp frame
 uniform float uOffset;      // home-screen scroll, -0.5..0.5
@@ -320,103 +350,117 @@ uniform float uTime;
 /* The field: (r/d)^4 per blob, so an isolated blob's surface sits at d = r
  * and z = sqrt(1 - 1/sqrt(f)) is exactly a sphere's height over it. Where
  * blobs meet the field sums and the height blends, which is the neck; the
- * fourth power keeps that to blobs that are actually touching, where a
- * plain inverse square had the whole lamp reading as one. */
-void field(vec2 p, out float f, out vec2 g, out float heat) {
-  f = 0.0; g = vec2(0.0); heat = 0.0;
-  float wsum = 0.0;
+ * fourth power keeps that to blobs that are actually touching.
+ *
+ * Wax is not a ball. Each blob's radius is modulated around its rim by two
+ * slow-turning harmonics, so it is a lump that keeps changing its mind
+ * about its shape, and a rising one is drawn out along its rise. Both go
+ * into the gradient too, so the shading follows the shape. */
+void field(vec2 p, float layer, out float f, out vec2 g) {
+  f = 0.0; g = vec2(0.0);
+  vec2 up = -uDown;
   for (int i = 0; i < N; i++) {
     if (i >= uCount) break;
+    vec4 wb = uWob[i];
+    if (wb.w != layer) continue;
     vec4 b = uBlob[i];
     vec2 d = p - b.xy;
-    float d2 = max(dot(d, d), 1e-6);
-    float q = b.z * b.z / d2;
+    float k = 1.0 - 1.0 / b.w;
+    float along = dot(d, up);
+    vec2 dd = d - up * along * k;
+    float d2 = max(dot(dd, dd), 1e-6);
+    float a = atan(dd.y, dd.x);
+    float t = uTime;
+    float bump = 1.0 + wb.z * (sin(2.0 * a + wb.x + t * 0.27) + 0.7 * sin(3.0 * a + wb.y - t * 0.19));
+    float dbump = wb.z * (2.0 * cos(2.0 * a + wb.x + t * 0.27) + 2.1 * cos(3.0 * a + wb.y - t * 0.19));
+    float q = b.z * b.z / (d2 * bump * bump);
     float w = q * q;
     f += w;
-    g += -4.0 * w * d / d2;
-    heat += w * b.w;
-    wsum += w;
+    vec2 perp = vec2(-dd.y, dd.x);
+    vec2 dir = dd + perp * (dbump / bump);
+    g += -4.0 * w * (dir - up * dot(up, dir) * k) / d2;
   }
-  heat /= max(wsum, 1e-6);
 }
 
 vec3 backdrop(vec2 p) {
   float v = clamp(p.y / uY, 0.0, 1.0);
-  // Dark indigo at the top, a lit violet floor, and a spherical vignette.
-  vec3 c = mix(uFloor, uBackdrop, pow(v, 0.55));
+  vec3 c = mix(uFloor, uBackdrop, pow(v, 0.7));
   float vig = 1.0 - 0.35 * length(vec2(p.x * 0.7, (v - 0.5) * 1.4));
   c *= vig;
-  // The bulb: orange, from below, falling off fast.
-  float bulb = exp(-v * 5.5) * exp(-p.x * p.x * 1.6);
-  c += uAccent * bulb * 0.55;
+  float bulb = exp(-v * 4.5) * exp(-p.x * p.x * 1.2);
+  c += uAccent * bulb * 0.5;
   return c;
+}
+
+/* One layer of wax over whatever is behind it. Glass: what you see is
+ * mostly the thing behind, bent by the surface and tinted by the path
+ * through the wax, with the rim lit by Fresnel and the bulb glowing up
+ * through the lower blobs. The caller supplies "behind" already sampled
+ * at the refracted position. */
+vec3 shade(vec2 p, vec3 n, float thick, vec3 behind) {
+  vec3 V = vec3(0.0, 0.0, 1.0);
+  float ndv = max(n.z, 0.0);
+  float v = clamp(p.y / uY, 0.0, 1.0);
+  vec3 tint = v < 0.5 ? mix(uAccent, uColour, smoothstep(0.0, 0.5, v))
+                      : mix(uColour, uCrest, smoothstep(0.5, 1.0, v));
+  // Transmission: the deeper the path, the more of the wax's colour it
+  // carries, but the ground stays visible through all of it.
+  vec3 pass = mix(vec3(1.0), tint, 0.3 + 0.3 * thick);
+  vec3 col = behind * pass * 1.8;
+  // Lit from within: the bulb below, and the wax's own colour carried up
+  // the whole column so a blob at the top still reads as lit glass.
+  float warmth = exp(-v * 3.0);
+  col += tint * (0.10 + 0.22 * warmth) * thick;
+  col += uAccent * warmth * 0.16 * thick;
+  float rim = 0.04 + 0.96 * pow(1.0 - ndv, 2.0);
+  col += mix(tint, uCrest, 0.45) * rim * 1.25;
+  vec3 L1 = normalize(vec3(-0.5, 0.7, 0.7));
+  vec3 H1 = normalize(L1 + V);
+  float s1 = pow(max(dot(n, H1), 0.0), 90.0);
+  float s1b = pow(max(dot(n, H1), 0.0), 10.0);
+  col += vec3(1.0, 0.98, 0.96) * (s1 * 1.1 + s1b * 0.10);
+  vec3 L2 = normalize(vec3(uDown.xy * 0.9, 0.45));
+  vec3 H2 = normalize(L2 + V);
+  float s2 = pow(max(dot(n, H2), 0.0), 30.0);
+  col += uAccent * s2 * 0.5 * warmth;
+  return col;
+}
+
+/* Surface from the field at p: coverage, height, normal. */
+void surface(float f, vec2 g, out float edge, out float thick, out vec3 n) {
+  float px = 2.0 / uRes.x;
+  edge = clamp((f - 1.0) / (length(g) * px * 1.5 + 1e-4), 0.0, 1.0);
+  edge = max(edge, smoothstep(1.0, 1.3, f));
+  float fz = max(f, 1.0001);
+  float z = sqrt(1.0 - inversesqrt(fz));
+  vec2 dz = g / (4.0 * z * fz * sqrt(fz) + 1e-4);
+  n = normalize(vec3(-dz * 0.19, 1.0));
+  thick = z;
 }
 
 void main() {
   vec2 uv = gl_FragCoord.xy / uRes;
-  // Parallax: the lamp slides under the icons, a little.
   vec2 p = vec2((uv.x * 2.0 - 1.0) + uOffset * 0.25, uv.y * uY);
 
-  float f; vec2 g; float heat;
-  field(p, f, g, heat);
+  // Front layer first, because its refraction decides where everything
+  // behind it is sampled.
+  float fF; vec2 gF; float eF, tF; vec3 nF;
+  field(p, 1.0, fF, gF);
+  surface(fF, gF, eF, tF, nF);
+  vec2 q = p - nF.xy * 0.28 * tF * eF;
 
-  vec3 bg = backdrop(p);
-  // Anti-aliased silhouette from the field's own gradient.
-  float px = 2.0 / uRes.x;
-  // Only meaningful at the rim: over the body the gradient outruns the
-  // field near its peak and the ratio collapses, so it is floored there.
-  float edge = clamp((f - 1.0) / (length(g) * px * 1.5 + 1e-4), 0.0, 1.0);
-  edge = max(edge, smoothstep(1.0, 1.3, f));
-  if (edge <= 0.0) { gl_FragColor = vec4(bg, 1.0); return; }
+  // Back layer, seen through the front where there is a front.
+  float fB; vec2 gB; float eB, tB; vec3 nB;
+  field(q, 0.0, fB, gB);
+  surface(fB, gB, eB, tB, nB);
+  vec2 qq = q - nB.xy * 0.28 * tB * eB;
+  vec3 ground = backdrop(qq);
+  vec3 behind = eB > 0.0 ? mix(ground, shade(q, nB, tB, ground), eB) : ground;
 
-  // Sphere-profile height and its normal.
-  float fz = max(f, 1.0001);
-  float z = sqrt(1.0 - inversesqrt(fz));
-  vec2 dz = g / (4.0 * z * fz * sqrt(fz) + 1e-4);
-  // dz is per lamp unit; a blob's height is measured against its own radius,
-  // so scale so that a reference blob has unit slope at its rim.
-  vec3 n = normalize(vec3(-dz * 0.19, 1.0));
-  vec3 V = vec3(0.0, 0.0, 1.0);
-  float ndv = max(n.z, 0.0);
-  float fres = 0.04 + 0.96 * pow(1.0 - ndv, 5.0);
-
-  // Thickness, for the tint and the refraction.
-  float thick = z;
-  float v = clamp(p.y / uY, 0.0, 1.0);
-
-  // What is behind the blob, refracted: the backdrop offset by the normal.
-  vec3 through = backdrop(p - n.xy * 0.35 * thick);
-  // Tint by height: orange in the bulb's light, the wax's own colour in the
-  // middle, violet at the crest.
-  vec3 tint = v < 0.5 ? mix(uAccent, uColour, smoothstep(0.0, 0.5, v))
-                      : mix(uColour, uCrest, smoothstep(0.5, 1.0, v));
-  vec3 col = through * mix(vec3(1.0), tint, 0.85) * (1.1 + 0.5 * thick);
-
-  // Light through the glass from the bulb below, held in the wax: warmer and
-  // brighter low down, and brighter where the blob is thick.
-  float warmth = exp(-v * 2.8);
-  col += tint * (0.20 + 0.35 * warmth) * thick * (0.7 + 0.6 * heat);
-  col += uAccent * warmth * 0.35 * thick;
-
-  // Rim: the crest colour, by Fresnel.
-  col += mix(tint, uCrest, 0.5) * fres * 0.9;
-
-  // The window highlight: hard white, upper-left, on every shoulder.
-  vec3 L1 = normalize(vec3(-0.55, 0.75, 0.62));
-  vec3 H1 = normalize(L1 + V);
-  float s1 = pow(max(dot(n, H1), 0.0), 160.0);
-  float s1b = pow(max(dot(n, H1), 0.0), 14.0);
-  col += vec3(1.0, 0.98, 0.96) * (s1 * 1.6 + s1b * 0.16);
-  // The bulb's own reflection, orange, from below.
-  vec3 L2 = normalize(vec3(uDown.xy * 0.9, 0.45));
-  vec3 H2 = normalize(L2 + V);
-  float s2 = pow(max(dot(n, H2), 0.0), 36.0);
-  col += uAccent * s2 * 0.6 * warmth;
-
-  // A touch of glow bleeding off the bright parts, because it is a phone.
-  col += tint * 0.06;
-
-  gl_FragColor = vec4(mix(bg, col, edge), 1.0);
+  vec3 col = eF > 0.0 ? mix(behind, shade(p, nF, tF, behind), eF) : behind;
+  // Two lit blobs over each other add up past white; roll the top off.
+  col = col / (1.0 + 0.10 * col);
+  gl_FragColor = vec4(col, 1.0);
 }
 `;
 
@@ -444,7 +488,7 @@ function initGL() {
   gl.enableVertexAttribArray(loc);
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   for (const name of ["uRes", "uY", "uBlob", "uCount", "uDown", "uOffset",
-                      "uAccent", "uColour", "uCrest", "uBackdrop", "uFloor", "uTime"]) {
+                      "uWob", "uAccent", "uColour", "uCrest", "uBackdrop", "uFloor", "uTime"]) {
     uni[name] = gl.getUniformLocation(prog, name);
   }
   gl.uniform3fv(uni.uAccent, CONFIG.accent);
@@ -455,19 +499,33 @@ function initGL() {
 }
 
 const blobData = new Float32Array(24 * 4);
+const wobData = new Float32Array(24 * 4);
 let parallax = 0, parallaxTarget = 0;
 
 function draw() {
-  const n = Math.min(24, blobs.length);
+  const pool = CONFIG.floorWax;
+  const n = Math.min(24, blobs.length + pool.length);
   for (let i = 0; i < n; i++) {
-    const b = blobs[i];
-    blobData[i * 4] = b.x; blobData[i * 4 + 1] = b.y;
-    blobData[i * 4 + 2] = b.r; blobData[i * 4 + 3] = b.theta;
+    if (i < blobs.length) {
+      const b = blobs[i];
+      // Drawn out along the rise in proportion to how fast it is rising.
+      const rising = Math.max(0, Math.min(1, (b.theta - CONFIG.neutral) * 2.5));
+      blobData[i * 4] = b.x; blobData[i * 4 + 1] = b.y;
+      blobData[i * 4 + 2] = b.r; blobData[i * 4 + 3] = 1 + CONFIG.stretch * rising;
+      wobData[i * 4] = b.wob[0]; wobData[i * 4 + 1] = b.wob[1];
+      wobData[i * 4 + 2] = b.wob[2]; wobData[i * 4 + 3] = b.wob[3];
+    } else {
+      const q = pool[i - blobs.length];
+      blobData[i * 4] = q[0]; blobData[i * 4 + 1] = q[1];
+      blobData[i * 4 + 2] = q[2]; blobData[i * 4 + 3] = 1;
+      wobData[i * 4] = 0; wobData[i * 4 + 1] = 0; wobData[i * 4 + 2] = 0.04; wobData[i * 4 + 3] = 0;
+    }
   }
   gl.viewport(0, 0, W, H);
   gl.uniform2f(uni.uRes, W, H);
   gl.uniform1f(uni.uY, Y);
   gl.uniform4fv(uni.uBlob, blobData);
+  gl.uniform4fv(uni.uWob, wobData);
   gl.uniform1i(uni.uCount, n);
   gl.uniform2f(uni.uDown, gDir.x, gDir.y);
   gl.uniform1f(uni.uOffset, parallax);

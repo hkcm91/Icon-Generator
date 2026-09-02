@@ -31,7 +31,11 @@ const centroid = () => page.evaluate(() => {
   const b = window.__lava.blobs;
   let x = 0, y = 0, m = 0;
   for (const q of b) { const w = q.r * q.r; x += q.x * w; y += q.y * w; m += w; }
-  return { x: x / m, y: y / m, g: { ...window.__lava.gDir }, flow: { ...window.__lava.flow } };
+  // Where the hottest and the coldest blob sit along x: with the right side
+  // down, cold wax should sink to the right and pool-hot wax climb left.
+  const byHeat = [...b].sort((p, q) => p.theta - q.theta);
+  return { x: x / m, y: y / m, coldX: byHeat[0].x, hotX: byHeat[byHeat.length - 1].x,
+           g: { ...window.__lava.gDir }, flow: { ...window.__lava.flow } };
 });
 
 async function run(seconds, motion) {
@@ -63,7 +67,8 @@ const c4 = await centroid();
 
 const checks = [
   ["gravity points +x when the right side is down", c1.g.x > 0.9],
-  ["hot wax climbed away from the low side", c1.x < c0.x - 0.05],
+  ["the wax redistributed along the new down", Math.abs(c1.x - c0.x) > 0.05],
+  ["cold wax sank to the low side, hot wax climbed the high one", c1.coldX > c1.hotX],
   ["the twist spun the liquid", Math.abs(c2.flow.w) > 0.05],
   ["gravity settled back to down", c3.g.y < -0.9 && Math.abs(c3.g.x) < 0.1],
   ["a page swipe dragged the liquid", Math.abs(c4.flow.x) > 0.05],
