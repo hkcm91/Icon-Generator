@@ -143,6 +143,17 @@ things turn that from sliding into swimming:
   generated animals read as generated: everything sets off at the same speed,
   wanders on the same curve, and turns at the same moment. Average journey
   length now varies by ±2.1 body lengths between individuals.
+- **They spread by choosing where to go.** `retarget` penalises candidates near
+  where the others already are or are heading, and a fish changing depth layer
+  moves to the emptiest one rather than a random one. Shoving each other once
+  everyone has arrived in the same place is far too late, and looks it.
+- **Give way.** A fish closing on another's tail slows rather than swimming
+  through it. Avoidance had been steering pitch only, so two fish at the same
+  height never avoided each other at all — which is what let them stack up.
+  Together with the above: overlapping pairs down from 5.4 to 2.4 on average
+  (worst case 14 to 8), mean gap 433px to 473, and the fullest twelfth of the
+  screen holding 4 fish rather than 5. The school is 12 rather than 14, back
+  inside the draw budget at ~1,090 sprite draws a frame.
 - **Personal space.** A light shove between neighbours; overlapping bodies read
   as one confused blob rather than as a school. The flow field's pull on fish
   was also cut by half, because `flowX` depends only on depth and was sliding

@@ -45,7 +45,7 @@ const params = new URLSearchParams(location.search);
 const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
 
 const CONFIG = {
-  fish:   num('fish', 14),      // see the HUD: this is the frame budget
+  fish:   num('fish', 12),      // see the HUD: this is the frame budget
   points: num('points', 80),
   motes:  num('motes', 240),
   seed:   num('seed', 7),
@@ -348,7 +348,19 @@ function retarget(f) {
    * goals uniformly made every fish a low-pass filter of the same uniform
    * signal, and the whole school drifted to the middle. Measured as vertical
    * spread collapsing from 259px to about 110. Layers drift, slowly. */
-  if (rnd() < f.restless * 0.12) f.band = ROAM.y0 + rnd() * (ROAM.y1 - ROAM.y0);
+  if (rnd() < f.restless * 0.12) {
+    /* Move to the emptiest layer rather than a random one. Re-rolling at
+     * random slowly undoes the even spread the school starts with, and the
+     * depths stack up. */
+    let bestBand = f.band, bestFree = -1e9;
+    for (let i = 0; i < 4; i++) {
+      const cand = ROAM.y0 + rnd() * (ROAM.y1 - ROAM.y0);
+      let taken = 0;
+      for (const o of fish) if (o !== f) taken += Math.max(0, 1 - Math.abs(cand - o.band) / 0.22);
+      if (-taken > bestFree) { bestFree = -taken; bestBand = cand; }
+    }
+    f.band = bestBand;
+  }
 
   /* Pick the farthest of several candidates rather than the first acceptable
    * one. A threshold only guarantees a goal is not near; scoring by distance
@@ -359,8 +371,20 @@ function retarget(f) {
   for (let i = 0; i < 10; i++) {
     const gx = W * (ROAM.x0 + rnd() * (ROAM.x1 - ROAM.x0));
     const gy = H * Math.max(ROAM.y0, Math.min(ROAM.y1, f.band + (rnd() - 0.5) * f.bandWidth));
-    const ahead = Math.sign(gx - f.x) === f.facingTo;
-    const score = Math.hypot(gx - f.x, gy - f.y) * (ahead ? 1 : 0.5);
+    const ahead = Math.sign(gx - f.x) === Math.sign(f.facingTo);
+    /* Penalise anywhere the others already are, or are heading. A school
+     * spreads by choosing where to go; shoving each other once everyone has
+     * arrived in the same place is far too late, and looks it. */
+    let crowded = 0;
+    const r = W * 0.32;
+    for (const o of fish) {
+      if (o === f) continue;
+      const d = Math.hypot(gx - o.x, gy - o.y);
+      if (d < r) crowded += 1 - d / r;
+      const dg = Math.hypot(gx - o.goalX, gy - o.goalY);
+      if (dg < r) crowded += (1 - dg / r) * 0.7;
+    }
+    const score = Math.hypot(gx - f.x, gy - f.y) * (ahead ? 1 : 0.5) - crowded * W * 0.26;
     if (score > best) { best = score; f.goalX = gx; f.goalY = gy; }
   }
   // A fallback only: arrival normally ends a journey, and this is what rescues
@@ -426,19 +450,26 @@ function swim(f, dt, depth) {
   /* Personal space. Twelve fish in a phone-sized tank will cheerfully occupy
    * the same pixels, and overlapping bodies read as one confused blob rather
    * than as a school. Sixty-odd pairs a frame costs nothing at this count. */
-  let px = 0, py = 0;
-  const crowd = 0.12;                        // token nudge; avoidance steers instead
+  let px = 0, py = 0, blocked = 0;
+  const crowd = 0.22;
+  const fx = Math.cos(f.head) * f.facing, fy = Math.sin(f.head);
   for (const o of fish) {
     if (o === f) continue;
     const ox = f.x - o.x, oy = f.y - o.y;
-    const near = (f.len + o.len) * 0.45;
+    const near = (f.len + o.len) * 0.6;
     const d2 = ox * ox + oy * oy;
-    if (d2 > 1 && d2 < near * near) {
+    if (d2 > 1 && d2 < near * near * 1.9) {
       const d = Math.sqrt(d2);
-      const push = (1 - d / near) / d;
-      px += ox * push; py += oy * push;
+      if (d < near) { const push = (1 - d / near) / d; px += ox * push; py += oy * push; }
+      /* Give way. A fish closing on another's tail slows instead of swimming
+       * through it — which is what happens, and is far cheaper than resolving
+       * the overlap afterwards. Only sideways steering was in place before, so
+       * two fish at the same height never avoided each other at all. */
+      const toward = (-ox * fx - oy * fy) / d;
+      if (toward > 0.4) blocked = Math.max(blocked, toward * (1 - d / (near * 1.38)));
     }
   }
+  if (blocked < 0) blocked = 0;
 
   const pm = Math.hypot(px, py);
   if (pm > 1) { px /= pm; py /= pm; }
@@ -458,9 +489,9 @@ function swim(f, dt, depth) {
    * of travel onto the screen is exactly (facing * cos pitch, sin pitch), and
    * that is the same transform the renderer applies to the body. Nose and
    * velocity now agree by construction. */
-  const fwdX = Math.cos(f.head) * f.facing, fwdY = Math.sin(f.head);
-  f.x += (f.speed * fwdX + flowX(f.x, f.y, t) * 0.16 + px * f.cruise * crowd) * depth * dt;
-  f.y += (f.speed * fwdY + flowY(f.x, f.y, t) * 0.16 + py * f.cruise * crowd) * depth * dt;
+  const brake = 1 - Math.min(0.62, blocked * 0.85);
+  f.x += (f.speed * fx * brake + flowX(f.x, f.y, t) * 0.16 + px * f.cruise * crowd) * depth * dt;
+  f.y += (f.speed * fy * brake + flowY(f.x, f.y, t) * 0.16 + py * f.cruise * crowd) * depth * dt;
 
   /* No clamp. A fish that has strayed well past the roaming area is simply
    * given a goal back inside it and turns of its own accord, which reads as a
