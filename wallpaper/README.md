@@ -184,9 +184,11 @@ drops — and in a stirred liquid the lowest pressure is the core of a vortex.
 That is why a propeller trails a line of bubbles, and why fizz in a shaken
 vessel shows up in the curls rather than evenly through the volume. So it is
 seeded by vorticity: sample eight points, take the one sitting in the
-strongest swirl, and only while there is agitation to produce it. Measured:
-none at all when the shaker is still, 300 while it is being shaken, and back
-to a handful within three seconds of stopping.
+strongest swirl, and only while there is agitation to produce it. The current
+mix deliberately keeps that signal restrained: no fizz at all while still,
+short three-to-five-bubble puffs during a shake, and a hard ceiling of 180.
+Their 0.9–1.9 second lifetime lets the eddy trail disappear promptly instead
+of hanging around as a second field of glitter.
 
 It is emitted in puffs rather than one particle at a time, because
 cavitation follows a vortex line and the gas comes out along it — spawning
@@ -301,7 +303,7 @@ alpha *is* the loss of contrast with distance — what shows through is the
 liquid, which is exactly what absorption and scattering along a longer path
 leave you with. The ramp used to run 0.68 to 1.0 for flakes, barely a fifth
 of the range, and the fine glitter did not get it at all: every small flake
-was drawn at full strength however deep it sat. It now runs 0.34 to 1.0 and
+was drawn at full strength however deep it sat. It now runs 0.20 to 1.0 and
 covers the fast path, the glow, and the specular.
 
 Both together came out slightly *cheaper* than before, 24.5ms to 23.6ms,
@@ -321,7 +323,12 @@ drawn before the liquid tint and read as immersed; those in front are drawn
 over it and read as pressed against the glass. Light from the back wall
 crosses the full thickness of liquid before it reaches the eye, and putting
 those flakes under the tint layer is that absorption, for free. Tilting also
-shifts the layers against each other, since the viewing angle changes.
+shifts the layers against each other, since the viewing angle changes. The
+native host's Z accelerometer channel now drives spring-damped motion through
+the thickness as well: glitter, bubbles and fizz lag a normal shake, settle
+into different depth layers, and reorder as they cross the mid-plane. A
+tilted surface also exposes a translucent rear rim, so the meniscus reads as
+the top of a volume rather than a line painted over the liquid.
 
 **Bubbles are diverging lenses**, and that one fact sets their whole
 appearance. Light crossing from water into air bends away from the normal,
@@ -361,18 +368,19 @@ gravity, the glint never turns at all. Verified by drawing one bubble at
 four gravity angles — the specular held the same clock position in all four
 while the interior inversion rotated.
 
-They rise, weave, merge and burst. A bubble climbing through liquid is
-flattened perpendicular to its motion, but only by a few percent at these
-speeds — rendering that at the earlier strength turned every one into an
-egg. New bubbles nucleate small and grow only by merging, which is the loop
-that keeps the population in balance: respawning small with a fast rise
-drained the shaker to a median radius of 3px, and respawning large ran it
-away the other way to a median of 21px and 194 interpenetrating pairs.
-Bubbles that touch merge with gas volume conserved, drawn together on the
-way up by wake attraction — a bubble in another's wake meets less resistance
-and catches it, which is why bubbles form chains in a real liquid and why
-the large ones exist at all. Without wake attraction two bubbles have to
-collide by chance: measured at zero merges in thirty seconds.
+They rise, weave, sometimes merge, and burst. A bubble climbing through
+liquid is flattened perpendicular to its motion, but only by a few percent at
+these speeds — rendering that at the earlier strength turned every one into
+an egg. A skewed seed population supplies a restrained large-bubble tail;
+replacement bubbles are mostly small and may grow through coalescence.
+
+Contact is not instant merging. A carrier film has to drain between two
+bubbles, so most short collisions separate and only sustained contacts
+coalesce, with gas volume conserved. Wake attraction is short-ranged and
+weak. The earlier 3.5-radius wake manufactured hundreds of merge-respawn
+cycles and drew large bubbles into persistent side rafts. Contact now uses
+the full depth coordinate, while large projected silhouettes also receive a
+soft separation so front/back bubbles do not render as stacked rings.
 
 Rise speed follows r-squared only while Stokes drag holds, then plateaus —
 and where that plateau sits used to be set for the wrong reason. It was at
@@ -384,25 +392,13 @@ holds the population up is where new bubbles come from and how long they
 last once they arrive, and both of those exist now, so the plateau sits at
 110px/s and a large bubble crosses in about ten seconds.
 
-**Foam coarsens, and that is where the big bubbles come from.** Film
-drainage was 1.4 seconds plus a tenth of a second per pixel of radius, and
-almost the whole size distribution turns out to hang off that one number.
-Bubbles at the surface are packed against each other, so the surface is
-where coalescence actually happens — and bursting them after a second and a
-half meant nothing ever got the chance to grow. Measured across a hundred
-seconds of stillness, every bubble above 12px died and none replaced it,
-with the largest in the vessel collapsing from 31px to 7: a shaker of
-nothing but fizz. In a gel this viscous, laden with whatever holds the
-glitter in suspension, a film takes tens of seconds to drain rather than
-one. At ten seconds plus 1.4 per pixel the population holds 3-8 bubbles
-above 12px indefinitely, with 11-17 of them resting in the surface layer at
-any moment.
-
-Two bubbles too large to merge push apart instead. A big bubble's film takes
-far longer to drain, so they touch and stay separate — but they are still
-solid objects, and without the separation a bubble at the size cap sat
-permanently inside a neighbour it could never absorb, rendering as rings
-drawn over each other.
+At the free surface a discrete bubble joins the main air pocket after a
+varied 5–10 second drainage window. The variation avoids synchronized pops,
+while the shorter lifetime prevents a flip from storing a bank of large
+bubbles at one edge. Radius-aware wall clearance and wall-induced lift push
+rising bubbles out of the narrow side gap; capillary pressure strengthens
+that inward return at the curved surface shoulder. Pairs too large to merge
+push apart instead of remaining interpenetrated.
 
 **Air gets into a sealed vessel one way: the surface folds over and drags it
 under.** Bubbles used to reappear at a uniformly random point deep in the
@@ -436,6 +432,16 @@ stalls in the flow stops weaving and a fast one weaves quickly. Measured in
 still liquid: fizz generates 0.0px/s of lateral motion, large bubbles
 25.8px/s at 2.9Hz — and when the rise speed fell by a factor of three in a
 later run, the frequency fell with it, to 0.9Hz.
+
+The visible population now favours small and medium bubbles. The persistent
+count is 112 rather than 128, only a small tail is born large, and coalescence
+is capped at roughly 6.5% of the short screen axis. On a 390x844 test canvas,
+the number above 14px radius fell from 33 to 6 and the maximum fell from about
+32px to 19px. Local carrier flow and its material acceleration are sampled
+through diameter-scale low-pass filters; deliberate shake still opens the
+coupling quickly, while quiet-grid changes no longer reverse a bubble from
+frame to frame. Resting sideways reversals fell from roughly 850 per second
+to 38 per second after a shake-and-settle cycle.
 
 **Response time is not a free parameter.** A bubble reaches terminal speed
 when buoyancy balances drag, so tau = v_t / 3g, the 3 being the added-mass
@@ -487,11 +493,12 @@ catches nothing, and face-on it flares. Verified by rendering the same flake
 at eight rotations — the bright band held its screen orientation while the
 star turned underneath it.
 
-**Particles with Stokes drag** — response time and terminal velocity both
-scale with radius squared, so fine glitter traces the flow almost exactly
-while big flakes lag, overshoot on a turn and climb faster. That spread is
-what makes the drift look like a real suspension rather than one moving
-sheet. Flakes flutter as they travel; bubbles rise against drag.
+**Particles with viscous drag** — response time scales strongly with size, so
+fine glitter traces the flow almost exactly while big flakes lag and overshoot
+on a turn. Terminal speed is approximately linear in radius for constant-film-
+thickness flakes, rather than the spherical Stokes-law square. That spread is
+what makes the drift look like a real suspension rather than one moving sheet.
+Flakes flutter as they travel; bubbles rise against drag.
 
 **Flakes tumble because the water turns them.** Each flake used to spin at a
 fixed rate assigned at birth, which meant a flake in dead-still water spun
@@ -514,25 +521,25 @@ unchanged, so this adds spread rather than emptying the body faster:
 measured mean factor 1.035, with an edge-on flake moving 1.8x faster than a
 face-on one.
 
-**The glitter is buoyant, and that is the whole toy.** These flakes are
-lighter than the gel they are suspended in — which is how a liquid-motion
-shaker is actually built, the liquid loaded until it outweighs the film — so
-they do not sink, they climb, and they gather in a drift under the
-waterline. Turning the shaker over puts that drift at the bottom and you
-watch it float back up. Modelled the other way round it was a sedimentation
-tank: everything ended on the floor, and a flip only gave you the same thing
-upside down. Measured upright from a mixed start, the glitter's centre of
-mass climbs the screen from 0.423 to 0.299 over a minute, with 316 flakes of
-620 ending in the top fifth; inverted it turns round and goes the other way,
-0.344 to 0.544.
+**The wall redirects; it does not glue.** Low-Re oblate bodies near a plane
+wall can glance, reverse, tumble and slide (Mitchell & Spagnolie, JFM 772,
+2015, DOI 10.1017/jfm.2015.222). Collision response therefore uses the actual
+inward correction from the attempted point, preserves gravity tangent to a
+lateral wall, and adds a small separation like a lubrication layer. The
+downhill wall gets none of that lift, so it can still collect a settled bed.
 
-**It starts where it ends up.** The shaker used to open with everything
-scattered uniformly through the container — measured, glitter and bubbles
-alike sat at 0.47 of the screen, dead centre — and took a minute or two to
-sort itself out, which is a minute or two of a wallpaper looking like it has
-not settled yet. Both populations are now seeded in the resting state,
-pressed up under the waterline and thinning downward, so the first frame is
-the one you would have got by waiting.
+**The glitter is a mixed-density sedimenting suspension.** Most commercial
+PET foil is denser than a water/glycerol carrier, so it cascades downhill
+after a flip instead of floating to the waterline. The model uses 94% settling
+cut flakes and 96% settling microglitter, with a near-neutral minority and a
+very small buoyant minority.
+That mixture makes a satisfying resting bed without making the body above it
+look mechanically empty.
+
+**It starts plausibly settled.** Both glitter scales are seeded through the
+body with a bias toward the downhill glass. The opening frame therefore reads
+as a shaker that has been resting, while still leaving enough suspended foil
+for the first movement to catch and circulate.
 
 **A flake must not hinder itself.** The concentration field is built by
 dropping each flake's whole area into the cell it sits in, and a big flake
@@ -543,25 +550,18 @@ big flakes were the *slowest* thing in the shaker, moving 0.518 to 0.460
 over a minute while the fine glitter that is supposed to trail them went
 0.473 to 0.336. Hindrance is what the other particles do to you.
 
-**Rise speed is linear in radius, not quadratic.** The r-squared law is for
-spheres. These are flakes cut from one sheet of film, so they all share a
-thickness: buoyancy goes as the area, r-squared, while the drag on a disc
-moving broadside goes as its radius — so the speed goes as r, and the spread
-between the finest glitter and the largest flake is a factor of three rather
-than twenty-five.
+Nor can particles in different depth layers all hinder one another as if the
+pouch were a single sheet. The screen-space concentration is now converted to
+an effective volume fraction before it enters the settling law. Crowding can
+slow a flake to 22% of its free settling speed but never to zero, so a dense
+front compresses and creeps instead of becoming a permanent shelf. A mild
+gradient from the existing gas-volume field also steers glitter around large
+bubbles rather than letting it collect on their upper rims.
 
-That is the difference between a suspension and two separate things. Under
-the square law the big flakes outran the convection and packed into a hard
-line at the surface while the fine glitter, too slow to beat it, stayed
-evenly mixed: 519 flakes of 620 in the top quarter and 39 in the next, and
-the lateral balance drifting to 0.80 as a single convection cell parked
-everything on one side. With the spread narrowed the whole population
-competes with the same convection on the same terms, and what settles out is
-a gradient held in place by the balance between buoyancy and dispersion —
-concentrated under the waterline, thinning down through the body, and stable
-there. Measured over a minute of stillness it holds its shape: 318/137/86/79
-flakes by quarter at load, 321/129/91/79 a minute later, with the lateral
-balance at 0.97.
+**Settle speed is linear in radius, not quadratic.** These are thin plates cut
+from one sheet of film rather than spheres. The narrowed speed spread lets
+hero flakes cross in seconds while the microglitter remains aloft for much
+longer, which is the layered cascade a physical shaker gets from mixed sizes.
 
 **How fast it resolves is a separate knob from where it settles** — up to a
 point. The equilibrium is set by the *ratio* of the buoyant flux to the
@@ -602,8 +602,9 @@ seconds: 319/136/86/79 by quarter becomes 63/115/221/221.
 **A drift has to end somewhere.** A flake climbing through a crowd of other
 flakes has to drag the liquid they displace down past itself, so a dense
 suspension moves far slower than a dilute one — Richardson and Zaki's
-(1 - phi) to the 4.65. That is the reason a separating suspension forms a
-sharp front, with clearing liquid behind it and a packing drift ahead,
+(1 - phi) to about 4.5 for non-Brownian low-Re particles. That is the reason a
+separating suspension forms a sharp front, with clearing liquid behind it and
+a packing drift ahead,
 instead of thinning out evenly everywhere. Without it there is nowhere the
 glitter is going: measured from a well-mixed start, its centre of mass sat
 at 0.49 of the container and was still at 0.53 a hundred seconds later, with
@@ -638,6 +639,32 @@ pull as hard as an 85-degree one. It comes from a low-pass of the
 accelerometer; the residual is the shake, which is a measured quantity
 rather than a jerk heuristic.
 
+**A 180-degree flip has no sideways projection.** The surface rotation uses
+`sin(angle)` rather than the small-angle `angle` approximation, so an exact
+inversion cannot inject a diagonal ramp. Through-screen motion arms a brief
+inversion guard before the filtered gravity reverses: cross-gravity fluid
+momentum is dissipated, tiny near-flat direction samples are ignored, and the
+lateral boundary layer widens temporarily. Three alternating sensor-driven
+flips held the glitter's mean lateral spread at 68–73px rather than walking it
+outward on every inversion.
+
+Once a real face-over-face reversal completes, the released resting bed also
+gets a five-second, decaying cross-gravity damper. Each piece falls from the
+part of the bed it already occupied instead of being swept sideways. Every
+piece keeps a loose memory of its naturally even first-spawn lane, so repeat
+flips can gently restore a full-width curtain without teleporting glitter or
+locking it into rigid columns. Only the extreme glass corners receive an
+extra inward correction. The heavier cut foil falls a little faster than
+before, while the fine glitter retains a wider, slower tail.
+
+The residual also passes through a 0.045g radial dead zone before it reaches
+the solver. That is above the stationary noise floor of the phone sensor but
+well below deliberate hand motion. Its attack is eased to give the liquid
+mass, while its release is quicker so the wallpaper actually becomes still.
+The fluid drive and surface forcing are deliberately lower than the original
+water-like values, with nearly twice the bulk damping and stronger wall drag;
+the result behaves as a viscous glitter gel rather than a cup of water.
+
 The container is sealed, so it absorbs whatever net force its contents
 exert and the total momentum stays zero. Both the particle reaction and the
 buoyancy of the dense phase have their mean subtracted before they are
@@ -661,6 +688,15 @@ area: each frame clips the liquid polygon against the container, measures the
 area, and nudges the surface level toward the target. It settles in a few
 frames and costs one shoelace sum.
 
+**The headspace behaves as one trapped surface bubble.** Its wetting points
+remain attached to the glass, but tangential acceleration displaces the
+deepest part of the lens along the surface. A lightly underdamped spring gives
+the bulge visible lag, a small overshoot, and a soft return instead of making
+it rotate as one smooth, rigid fluid pocket. The fixed air volume is
+concentrated into a deeper centre with narrow shoulders so it remains readable
+when the surface reaches the left or right edge, and a restrained moving
+specular makes the bubble shape clear without flashing.
+
 ### Fixed timestep
 
 The simulation runs on a fixed 1/60s tick with an accumulator. This is not
@@ -678,12 +714,13 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a discrete squircle on a backdrop |
-| `fill` | `0.965` | Fraction of the container holding liquid. The ullage is what sloshes — at `1` nothing moves |
+| `fill` | `0.98` | Fraction of the sealed chamber holding liquid. The remaining air forms one stable, damped lens that remains visible at every screen edge |
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
-| `stars` | `620` | Glitter flake count |
-| `bubbles` | `110` | Bubble count |
-| `fizz` | `300` | Ceiling on the fine fizz, which is spawned by the flow rather than seeded |
+| `stars` | `1650` | Medium and hero glitter count |
+| `micro` | `17850` | Cached microglitter count; with `stars`, 19,500 visible pieces |
+| `bubbles` | `112` | Persistent air-bubble count; shake-generated fizz is separate |
+| `fizz` | `180` | Ceiling on the short-lived fine fizz spawned by strong vortices |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
@@ -794,3 +831,17 @@ the two-blit path, but between them they cover about a tenth of a
 full-screen fill and each blit goes through a rotation. A combined sprite
 for the middle of the size range would save a twentieth of that, which is
 not worth the branch.
+
+## Third-party assets
+
+The marks the container can suspend — `?glyph=heart|bolt|chat|music|camera|gear`
+— are [Material Design Icons](https://github.com/google/material-design-icons),
+filled weight, embedded verbatim as SVG path data in `index.html`. They are
+used under the Apache License 2.0; a copy is at
+<https://www.apache.org/licenses/LICENSE-2.0>. Nothing else in this page is
+third-party: the liquid, the glitter, the bubbles, the bezel and the porcelain
+material the marks are rendered in are all drawn here.
+
+`@material-design-icons/svg` is a devDependency only, so the page has no
+runtime dependency on it. It is the provenance of those six paths and the
+means of extracting more, not something `index.html` loads.

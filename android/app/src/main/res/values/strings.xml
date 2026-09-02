@@ -3,6 +3,11 @@
     <string name="app_name">Liquid Shaker</string>
     <string name="wallpaper_name">Liquid Shaker</string>
     <string name="wallpaper_description">Tilt to pour it, shake to throw the glitter.</string>
+    <string name="wallpaper_picker_missing">This launcher does not provide Android\'s live-wallpaper picker. Open Settings, then Wallpaper &amp; style, to select Liquid Shaker.</string>
+    <string name="water_toy_name">Water Ring Toy</string>
+    <string name="water_toy_description">Press either button to launch the rings, then tilt and shake the water.</string>
+    <string name="water_toy_picker_missing">This launcher does not provide Android\'s live-wallpaper picker. Open Settings, then Wallpaper &amp; style, to select Water Ring Toy.</string>
     <string name="lava_name">Lava Lamp</string>
     <string name="lava_description">Tilt to pour the wax, twist to stir it, tap to poke it.</string>
+    <string name="lava_picker_missing">This launcher does not provide Android\'s live-wallpaper picker. Open Settings, then Wallpaper &amp; style, to select Lava Lamp.</string>
 </resources>

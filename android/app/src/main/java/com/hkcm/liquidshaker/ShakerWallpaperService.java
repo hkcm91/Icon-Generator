@@ -9,10 +9,13 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.os.Build;
 import android.os.Bundle;
 import android.service.wallpaper.WallpaperService;
 import android.util.Log;
 import android.view.Choreographer;
+import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.ViewGroup;
@@ -36,13 +39,12 @@ import android.widget.FrameLayout;
  */
 public class ShakerWallpaperService extends WallpaperService {
 
-    private static final String TAG = "LiquidShaker";
+    private static final int SENSOR_PERIOD_US = 33_333;
 
-    /** The page this service hosts. A subclass hosts a different one. */
-    protected String pageUrl() { return "file:///android_asset/index.html"; }
-
-    /** Painted before the page's first frame, so there is no white flash. */
-    protected int pageBackground() { return 0xFF0A5FD4; }
+    protected String getLogTag() { return "LiquidShaker"; }
+    protected String getPageUrl() { return "file:///android_asset/index.html"; }
+    protected String getVirtualDisplayName() { return "liquid-shaker"; }
+    protected int getPageBackgroundColor() { return 0xFF0A5FD4; }
 
     @Override
     public Engine onCreateEngine() {
@@ -65,19 +67,23 @@ public class ShakerWallpaperService extends WallpaperService {
         private SurfaceHolder softHolder;
 
         private boolean pageReady;
+        private boolean pageRequested;
         private int surfaceW, surfaceH;
 
         private SensorManager sensors;
         private float spinZ;   // gyroscope about the viewing axis, deg/s
+        private long lastRawTouchAt;
 
         @Override
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
             setOffsetNotificationsEnabled(true);
+            setTouchEventsEnabled(true);
             sensors = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
 
             web = new WebView(ShakerWallpaperService.this);
-            web.setBackgroundColor(pageBackground());
+            // The ramp's deep blue, so there is no white flash before first paint.
+            web.setBackgroundColor(getPageBackgroundColor());
             web.getSettings().setJavaScriptEnabled(true);
             web.getSettings().setDomStorageEnabled(true);
             web.getSettings().setMediaPlaybackRequiresUserGesture(false);
@@ -91,7 +97,7 @@ public class ShakerWallpaperService extends WallpaperService {
                 web.setWebChromeClient(new WebChromeClient() {
                     @Override
                     public boolean onConsoleMessage(ConsoleMessage m) {
-                        Log.i(TAG, m.message());
+                        Log.i(getLogTag(), m.sourceId() + ":" + m.lineNumber() + " " + m.message());
                         return true;
                     }
                 });
@@ -100,13 +106,13 @@ public class ShakerWallpaperService extends WallpaperService {
                 @Override
                 public void onPageFinished(WebView view, String url) {
                     pageReady = true;
+                    js("window.__shaker&&window.__shaker.preview&&window.__shaker.preview("
+                            + isPreview() + ")");
                     if (debuggable) js("window.__shaker&&window.__shaker.diag(true)");
                     if (hostDrivesClock) js("window.__shaker&&window.__shaker.drive()");
                     else if (isVisible()) js("window.__shaker&&window.__shaker.resume()");
                 }
             });
-            web.loadUrl(pageUrl());
-
             root = new FrameLayout(ShakerWallpaperService.this);
             root.addView(web, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -158,9 +164,27 @@ public class ShakerWallpaperService extends WallpaperService {
             DisplayManager dm = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
             int density = getResources().getDisplayMetrics().densityDpi;
 
+            /* A virtual display backed by a wallpaper surface can otherwise
+             * settle on a 30Hz producer cadence even on a 120Hz handset. The
+             * simulation targets 45Hz and presentation targets a stable 60Hz;
+             * asking explicitly prevents the compositor from treating this as
+             * low-rate video content after a few missed startup frames. */
+            // Through reflection, so the source stays inside API 23 for the
+            // offline build (see ../../../../../tools/build-apk.sh); the
+            // call itself is API 30.
+            if (Build.VERSION.SDK_INT >= 30) {
+                try {
+                    Surface surface = holder.getSurface();
+                    int fixedSource = Surface.class
+                            .getField("FRAME_RATE_COMPATIBILITY_FIXED_SOURCE").getInt(null);
+                    Surface.class.getMethod("setFrameRate", float.class, int.class)
+                            .invoke(surface, 60f, fixedSource);
+                } catch (Throwable ignored) { }
+            }
+
             VirtualDisplay vd = null;
             try {
-                vd = dm.createVirtualDisplay("liquid-shaker", width, height, density,
+                vd = dm.createVirtualDisplay(getVirtualDisplayName(), width, height, density,
                         holder.getSurface(),
                         DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
                                 | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY);
@@ -173,9 +197,12 @@ public class ShakerWallpaperService extends WallpaperService {
                 virtualDisplay = vd;
                 presentation = p;
                 softDrawing = false;
-                Log.i(TAG, "hosting the page on a virtual display (hardware accelerated)");
+                layoutRoot(width, height);
+                requestPage();
+                Log.i(getLogTag(), "hosting the page on a virtual display (hardware accelerated), surface="
+                        + width + "x" + height);
             } catch (Throwable t) {
-                Log.w(TAG, "presentation refused, drawing the page by hand instead", t);
+                Log.w(getLogTag(), "presentation refused, drawing the page by hand instead", t);
                 /* Released here rather than through the field: if show() threw,
                  * the field was never assigned, and a virtual display left alive
                  * still owns the surface the fallback is about to lock. */
@@ -207,9 +234,8 @@ public class ShakerWallpaperService extends WallpaperService {
             hostDrivesClock = true;
             if (pageReady) js("window.__shaker&&window.__shaker.drive()");
 
-            root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                         View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
-            root.layout(0, 0, width, height);
+            layoutRoot(width, height);
+            requestPage();
             softDrawing = true;
 
             final Choreographer choreographer = Choreographer.getInstance();
@@ -235,6 +261,21 @@ public class ShakerWallpaperService extends WallpaperService {
             softHolder = null;
         }
 
+        private void layoutRoot(int width, int height) {
+            if (root == null) return;
+            root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                         View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+            root.layout(0, 0, width, height);
+        }
+
+        /** Load only after the WebView has a non-zero layout. */
+        private void requestPage() {
+            if (pageRequested || web == null || web.getWidth() < 2 || web.getHeight() < 2) return;
+            pageRequested = true;
+            Log.i(getLogTag(), "loading page at " + web.getWidth() + "x" + web.getHeight());
+            web.loadUrl(getPageUrl());
+        }
+
         /* A software canvas rather than lockHardwareCanvas(), which needs API
          * 26. Nothing is lost by it here: a detached WebView renders in
          * software anyway, so this path is software end to end whichever
@@ -246,7 +287,7 @@ public class ShakerWallpaperService extends WallpaperService {
                 canvas = softHolder.lockCanvas();
                 if (canvas != null) root.draw(canvas);
             } catch (Throwable t) {
-                Log.w(TAG, "frame dropped", t);
+                Log.w(getLogTag(), "frame dropped", t);
             } finally {
                 if (canvas != null) {
                     try { softHolder.unlockCanvasAndPost(canvas); } catch (Throwable ignored) { }
@@ -264,9 +305,9 @@ public class ShakerWallpaperService extends WallpaperService {
          */
         private void startSensors() {
             Sensor a = sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-            if (a != null) sensors.registerListener(this, a, SensorManager.SENSOR_DELAY_GAME);
+            if (a != null) sensors.registerListener(this, a, SENSOR_PERIOD_US);
             Sensor g = sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
-            if (g != null) sensors.registerListener(this, g, SensorManager.SENSOR_DELAY_GAME);
+            if (g != null) sensors.registerListener(this, g, SENSOR_PERIOD_US);
         }
 
         private void stopSensors() {
@@ -329,14 +370,43 @@ public class ShakerWallpaperService extends WallpaperService {
         }
 
         @Override
+        public void onTouchEvent(MotionEvent event) {
+            if (!pageReady || surfaceW <= 0 || surfaceH <= 0) return;
+            float nx = Math.max(0f, Math.min(1f, event.getX() / surfaceW));
+            int button = nx < 0.5f ? 0 : 1;
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    lastRawTouchAt = android.os.SystemClock.uptimeMillis();
+                    Log.i(getLogTag(), "touch down button=" + button + " at "
+                            + event.getX() + "," + event.getY());
+                    js("window.__shaker&&window.__shaker.touch&&window.__shaker.touch("
+                            + nx + "," + Math.max(0f, Math.min(1f, event.getY() / surfaceH))
+                            + ",true)");
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    Log.i(getLogTag(), "touch up button=" + button);
+                    js("window.__shaker&&window.__shaker.touch&&window.__shaker.touch("
+                            + nx + "," + Math.max(0f, Math.min(1f, event.getY() / surfaceH))
+                            + ",false)");
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        @Override
         public Bundle onCommand(String action, int x, int y, int z, Bundle extras,
                                 boolean resultRequested) {
             /* A tap on the home screen arrives here, in surface pixels. The page
              * wants it where it landed, not merely that it happened. */
             if ("android.wallpaper.tap".equals(action) && pageReady
                     && surfaceW > 0 && surfaceH > 0) {
-                js("window.__shaker&&window.__shaker.tap("
-                        + ((float) x / surfaceW) + "," + ((float) y / surfaceH) + ")");
+                if (android.os.SystemClock.uptimeMillis() - lastRawTouchAt > 700) {
+                    Log.i(getLogTag(), "wallpaper tap at " + x + "," + y);
+                    js("window.__shaker&&window.__shaker.tap("
+                            + ((float) x / surfaceW) + "," + ((float) y / surfaceH) + ")");
+                }
             }
             return null;
         }

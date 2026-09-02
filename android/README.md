@@ -1,8 +1,9 @@
-# Liquid shaker — Android live wallpaper
+# Shaker toys — Android live wallpapers
 
-Wraps [`../wallpaper/index.html`](../wallpaper) in a `WallpaperService`, so the
-thing you set from the wallpaper picker is the page you have been testing in a
-browser — not a reimplementation of it.
+Wraps the interactive [`Liquid Shaker`](../wallpaper) and
+[`Water Ring Toy`](../water-toy) pages in two `WallpaperService` entries, so
+the thing selected from Android's wallpaper picker is the same page tested in
+a browser — not a reimplementation of it.
 
 That is the whole design intent. The physics, the optics and the look took a
 long time to get right and they all live in the page; porting them to Kotlin
@@ -47,11 +48,21 @@ software fallback locks a normal canvas rather than `lockHardwareCanvas()`,
 which is API 26. Nothing is lost by that, since a detached WebView renders in
 software either way.
 
-Then: **Settings → Wallpaper → Live Wallpapers → Liquid Shaker** or
-**Lava Lamp**, or long-press the home screen. The APK carries both pages as
-two wallpaper services on one engine: `ShakerWallpaperService` hosts
-`index.html`, `LavaWallpaperService` hosts `lava.html`, and the only thing
-the second class knows is which page to load. To set the lamp from a shell:
+The APK adds two launcher icons. Open **Liquid Shaker** or **Water Ring Toy**
+to jump directly to that wallpaper's preview/apply screen, choose either under
+**Settings → Wallpaper → Live Wallpapers**, or long-press the home screen.
+Liquid Shaker is declared first and Water Ring Toy immediately after it;
+pickers that preserve manifest order therefore show the toy beneath the
+existing wallpaper. Android launchers ultimately control app-drawer and home
+screen placement. Both entries fall back to the general live-wallpaper chooser
+on vendor builds that omit the component-specific preview intent.
+
+The pages are not duplicated into the app. The build copies them from
+`../wallpaper/index.html` and `../water-toy/index.html`, so the APK cannot drift
+from what was tested in a browser.
+
+The lava lamp is the third entry, on the same engine: `LavaWallpaperService`
+hosts `../wallpaper/lava.html` and knows nothing else. To set it from a shell:
 
 ```bash
 adb shell am start -a android.service.wallpaper.CHANGE_LIVE_WALLPAPER \
@@ -59,9 +70,10 @@ adb shell am start -a android.service.wallpaper.CHANGE_LIVE_WALLPAPER \
   com.hkcm.liquidshaker/.LavaWallpaperService
 ```
 
-The pages are not duplicated into the app. Both builds copy them out of
-`../wallpaper/`, so there is one copy of each in the repository and the APK
-cannot drift from what you tested in a browser.
+The water toy uses the same host bridge and adds its own simulation: two touch
+pumps produce water jets and bubbles, rings collide with one another and the
+glass, slow rings can settle onto pegs, a press releases them, and phone tilt,
+shake, and launcher-page swipes feed the fluid motion.
 
 ## What the service actually does
 
