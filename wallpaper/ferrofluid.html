@@ -76,6 +76,9 @@
 const params = new URLSearchParams(location.search);
 const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
 
+const mix = (a, b, k) => a + (b - a) * k;
+const smooth = (k) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k));
+
 const CONFIG = {
   /* "full" — the screen itself is the cell, liquid edge to edge. This is the
    * wallpaper. "pouch" — a square tile floating on the paper, which is the
@@ -349,6 +352,12 @@ if (needsPermission) {
 
 const poles = [];
 let ambientPoles = 0;
+
+/* What an ambient magnet is pulling with at the top of its cycle. Two things
+ * read it and they have to agree: the magnets themselves, and the iron filings,
+ * which weight their ink by how much of this the strongest magnet is currently
+ * exerting. */
+const AMBIENT_FIELD = CONFIG.field * 1.3;
 const RING_NORM = Math.pow(1.5, 1.5) * Math.SQRT2;   // = 1/max(r/(r²+z²)^{3/2} · z²)
 
 /* Saturation, and the single most consequential number in the file.
@@ -377,22 +386,58 @@ function buildPoles() {
       // — that goes as H² either way — and everything about the shape of the
       // field between them, which is the part you can see.
       sign: i % 2 ? -1 : 1,
-      phase: i * 2.399,             // golden-angle offsets: no repeating beat
-      // Exactly out of phase vertically, so that one of the pair is always
-      // somewhere near the liquid. Left to drift with everything else, the
-      // two spend long stretches high up together and the pool lies flat and
-      // dead for half a minute at a time.
-      vphase: i * Math.PI,
-      period: 9.3 + i * 3.7,
+      /* Evenly spaced around the working cycle below, on a period they share
+       * exactly, so that while one magnet is carrying liquid up the other is
+       * already on its way back down for the next handful. Offsets that drift
+       * against each other look better on paper and are worse to watch: they
+       * come into phase every minute or two, and the pool lies flat and dead
+       * for a whole cycle while both magnets are away at the top. */
+      phase: i / Math.max(1, ambientPoles),
+      period: 13,
+      held: 0,                      // where across the cell it took hold
+      down: null,                   // its height last step, for the speed limit
+      crest: Infinity, tick: 0,     // the liquid under it, and when it was read
       life: Infinity, born: Infinity, peak: 0,
     });
   }
 }
 
-/* The ambient pair drifts across the cell and pulses, on periods that do not
- * divide each other, and their paths are laid out in the gravity frame — so
- * tilting the phone takes the magnets with it and "above the pool" keeps
- * meaning above the pool.
+/* How high the liquid stands under a magnet, as a distance down from the
+ * middle of the cell along gravity — the same axis the path below is written
+ * on. `win` is how far to either side to look.
+ *
+ * Not the topmost drop, and not a handful of them either: a spray of beads
+ * thrown clear by a tap is not a column, and a magnet that took one for a
+ * column would leave the pool to chase a speck across the screen. This asks
+ * where the top *three percent* of the liquid under it is, which is a crest
+ * something is actually holding up. Reading it off eight drops was enough to
+ * take a 600x1000 cell apart. */
+const crestBuf = new Float64Array(128);
+function crestUnder(alongPole, win) {
+  if (!px) return Infinity;
+  const K = Math.max(8, Math.min(crestBuf.length, Math.round(N * 0.03)));
+  const tx = -gDir.y, ty = gDir.x;
+  let n = 0;
+  for (let i = 0; i < N; i++) {
+    const dx = px[i] - CX, dy = py[i] - CY;
+    if (Math.abs(tx * dx + ty * dy - alongPole) > win) continue;
+    const dn = gDir.x * dx + gDir.y * dy;
+    if (n < K) {                               // fill, then keep the highest few
+      let j = n++;
+      while (j > 0 && crestBuf[j - 1] > dn) { crestBuf[j] = crestBuf[j - 1]; j--; }
+      crestBuf[j] = dn;
+    } else if (dn < crestBuf[K - 1]) {
+      let j = K - 1;
+      while (j > 0 && crestBuf[j - 1] > dn) { crestBuf[j] = crestBuf[j - 1]; j--; }
+      crestBuf[j] = dn;
+    }
+  }
+  return n === K ? crestBuf[K - 1] : Infinity;
+}
+
+/* The ambient pair works the pool in turn, and their paths are laid out in the
+ * gravity frame — so tilting the phone takes the magnets with it and "above
+ * the pool" keeps meaning above the pool.
  *
  * Above the pool is the whole point. A magnet below a dish of ferrofluid is
  * the textbook Rosensweig picture, but it is a picture of a field pointing
@@ -409,21 +454,147 @@ function stepPoles(t, dt) {
   const rDown = Math.hypot(gDir.x * RX, gDir.y * RY);
   const rAlong = Math.hypot(tanx * RX, tany * RY);
 
+  /* The surface of the pool, in the units the path below is written in: -1 is
+   * the ceiling, +1 the floor, and this is the level the liquid starts at.
+   *
+   * Everything is measured from there rather than from the middle of the
+   * screen, because the pull falls off as roughly the fifth power of distance
+   * and the entire difference between a magnet that is working and one that is
+   * decoration is a few tens of pixels of standoff. Written as absolute
+   * heights this choreography would stop working the moment the fill or the
+   * screen changed. */
+  const surface = 1 - 2 * CONFIG.fill;
+  const OVER = 1 / Math.max(1, rDown);           // one pixel, in these units
+
+  const PARK = surface - 34 * OVER;              // waiting, well off the liquid
+  /* Just above the liquid, and *not* in it. A magnet that dives below the
+   * surface puts its ring of peak field inside the pool, where the pull tears
+   * the interior apart in every direction at once and the free surface has
+   * nothing to do — held there for a third of every cycle it took the whole
+   * pool apart into a spray of beads. Held a little over the surface, the same
+   * ring straddles it, and what it pulls on is the boundary. */
+  const GRAB = surface - 14 * OVER;
+  const TOP = surface - 150 * OVER;              // further than it usually gets
+
+  /* How far above the liquid a magnet is allowed to be while it is carrying
+   * it, and how fast it may move to get there. Everything about the lift hangs
+   * off these two.
+   *
+   * The speed limit is not a smoothing. Following the crest is a feedback loop
+   * — the liquid climbs, so the magnet climbs, so the liquid climbs — and with
+   * no bound on how fast the magnet may answer, one splash is enough to start
+   * it: the magnet jumps to the beads, which pulls up more liquid, which moves
+   * the crest again. Unbounded it took a 600x1000 cell entirely off the floor
+   * and left a spray of beads over the whole screen. A hand cannot do that
+   * because a hand cannot move that fast, and neither can this. */
+  const NEAR_Z = refU() * 0.095, FAR_Z = refU() * 0.2;
+  const REACH = NEAR_Z / Math.SQRT2 * OVER;
+  const RATE = 190 * OVER * dt;                  // px per second, in these units
+  const WIN = refU() * 0.17;                     // how wide "under it" is
+
   for (let i = 0; i < ambientPoles; i++) {
     const p = poles[i];
-    const ph = t * 0.33 + p.phase;
-    const along = Math.sin(ph) * 0.74 + Math.sin(ph * 0.43 + 1.1) * 0.22;
-    // From well clear of the pool down to just inside it, and back.
-    const down = -0.26 + 1.05 * (0.5 + 0.5 * Math.sin(t * 0.17 + p.vphase));
+    const u = (t / p.period + p.phase) % 1;      // once round the cycle
     const swirl = swirlInput * 0.35;
 
-    p.x = CX + gDir.x * rDown * down + tanx * rAlong * 0.62 * (along + swirl);
-    p.y = CY + gDir.y * rDown * down + tany * rAlong * 0.62 * (along + swirl);
-    // A rising and falling standoff: the same magnet pressed against the
-    // glass and taken away again, which strengthens and narrows it at once.
-    p.z = refU() * (0.1 + 0.1 * (0.5 + 0.5 * Math.sin(ph * 0.81)));
-    const pulse = 0.2 + 0.8 * (0.5 + 0.5 * Math.sin(t * 2 * Math.PI / p.period + p.phase));
-    p.strength = CONFIG.field * 1.15 * pulse * p.sign;
+    /* Where in the cycle, and what the magnet is doing there. Written as
+     * fractions of the cycle so the phases read off in order.
+     *
+     * This is the demonstration everyone has actually seen someone do with a
+     * bottle of ferrofluid: bring the magnet down until the liquid leaps to
+     * it, hold while it climbs, lift, and let the column stretch and fall
+     * back. Nothing here is keyframed — the shape is entirely the liquid's
+     * answer to a field that is being moved. What is scripted is only where
+     * the magnet goes and how hard it is pulling when it gets there.
+     *
+     * A magnet works for a third of its cycle and is away for the rest, and
+     * with the pair half a period apart that leaves two clear seconds in every
+     * cycle when nothing is pulling at all. The rest is not padding. Magnetic
+     * force here runs into a clamp measured in gravities, and two magnets
+     * holding it there without a break give the pressure solver nothing to
+     * catch up in: run continuously it took a 600x1000 cell apart. It is also
+     * better to watch. A lift reads as a lift because of the stillness before
+     * it, and a surface that is never at rest never shows one. */
+    let down, strength, hold;
+    if (u < 0.10) {                              // still away
+      down = PARK;
+      strength = 0.08;
+      hold = 0;
+    } else if (u < 0.18) {                       // come down to it
+      const k = smooth((u - 0.10) / 0.08);
+      down = mix(PARK, GRAB, k);
+      strength = mix(0.08, 1, k);
+      hold = 0;
+    } else if (u < 0.28) {                       // hold while it climbs
+      down = GRAB;
+      strength = 1;
+      hold = smooth((u - 0.18) / 0.10);
+    } else if (u < 0.44) {                       // lift, and let it stretch
+      const k = smooth((u - 0.28) / 0.16);
+      down = mix(GRAB, TOP, k);
+      strength = 1;
+      hold = 1;
+    } else if (u < 0.50) {                       // let go
+      const k = smooth((u - 0.44) / 0.06);
+      down = TOP;
+      strength = mix(1, 0.08, k);
+      hold = 1 - k;
+    } else {                                     // go back for another
+      const k = smooth((u - 0.50) / 0.50);
+      down = mix(TOP, PARK, k);
+      strength = 0.08;
+      hold = 0;
+    }
+
+    /* Across the cell: it travels while it is empty-handed and holds its
+     * ground while it has liquid, so a lift reads as a lift rather than as a
+     * swipe. */
+    const drift = Math.sin(t * 0.21 + p.phase * 6.283) * 0.62
+                + Math.sin(t * 0.089 + p.phase * 2.7) * 0.2;
+    const along = drift * (1 - 0.75 * hold) + p.held * 0.75 * hold;
+    if (hold < 0.02) p.held = drift;             // remember where it grabbed
+
+    /* The lift keeps pace with what it is lifting.
+     *
+     * Written as a height against the clock instead, the magnet simply outruns
+     * the liquid: the pull falls off as roughly the fifth power of distance, so
+     * a magnet sixty pixels clear of the crest is exerting a hundredth of what
+     * it was at the surface, and what you watch is a mound sitting still while
+     * a fan of iron filings sails off up the screen — which is precisely the
+     * thing that makes this look like a picture of ferrofluid rather than
+     * ferrofluid. So the schedule above only says how high the magnet is
+     * *allowed* to be; where it actually goes is a fixed standoff above the
+     * liquid it is holding, and it climbs at the speed the liquid can follow.
+     *
+     * A hand holding a magnet does the same thing, and for the same reason: it
+     * watches. The column stretches until it necks, the liquid drops away, and
+     * the magnet is then free to run up to the ceiling — which is the moment
+     * the schedule is fading it out anyway. */
+    const alongPx = rAlong * 0.6 * (along + swirl);
+    if (hold > 0.01) {
+      /* Not on every step. The scan is the most expensive thing in here, and
+       * the magnet is speed-limited to about three pixels a step — so a crest
+       * measured four steps ago is at most a dozen pixels stale against a
+       * standoff of thirty-five. Staggered by pole, so the two never land on
+       * the same step. */
+      p.tick = (p.tick + 1) & 3;
+      if (p.tick === (i & 3) || !Number.isFinite(p.crest)) p.crest = crestUnder(alongPx, WIN);
+      if (Number.isFinite(p.crest)) {
+        down = mix(down, Math.max(down, p.crest * OVER - REACH), hold);
+      }
+    } else {
+      p.crest = Infinity;
+    }
+    if (p.down === null) p.down = down;          // first step, or a new cell
+    down = p.down = Math.max(p.down - RATE, Math.min(p.down + RATE, down));
+
+    p.x = CX + gDir.x * rDown * down + tanx * alongPx;
+    p.y = CY + gDir.y * rDown * down + tany * alongPx;
+    /* Pressed against the glass while it is working, drawn back while it is
+     * not: a near standoff is a tighter, stronger magnet, which is what makes
+     * a crown of spikes rather than a broad mound. */
+    p.z = mix(FAR_Z, NEAR_Z, strength);
+    p.strength = AMBIENT_FIELD * strength * p.sign;
   }
 
   // Transient poles decay, and are dropped once they do nothing.
@@ -1524,6 +1695,18 @@ function drawFilings(g) {
   let ref = 0;
   for (const p of poles) ref = Math.max(ref, Math.abs(p.strength));
   if (ref < 1e-4) return;
+
+  /* How dark, against how strong the magnets actually are.
+   *
+   * The shape is drawn relative to the strongest pole, above; the *weight* has
+   * to be absolute, or it lies. Normalised only against itself, a magnet
+   * parked at a fifteenth of its working strength draws exactly the same hatch
+   * as one bearing down on the surface, and the page ends up with a fan of
+   * field lines across it while the liquid lies flat and does nothing — which
+   * is a picture of a magnet that is not there. Weighted, the hatch comes up
+   * as a magnet comes down and is gone while it is away, so it says when
+   * something is about to happen rather than merely where. */
+  const duty = Math.min(1, ref / AMBIENT_FIELD);
   const step = Math.max(22, U * 0.07);
   const len = step * 0.38;
   g.strokeStyle = rgba(INK, 1);
@@ -1550,7 +1733,11 @@ function drawFilings(g) {
       drawn++;
     }
   }
-  if (drawn) { g.globalAlpha = 0.055 * CONFIG.filings; g.stroke(); g.globalAlpha = 1; }
+  if (drawn) {
+    g.globalAlpha = 0.055 * CONFIG.filings * duty;
+    g.stroke();
+    g.globalAlpha = 1;
+  }
 }
 
 /** A ring where a magnet was set down, so a tap is visibly acknowledged even

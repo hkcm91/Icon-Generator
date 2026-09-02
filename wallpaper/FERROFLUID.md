@@ -59,16 +59,86 @@ of radius z/√2, and an inverse square beyond. The ring is worth knowing about,
 because it is why a magnet held against the glass grows a crown around itself
 instead of one spike in the middle.
 
-Two of them drift, on opposite polarities so the pair reads as a bar magnet
-rather than two of the same end, pulsing on periods that do not divide each
-other and moving up and down exactly out of phase — so one of them is always
-somewhere near the liquid. They spend most of their time *above* the pool.
-That is where the interesting behaviour is: a magnet under the liquid pulls it
-down into itself and the surface has nothing to do, while the same magnet held
-over it lifts and spikes with the same force.
+Two of them, on opposite polarities so the pair reads as a bar magnet rather
+than two of the same end, working the pool in turn. Each runs the same cycle,
+half a period apart, so that while one is carrying liquid upward the other is
+already on its way back down for the next handful:
 
-Their paths are laid out in the gravity frame, so tilting the phone takes the
-magnets with it and "above the pool" goes on meaning above the pool.
+| phase | what the magnet is doing | strength |
+| --- | --- | --- |
+| 0.00–0.10 | away | 0.08 |
+| 0.10–0.18 | comes down out of the paper to the surface | 0.08 → 1 |
+| 0.18–0.28 | holds just above it, while the liquid climbs | 1 |
+| 0.28–0.44 | lifts, and the column stretches after it | 1 |
+| 0.44–0.50 | lets go; the column necks and falls back | 1 → 0.08 |
+| 0.50–1.00 | drifts back across for another | 0.08 |
+
+A magnet works for a third of its cycle and is away for the rest, which with
+the pair half a period apart leaves two clear seconds in every thirteen when
+nothing is pulling at all. **The rest is not padding.** Magnetic force here
+runs into a clamp measured in gravities, and two magnets holding it there
+without a break give the pressure solver nothing to catch up in: run
+continuously, the first version of this took a 600×1000 cell apart into a spray
+of beads across the whole screen. It is also better to watch — a lift reads as
+a lift because of the stillness before it, and a surface that is never at rest
+never shows one.
+
+It holds *above* the surface at the grab, not in it. A magnet that dives below
+puts its ring of peak field inside the pool, where the pull tears the interior
+apart in every direction at once and the free surface has nothing to do; that
+was the other half of the same collapse.
+
+That is the demonstration everyone has actually seen someone do with a bottle
+of ferrofluid, and it is the whole reason the choreography is written this way
+rather than as a wander. The pull goes as roughly the fifth power of distance:
+a magnet a hundred pixels off the surface exerts hundredths of a *g* and is
+decoration, and one at the surface exerts ten and picks the liquid up. There is
+no middle. So the heights above are in **pixels from the surface of the pool**,
+not fractions of the screen — written as fractions they stop working the moment
+the fill or the screen size changes, which is exactly what went wrong the first
+time. It travels while it is empty-handed and holds its ground while it has
+liquid, so a lift reads as a lift rather than as a swipe.
+
+**The lift keeps pace with what it is lifting.** The phase table says only how
+high the magnet is *allowed* to be; where it actually goes, while it is
+carrying, is a fixed standoff above the crest under it. The first version
+climbed against the clock and simply outran the liquid — the same fifth power
+that makes the grab work makes sixty pixels of daylight the end of it, and what
+you watched was a mound sitting still while a fan of iron filings sailed off up
+the screen. Which is exactly the thing that makes a piece look like a picture
+of ferrofluid rather than ferrofluid. A hand holding a magnet watches the
+liquid and climbs at the speed it can follow; so does this. The column
+stretches until it necks, the liquid falls away, and only then is the magnet
+free to run up to the ceiling — by which point the schedule is fading it out
+anyway.
+
+That standoff is not a taste number: it is z/√2, the radius of the pole's own
+ring, which is the height that puts the strongest part of the field on the
+crest rather than beside it. Measured over a minute at five phone sizes,
+anything from 20 to 50 px produced the same crest statistics to within the
+run-to-run scatter, so there was nothing to tune and the physics chose it.
+
+The crest it follows is where the top *three percent* of the liquid within a
+magnet's reach sideways is, not the topmost drop. A spray of beads thrown clear
+by a tap is not a column, and a magnet that took one for a column would leave
+the pool to chase a speck across the screen. Reading it off eight drops was
+enough to do exactly that.
+
+It is measured every fourth step rather than every step, staggered between the
+two magnets. The scan is the most expensive thing in the magnet code and the
+magnet is speed-limited to about three pixels a step, so the reading is at most
+a dozen pixels stale against a thirty-five pixel standoff. All of it together
+costs 0.1 ms a frame.
+
+Above the pool is where the interesting behaviour is: a magnet under the liquid
+pulls it down into itself and the surface has nothing to do, while the same
+magnet held over it lifts and spikes with the same force. Their paths are laid
+out in the gravity frame, so tilting the phone takes the magnets with it and
+"above the pool" goes on meaning above the pool.
+
+Nothing in the shape of the liquid is keyframed. What is scripted is only where
+the magnet goes and how hard it is pulling when it gets there; every crest,
+spike and column is the liquid's own answer to a field that is being moved.
 
 ### When the phone is flat
 
@@ -215,11 +285,21 @@ roll a real object under a real window.
 The **iron filings** are the oldest way of drawing a magnetic field and still
 the clearest, and they are the only thing on the page that says where the
 magnets are — a magnet behind the glass is not visible and its effect on the
-liquid is often a screen away. They are referenced to the strongest pole
-rather than to an absolute field, so the hatch covers the same *shape* however
-strong the magnets happen to be at that instant; on an absolute threshold a
-magnet at full strength puts ticks in every corner and the wallpaper turns
-into a diagram.
+liquid is often a screen away. Their *shape* is referenced to the strongest
+pole rather than to an absolute field, so the hatch covers the same patch
+however strong the magnets happen to be at that instant; on an absolute
+threshold a magnet at full strength puts ticks in every corner and the
+wallpaper turns into a diagram.
+
+Their *weight*, though, has to be absolute, or the shape rule lies. Normalised
+only against itself, a magnet parked at a fifteenth of its working strength
+draws exactly the same hatch as one bearing down on the surface — and the page
+ends up with a fan of field lines across it while the liquid lies flat and does
+nothing, which is a picture of a magnet that is not there. So the alpha is
+scaled by how strong the strongest magnet actually is against its own working
+maximum. The hatch comes up as a magnet comes down and is gone while it is
+away, which makes it say when something is about to happen rather than merely
+where.
 
 They also have to be *wide* and very faint rather than tight and dark. Drawn
 tight they are a small asterisk floating in white space, which reads as a
@@ -317,15 +397,15 @@ clock, so runs are comparable.
 | --- | --- |
 | Runtime errors across 12 configurations and 8 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped, at the sizes the wallpaper supports — see **Known bad** |
 | Drops leaving the cell — ever, in any of the below | 0 of 1000 |
-| A 2 s shake | 92% of drops in a body before, 87% immediately after, 90% ten seconds later; peak speed 727 px/s |
-| Four taps in nine seconds, the worst a user can do to it | 98% -> 94% -> 89%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
-| Five home-screen swipes arriving in one frame | 92% -> 89% -> 87%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
-| 52° of tilt held 12 s | 98% in a body, occupying 87,286–416,876 of 420×880 |
-| Face up on a desk for a minute | 83% in a body, and the liquid's top averages 45% down the screen. Before the weight had a floor it covered the screen |
-| 45 s idle | 97% in a body, drop count constant |
-| 60 fps against 30 fps, 8 s idle | mean 3.4 px apart, max 10 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
-| JavaScript per frame, 1000 drops | 4.2 ms median, 4.7 ms at the 95th percentile, with a realistic gap between frames. `drops=700` takes it to 3.1 / 3.7 ms |
-| Frame-to-frame change with the liquid at rest | 0.15/255 mean, 0.29% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
+| A 2 s shake | 94% of drops in a body before, 96% immediately after, 89% ten seconds later; peak speed 876 px/s |
+| Four taps in nine seconds, the worst a user can do to it | 97% -> 95% -> 95%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
+| Five home-screen swipes arriving in one frame | 94% -> 92% -> 97%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
+| 52° of tilt held 12 s | 99% in a body, occupying 69,356–416,876 of 420×880 |
+| Face up on a desk for a minute | 88% in a body, and the liquid's top averages 60% down the screen. Before the weight had a floor it covered the screen |
+| 45 s idle | 98% in a body, drop count constant |
+| 60 fps against 30 fps, 8 s idle | mean 2.9 px apart, max 9 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
+| JavaScript per frame, 1000 drops | 4.3 ms median, 5.2 ms at the 95th percentile, with a realistic gap between frames. `drops=700` takes it to 3.4 / 3.9 ms. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
+| Frame-to-frame change with the liquid at rest | 0.16/255 mean, 0.34% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
 
 Two of those numbers were themselves wrong before this table was checked
 against how the thing runs. The frame cost was quoted as 8.5 ms, which was a
@@ -345,11 +425,21 @@ without bound — and neither is visible in a single frame.
 
 ## Known bad
 
-**Tablet-sized screens.** Somewhere above phone dimensions the solver stops
-holding the liquid together: at 820×1180 it keeps 53% of its drops in a body
-and loses 47 of them out of the cell, and at 1280×800, 12%. The wallpaper is
-not usable at those sizes. It is measured on every run of the verifier and
-printed, but not gated, because it does not pass.
+**Large screens, on a long enough run.** The verifier's three tablet viewports
+now pass everything it asks of them — 92%, 93% and 95% of drops in a body with
+none escaped, where before the magnets were choreographed they were 53%, 91%
+and 12% with 47 and 20 drops lost. That is a real improvement and it is *not* a
+fix, and the difference matters:
+
+Driven for 45 s instead of the verifier's window, 720×1120, 820×1180,
+1024×1366 and 1280×800 all still come apart, and **so does the version before
+any of this work** — on the same sizes, to the same terminal state, with every
+drop pinned at the speed limit. The collapse is pre-existing and untouched.
+What the choreography changed is *when* it arrives, and the verifier's window
+happens to fall on the good side of it now. Which size goes first also moves
+with any parameter you touch, in no order that means anything: at one field
+strength 540×960 dies and 660×1050 lives, at the next it is the other way
+round. Treat a green tablet row as "not yet", not as "safe".
 
 The cause is not pinned down, and the honest version of that is worth writing
 out because the obvious explanations are all wrong. It is not the drop spacing
@@ -361,20 +451,28 @@ reference size moved the boundary a long way — 600×1000 went from 13% of its
 drops in a body to 83%, which is why gravity and the magnets no longer grow
 without bound with the screen — but it did not remove it.
 
+Every real phone viewport tested (320×568 through 448×998) holds at 98–100%
+over 45 s, which is the range the wallpaper is for.
+
 What made it survive this long is that every viewport the verifier tested had
 about a phone's *area*, the landscape one included, that being the same screen
 turned over. The four large ones are there now.
 
-**Making it more present is blocked on the same thing.** The obvious way to
-give the piece more of the screen is more liquid, and more liquid is exactly
-what the solver will not take: raising `fill` from 0.185 to 0.30 measured out
-at 33% coverage against 21% and a crest at 40% of the screen's height against
-29% — a real improvement to look at — and it also tore the pool apart under
-taps and at a fifth of the tested sizes. Raising the drop count to hold the
-spacing constant fixes some of that and not the rest. This is a solver problem
-rather than a parameter problem, and the parameters are `fill` with `drops`
-raised alongside it if you want to try: they are not independent, and `fill`
-alone is a trap.
+**More *coverage* is still blocked, though the reach is no longer the problem.**
+Choreographing the magnets took the crest from 29% of the screen's height to
+52% at its peak — the liquid now goes most of the way up the page when a magnet
+carries it — but the ink on screen averaged over a minute barely moved, 19.6%
+against 21%. That is arithmetic, not a failure: it is the same volume of liquid
+in a different shape, and a wallpaper that is a fifth black stays a fifth black
+however dramatically it moves.
+
+The only way to more coverage is more liquid, and more liquid is what the
+solver will not take: raising `fill` from 0.185 to 0.30 measured out at 33%
+coverage, and also tore the pool apart under taps and at a fifth of the tested
+sizes. Raising the drop count to hold the spacing constant fixes some of that
+and not the rest. This is a solver problem rather than a parameter problem, and
+the parameters are `fill` with `drops` raised alongside it if you want to try:
+they are not independent, and `fill` alone is a trap.
 
 **It has never run on a handset.** There is no device or emulator here. Every
 number above is a headless software rasteriser, which is the wrong machine in
