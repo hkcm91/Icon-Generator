@@ -67,5 +67,32 @@
                 android:name="android.service.wallpaper"
                 android:resource="@xml/water_toy_wallpaper" />
         </service>
+
+        <!-- The lava lamp: the same engine on a third page. -->
+        <activity
+            android:name=".LavaLauncherActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="@string/lava_name"
+            android:icon="@drawable/wallpaper_thumb_lava"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".LavaWallpaperService"
+            android:exported="true"
+            android:label="@string/lava_name"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/wallpaper_lava" />
+        </service>
     </application>
 </manifest>

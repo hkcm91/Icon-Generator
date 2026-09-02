@@ -61,6 +61,15 @@ The pages are not duplicated into the app. The build copies them from
 `../wallpaper/index.html` and `../water-toy/index.html`, so the APK cannot drift
 from what was tested in a browser.
 
+The lava lamp is the third entry, on the same engine: `LavaWallpaperService`
+hosts `../wallpaper/lava.html` and knows nothing else. To set it from a shell:
+
+```bash
+adb shell am start -a android.service.wallpaper.CHANGE_LIVE_WALLPAPER \
+  -e android.service.wallpaper.extra.LIVE_WALLPAPER_COMPONENT \
+  com.hkcm.liquidshaker/.LavaWallpaperService
+```
+
 The water toy uses the same host bridge and adds its own simulation: two touch
 pumps produce water jets and bubbles, rings collide with one another and the
 glass, slow rings can settle onto pegs, a press releases them, and phone tilt,

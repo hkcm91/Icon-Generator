@@ -15,6 +15,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 app="$here/../app/src/main"
 page="$here/../../wallpaper/index.html"
 water_toy_page="$here/../../water-toy/index.html"
+lava_page="$here/../../wallpaper/lava.html"
 out="${1:-$here/../build}"
 android_jar="${ANDROID_JAR:-/usr/lib/android-sdk/platforms/android-23/android.jar}"
 
@@ -31,6 +32,7 @@ mkdir -p "$out/classes" "$out/assets"
 # One copy of the page in the repository; the APK cannot drift from it.
 cp "$page" "$out/assets/index.html"
 cp "$water_toy_page" "$out/assets/water_toy.html"
+cp "$lava_page" "$out/assets/lava.html"
 
 # aapt wants the package name and the sdk versions in the manifest itself.
 # Gradle supplies both from the DSL (`namespace`, `defaultConfig`), so they are
@@ -40,10 +42,18 @@ sed -e "s|<manifest |<manifest package=\"$PKG\" android:versionCode=\"1\" androi
     -e "s|<application|<uses-sdk android:minSdkVersion=\"$MIN_SDK\" android:targetSdkVersion=\"$TARGET_SDK\" />\n    <application|" \
     "$app/AndroidManifest.xml" > "$out/AndroidManifest.xml"
 
+# The launcher activities reference R.string, so the resource class has to
+# exist before javac runs; aapt generates it from the same manifest and
+# resources it packages below.
+echo "==> aapt R.java"
+mkdir -p "$out/gen"
+aapt package -f -m -J "$out/gen" \
+     -M "$out/AndroidManifest.xml" -S "$app/res" -I "$android_jar"
+
 echo "==> javac"
 javac -nowarn -source 8 -target 8 \
       -bootclasspath "$android_jar" -classpath "$android_jar" \
-      -d "$out/classes" $(find "$app/java" -name '*.java')
+      -d "$out/classes" $(find "$app/java" "$out/gen" -name '*.java')
 
 # Debian calls Android's dx "dalvik-exchange"; /usr/bin/dx is OpenDX, an
 # unrelated visualisation tool that will happily be found first on PATH.

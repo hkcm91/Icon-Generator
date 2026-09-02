@@ -169,10 +169,16 @@ public class ShakerWallpaperService extends WallpaperService {
              * simulation targets 45Hz and presentation targets a stable 60Hz;
              * asking explicitly prevents the compositor from treating this as
              * low-rate video content after a few missed startup frames. */
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Through reflection, so the source stays inside API 23 for the
+            // offline build (see ../../../../../tools/build-apk.sh); the
+            // call itself is API 30.
+            if (Build.VERSION.SDK_INT >= 30) {
                 try {
-                    holder.getSurface().setFrameRate(60f,
-                            Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+                    Surface surface = holder.getSurface();
+                    int fixedSource = Surface.class
+                            .getField("FRAME_RATE_COMPATIBILITY_FIXED_SOURCE").getInt(null);
+                    Surface.class.getMethod("setFrameRate", float.class, int.class)
+                            .invoke(surface, 60f, fixedSource);
                 } catch (Throwable ignored) { }
             }
 

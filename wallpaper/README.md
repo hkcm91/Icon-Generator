@@ -8,6 +8,22 @@ This is the half that reacts. The [Blender pipeline](../blender) bakes the
 hero loop at full render quality, but a baked loop plays back identically no
 matter how hard you shake the phone — the two are complementary.
 
+## The lava lamp, too
+
+`lava.html` is the second page in this folder: the [Blender lava lamp](../blender/LAVA_LAMP.md)
+made to answer the phone. Same conventions, same `window.__shaker` interface,
+so the Android host below runs either. Tilt the phone and the wax rises
+toward whichever way is up while the heater stays at the bottom of the
+screen, so on a tilt it pools on the low side and climbs the high wall.
+Twist it and the liquid spins; shake it and the blobs are thrown; tap the
+glass and they flinch. The physics is a port of the lamp's motion model
+(thermal buoyancy at terminal velocity, lumped heat transfer) and the
+drawing is a metaball field shaded as glass in a fragment shader.
+
+`node scripts/lava-wallpaper-test.mjs` drives it in headless Chromium
+through the same calls the service makes and checks the wax answers gravity
+and the twist.
+
 ## Try it
 
 Open `index.html` in a browser. On a phone it uses the real sensors; on a
