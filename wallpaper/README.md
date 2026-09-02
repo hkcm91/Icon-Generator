@@ -143,6 +143,13 @@ measured through a flip, the flow decayed from 357px/s to 29 within five
 seconds and then sat there while the glitter drifted down. Tripled, it holds
 at 51px/s indefinitely and carries the glitter twice as far in the same time.
 
+That strength was later brought back down. With the fine microglitter in the
+mix, the plumes it produces read as hard vertical columns of dust hanging in
+the body for a minute after a shake rather than as liquid motion. At 0.05 the
+flecks settle evenly and the columns are gone. The columns survive
+`bubbles=0` and survive disabling the wall recycling, and vanish the moment
+the coupling is lowered, so this is the term.
+
 It could not have been raised before, because raising it drove a bulk drift
 that swept the glitter into one end — which is also worth knowing about the
 old behaviour, because some of the drama of a flip was that artefact rather

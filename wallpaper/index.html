@@ -1025,7 +1025,14 @@ const MICRO_WALL_RECYCLE = 0.6;  // 1/s: fades the column out over ~2s, no pop
  * because raising it drove a bulk drift that swept the glitter into one end;
  * with that removed, the flow after a flip now holds at 51px/s instead of
  * dying. */
-const COUPLE = 0.16;
+/* Brought back down from 0.16. At that strength the settling suspension does
+ * overturn in plumes, and with fine flecks in the mix the plumes read as
+ * hard vertical columns of dust hanging in the body for a minute after a
+ * shake, not as liquid motion. At 0.05 the flecks settle evenly and the
+ * columns are gone; a flip is calmer for it. Isolated by elimination: the
+ * columns survive bubbles=0 and survive disabling the wall recycling, and
+ * vanish the moment this is lowered. */
+const COUPLE = 0.05;
 const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
 /* Far larger than DYE_BUOY, and it should be: the dense phase is a few per
  * cent heavier than the liquid, a bubble is a hundred per cent lighter. */
