@@ -76,7 +76,10 @@ const CONFIG = {
    * full simulation/render cost at the phone's display rate. */
   zoom: num("zoom", 1),
   stars: num("stars", 2000),
-  micro: num("micro", 20000),
+  /* Was 20,000. At that density the fine flecks read as white static across
+   * the whole body rather than as dust between the flakes; 6,000 keeps the
+   * bed and the shimmer without the noise. */
+  micro: num("micro", 6000),
   bubbles: num("bubbles", 84),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   // 80 columns keeps the soft dye/flow field visually continuous while
@@ -3132,7 +3135,11 @@ function buildMicroPaths() {
     g.globalCompositeOperation = "screen";
     g.globalAlpha = 1;
     for (let i = 0; i < paths.length; i++) {
-      g.fillStyle = FLAKE_COLOURS[i][front ? 0 : 1];
+      /* Both passes use the saturated shade. The front pass used the pastel,
+       * and a near-white screened over the blue at 82% is simply white: the
+       * colour each fleck carries was being thrown away at the last step, and
+       * twenty thousand of them read as static. */
+      g.fillStyle = FLAKE_COLOURS[i][1];
       g.fill(paths[i]);
     }
     g.globalCompositeOperation = "source-over";
