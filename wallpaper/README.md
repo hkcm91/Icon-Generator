@@ -702,7 +702,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `1650` | Medium and hero glitter count |
-| `micro` | `6000` | Cached microglitter count; with `stars`, 8,000 visible pieces. Was 20,000, which read as white static |
+| `micro` | `2000` | Cached microglitter count; with `stars`, 4,000 visible pieces. Was 20,000, which read as white static, then 6,000, which still filled the body |
 | `bubbles` | `112` | Persistent air-bubble count |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 

@@ -76,10 +76,11 @@ const CONFIG = {
    * full simulation/render cost at the phone's display rate. */
   zoom: num("zoom", 1),
   stars: num("stars", 2000),
-  /* Was 20,000. At that density the fine flecks read as white static across
-   * the whole body rather than as dust between the flakes; 6,000 keeps the
-   * bed and the shimmer without the noise. */
-  micro: num("micro", 6000),
+  /* Was 20,000, then 6,000. At 20,000 the fine flecks read as white static
+   * across the whole body; at 6,000 the body still read as scattered. 2,000
+   * keeps the settled bed and a faint shimmer between the flakes without
+   * filling the liquid. */
+  micro: num("micro", 2000),
   bubbles: num("bubbles", 84),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   // 80 columns keeps the soft dye/flow field visually continuous while
