@@ -179,7 +179,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                            "retro coral")
 
     water = p.add_argument_group("water")
-    water.add_argument("--fill", type=float, default=0.95,
+    water.add_argument("--fill", type=float, default=0.958,
                        help="water level as a fraction of chamber height. "
                             "The air gap at the top is where the jet breaks "
                             "the surface, so 1.0 costs the splash")
@@ -588,11 +588,13 @@ def button_body(name: str, radius: float, depth: float) -> bpy.types.Object:
         rotation=(math.radians(90.0), 0.0, 0.0))
     obj = bpy.context.active_object
     obj.name = name
-    bevel = obj.modifiers.new("soften", "BEVEL")
-    # Most of the depth goes into the bevel, so the button is a dome rather
-    # than a drum — under a perspective lens a drum shows its whole side.
-    bevel.width = depth * 0.46
-    bevel.segments = 4
+    bevel = obj.modifiers.new("chamfer", "BEVEL")
+    # A flat face with a distinct rounded chamfer round its rim — a button,
+    # not a ball. The width is off the radius so the face stays flat; off
+    # the depth, as it was, the whole thing rolled into a dome.
+    bevel.width = radius * 0.24
+    bevel.segments = 6
+    bevel.profile = 0.55
     bevel.limit_method = "ANGLE"
     activate(obj)
     bpy.ops.object.shade_smooth()
@@ -1399,9 +1401,21 @@ def build_jets(args, built: dict, fill_z: float) -> list[dict]:
         nozzle.show_instancer_for_render = False
         nozzle.show_instancer_for_viewport = False
 
-        depth = size.y * 0.22
+        depth = size.y * 0.16
         button = button_body(f"Ringtoy_Button_{i}", button_r, depth)
-        button.location = (x, -size.y * 0.5 - depth * 0.4, button_z)
+        button.location = (x, -size.y * 0.5 - depth * 0.45, button_z)
+        # A collar round the base, so the button is mounted in something
+        # rather than stuck to the glass.
+        bpy.ops.mesh.primitive_torus_add(
+            major_radius=button_r * 1.14, minor_radius=button_r * 0.11,
+            major_segments=48, minor_segments=12,
+            location=(x, -size.y * 0.5 - button_r * 0.04, button_z),
+            rotation=(math.radians(90.0), 0.0, 0.0))
+        collar = bpy.context.active_object
+        collar.name = f"Ringtoy_Collar_{i}"
+        collar.data.materials.append(
+            milk_glass_material(f"ringtoy_collar_{i}", HOOK_COLOUR))
+        bpy.ops.object.shade_smooth()
         material, shader = button_material(f"ringtoy_button_{i}")
         button.data.materials.append(material)
 
