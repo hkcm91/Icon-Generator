@@ -37,7 +37,12 @@ import android.widget.FrameLayout;
 public class ShakerWallpaperService extends WallpaperService {
 
     private static final String TAG = "LiquidShaker";
-    private static final String PAGE = "file:///android_asset/index.html";
+
+    /** The page this service hosts. A subclass hosts a different one. */
+    protected String pageUrl() { return "file:///android_asset/index.html"; }
+
+    /** Painted before the page's first frame, so there is no white flash. */
+    protected int pageBackground() { return 0xFF0A5FD4; }
 
     @Override
     public Engine onCreateEngine() {
@@ -72,8 +77,7 @@ public class ShakerWallpaperService extends WallpaperService {
             sensors = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
 
             web = new WebView(ShakerWallpaperService.this);
-            // The ramp's deep blue, so there is no white flash before first paint.
-            web.setBackgroundColor(0xFF0A5FD4);
+            web.setBackgroundColor(pageBackground());
             web.getSettings().setJavaScriptEnabled(true);
             web.getSettings().setDomStorageEnabled(true);
             web.getSettings().setMediaPlaybackRequiresUserGesture(false);
@@ -101,7 +105,7 @@ public class ShakerWallpaperService extends WallpaperService {
                     else if (isVisible()) js("window.__shaker&&window.__shaker.resume()");
                 }
             });
-            web.loadUrl(PAGE);
+            web.loadUrl(pageUrl());
 
             root = new FrameLayout(ShakerWallpaperService.this);
             root.addView(web, new ViewGroup.LayoutParams(

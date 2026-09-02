@@ -24,5 +24,18 @@
                 android:name="android.service.wallpaper"
                 android:resource="@xml/wallpaper" />
         </service>
+
+        <service
+            android:name=".LavaWallpaperService"
+            android:exported="true"
+            android:label="@string/lava_name"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/wallpaper_lava" />
+        </service>
     </application>
 </manifest>

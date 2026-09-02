@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#06030f">
+<title>Lava lamp</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #06030f; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #hint {
+    position: fixed; left: 0; right: 0; bottom: 6vh; text-align: center;
+    font: 500 14px/1.4 system-ui, sans-serif; color: rgba(255,255,255,0.55);
+    letter-spacing: 0.02em; pointer-events: none; transition: opacity 0.6s;
+  }
+  #hint.hide { opacity: 0; }
+  #perm {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    padding: 14px 22px; border-radius: 999px; border: 0;
+    background: rgba(255,255,255,0.14); color: #fff; backdrop-filter: blur(12px);
+    font: 600 15px system-ui, sans-serif; display: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">tilt to pour the wax · twist to stir it · tap to poke it</div>
+<button id="perm">Enable motion</button>
+<script>
+"use strict";
+/* Lava lamp — the interactive half.
+ *
+ * The Blender pipeline (../blender/lava_lamp.py) bakes the hero loop at full
+ * render quality; this is the same lamp made to answer the phone. Tilt it
+ * and the wax rises toward whichever way is up, twist it and the liquid
+ * spins, shake it and the blobs are thrown, tap the glass and they flinch.
+ * One self-contained file, no build step, no dependencies.
+ *
+ * Two halves. The physics is a port of the lamp's motion model: blobs at
+ * terminal velocity under thermal buoyancy (Stokes drag, no inertia) with
+ * lumped heat transfer toward the liquid's temperature profile, which is a
+ * relaxation oscillator — warm at the pool, rise, cool past neutral, sink,
+ * recharge. Gravity is the accelerometer's, so "up" is wherever the phone
+ * says it is, while the heater stays where the lamp keeps it: the bottom
+ * of the screen. Tilt the phone and the two disagree, and the wax pools on
+ * the low side and climbs the high wall, which is what a real one does.
+ *
+ * The drawing is a metaball field shaded as glass in a fragment shader:
+ * a sphere-profile height from the field, normals from its gradient, and
+ * from those a refracted backdrop, a Fresnel rim, an orange bulb glow that
+ * falls off with height and a hard white window highlight on every
+ * shoulder. It is the look of the render, without the renderer.
+ *
+ * The page exposes window.__shaker — the same seven calls the shaker page
+ * does — so the Android service in ../android hosts it unchanged.
+ */
+
+const CONFIG = {
+  blobs: 11,          // the family that circulates
+  droplets: 5,        // small fast ones
+  blobSize: 0.19,     // radius of the reference blob, lamp units (width = 2)
+  sizeSpread: 0.45,
+  // physics, in the reference blob's terms (see ../blender/LAVA_LAMP.md)
+  lift: 0.42,         // rise speed of a fully hot reference blob, lamp units/s
+  neutral: 0.42,      // temperature at which wax matches the liquid
+  lag: 9.0,           // seconds for a reference blob to take the liquid's temperature
+  heat: 0.42,         // decay length of the liquid's temperature, fraction of height
+  pool: 0.07,         // heated pool, fraction of height
+  contact: 0.3,       // heat time constant multiplier while in the pool
+  // look
+  accent: [1.0, 0.32, 0.03],   // orange, from the bulb
+  colour: [1.0, 0.30, 0.68],   // bubblegum, the wax itself
+  crest: [0.40, 0.22, 0.92],   // violet, at the top
+  backdrop: [0.010, 0.006, 0.040],
+  floor: [0.16, 0.04, 0.20],
+  renderScale: 0.5,   // fragment work per pixel is the whole cost; half is plenty
+};
+
+const canvas = document.getElementById("c");
+const hint = document.getElementById("hint");
+
+/* ------------------------------------------------------------------ lamp */
+
+let W = 1, H = 1;           // canvas pixels
+let ASPECT = 2;             // height / width
+let Y = 4;                  // lamp height in lamp units (width is 2)
+
+/* Deterministic jitter, so the lamp starts the same way every time and the
+ * test harness can reason about it. */
+function hash(i, salt) {
+  let x = (i * 374761393 + salt * 668265263) | 0;
+  x = Math.imul(x ^ (x >>> 13), 1274126177);
+  x = (x ^ (x >>> 16)) >>> 0;
+  return x / 4294967296;
+}
+
+const blobs = [];
+function seed() {
+  blobs.length = 0;
+  const n = CONFIG.blobs + CONFIG.droplets;
+  for (let i = 0; i < n; i++) {
+    const droplet = i >= CONFIG.blobs;
+    const spread = 1 + CONFIG.sizeSpread * (hash(i, 1) * 2 - 1);
+    const r = CONFIG.blobSize * (droplet ? 0.42 : spread);
+    blobs.push({
+      x: (hash(i, 2) * 2 - 1) * (1 - r) * 0.85,
+      y: 0.08 * Y + hash(i, 3) * Y * 0.85,
+      r,
+      theta: hash(i, 4),
+      vx: 0, vy: 0,
+      phase: hash(i, 5) * Math.PI * 2,
+    });
+  }
+}
+
+/* ------------------------------------------------------------- sensing */
+
+const grav = { x: 0, y: -1 };     // which way is down, lamp frame (+y up), in g
+const gravRaw = { x: 0, y: -1 };
+const gDir = { x: 0, y: -1 };
+let gMag = 1;
+const accel = { x: 0, y: 0 };     // hand motion residual, in g
+let spinInput = 0;                // twist about the viewing axis, turns/s
+let haveAccelGravity = false;
+
+function setGravityVector(x, y) {
+  grav.x = x; grav.y = y;
+  gMag = Math.min(1, Math.hypot(x, y));
+  if (gMag > 0.04) { gDir.x = x / gMag; gDir.y = y / gMag; }
+}
+
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x === null) return;
+  hint.classList.add("hide");
+  haveAccelGravity = true;
+  /* The web event reports the reaction to gravity: an upright phone reads
+   * +9.81 on device y, which is up the screen. Down is therefore minus the
+   * reading, and the lamp frame's y is up, so both axes flip. */
+  const sx = -a.x / 9.81, sy = -a.y / 9.81;
+  const k = 0.06;
+  gravRaw.x += (sx - gravRaw.x) * k;
+  gravRaw.y += (sy - gravRaw.y) * k;
+  setGravityVector(gravRaw.x, gravRaw.y);
+  accel.x = sx - gravRaw.x;
+  accel.y = sy - gravRaw.y;
+  if (e.rotationRate) {
+    const spin = (e.rotationRate.alpha || 0) / 360;
+    spinInput = Math.max(-3, Math.min(3, spin));
+  }
+}
+
+function onOrientation(e) {
+  if (haveAccelGravity) return;
+  if (e.beta === null && e.gamma === null) return;
+  hint.classList.add("hide");
+  const b = (e.beta || 0) * Math.PI / 180;
+  const gm = (e.gamma || 0) * Math.PI / 180;
+  setGravityVector(-Math.cos(b) * Math.sin(gm), -Math.sin(b));
+}
+
+function listenMotion() {
+  window.addEventListener("deviceorientation", onOrientation, true);
+  window.addEventListener("devicemotion", onMotion, true);
+}
+
+const needsPermission =
+  typeof DeviceMotionEvent !== "undefined" &&
+  typeof DeviceMotionEvent.requestPermission === "function";
+if (needsPermission) {
+  const b = document.getElementById("perm");
+  b.style.display = "block";
+  b.addEventListener("click", async () => {
+    try {
+      const r = await DeviceMotionEvent.requestPermission();
+      if (r === "granted") listenMotion();
+    } catch (err) { /* refused */ }
+    b.remove();
+  });
+} else {
+  listenMotion();
+}
+
+/* Pointer fallback so it is testable on a desktop: drag tilts it, a quick
+ * flick shakes it, and dragging in a circle twists it. */
+let dragging = false, lastPointer = null, lastAngle = 0;
+canvas.addEventListener("pointerdown", (e) => {
+  dragging = true; lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+  lastAngle = Math.atan2(e.clientY - innerHeight / 2, e.clientX - innerWidth / 2);
+  hint.classList.add("hide");
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  const dx = e.clientX - lastPointer.x, dy = e.clientY - lastPointer.y;
+  lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+  accel.x = Math.max(-3, Math.min(3, dx * 0.04));
+  accel.y = Math.max(-3, Math.min(3, -dy * 0.04));
+  const nx = (e.clientX - innerWidth / 2) / (innerWidth / 2);
+  const ny = -(e.clientY - innerHeight / 2) / (innerHeight / 2);
+  const len = Math.hypot(nx, ny) || 1;
+  setGravityVector(nx / len, ny / len);
+  const ang = Math.atan2(e.clientY - innerHeight / 2, e.clientX - innerWidth / 2);
+  let da = ang - lastAngle;
+  if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
+  lastAngle = ang;
+  spinInput = Math.max(-3, Math.min(3, -da * 8));
+});
+const endDrag = () => {
+  dragging = false;
+  accel.x = 0; accel.y = 0; spinInput = 0;
+  setGravityVector(0, -1);
+};
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+
+/* -------------------------------------------------------------- physics */
+
+/* The liquid moves as a whole: a translation the shake drives (in the vessel
+ * frame the liquid feels −a) and a rotation the twist drives, both decaying
+ * as the liquid's viscosity brings it back to rest against the glass. */
+const flow = { x: 0, y: 0, w: 0 };
+
+function envTemp(zn) {
+  if (zn <= CONFIG.pool) return 1.0;
+  return Math.exp(-(zn - CONFIG.pool) / Math.max(1e-3, CONFIG.heat));
+}
+
+function step(dt) {
+  const ref = CONFIG.blobSize;
+  const n = blobs.length;
+
+  // The liquid.
+  flow.x += (-accel.x * 2.4 - flow.x * 1.6) * dt;
+  flow.y += (-accel.y * 2.4 - flow.y * 1.6) * dt;
+  flow.w += (-spinInput * 3.0 - flow.w * 1.1) * dt;
+  // When the phone is flat there is no in-plane pull; the lamp still has a
+  // bulb, so convection keeps a floor rather than stopping dead.
+  const pull = Math.max(0.35, gMag);
+  const cx = 0, cy = Y * 0.5;
+
+  for (let i = 0; i < n; i++) {
+    const b = blobs[i];
+    const zn = b.y / Y;
+    const scale = (b.r / ref) * (b.r / ref);
+
+    // Heat: lumped capacitance toward the liquid's profile, τ ∝ r².
+    let tau = CONFIG.lag * scale;
+    if (zn <= CONFIG.pool) tau *= CONFIG.contact;
+    b.theta += (envTemp(zn) - b.theta) * Math.min(1, dt / Math.max(0.05, tau));
+
+    // Terminal velocity: buoyancy over drag, along minus gravity.
+    const buoy = CONFIG.lift * (b.theta - CONFIG.neutral) * scale * pull;
+    let vx = -gDir.x * buoy, vy = -gDir.y * buoy;
+
+    // Carried by the liquid: translation, and the twist as solid rotation
+    // about the middle of the lamp.
+    vx += flow.x - flow.w * (b.y - cy) * 0.5;
+    vy += flow.y + flow.w * (b.x - cx) * 0.5;
+
+    // A little life, so nothing rises in a dead straight line.
+    const t = now * 0.001;
+    vx += 0.02 * Math.sin(t * 0.37 + b.phase) * scale;
+
+    b.vx = vx; b.vy = vy;
+  }
+
+  // Blobs against each other: overlap pushes apart a little (they are not
+  // gas), near-touch pulls together (they are sticky), mass with the bigger.
+  for (let i = 0; i < n; i++) {
+    const a = blobs[i];
+    for (let j = i + 1; j < n; j++) {
+      const c = blobs[j];
+      const dx = c.x - a.x, dy = c.y - a.y;
+      const d = Math.hypot(dx, dy) || 1e-6;
+      const sum = a.r + c.r;
+      let f = 0;
+      if (d < sum * 0.78) f = (sum * 0.78 - d) * 2.6;          // apart
+      else if (d < sum * 1.15) f = -(d - sum * 0.78) * 0.08;   // together
+      if (!f) continue;
+      const ma = a.r * a.r, mc = c.r * c.r, mt = ma + mc;
+      const ux = dx / d, uy = dy / d;
+      a.vx -= ux * f * (mc / mt); a.vy -= uy * f * (mc / mt);
+      c.vx += ux * f * (ma / mt); c.vy += uy * f * (ma / mt);
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    const b = blobs[i];
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    // The glass. Soft, because wax against a wall flattens rather than bounces.
+    const xl = 1 - b.r * 0.8;
+    if (b.x > xl) b.x += (xl - b.x) * Math.min(1, dt * 6);
+    if (b.x < -xl) b.x += (-xl - b.x) * Math.min(1, dt * 6);
+    const yb = b.r * 0.55, yt = Y - b.r * 0.7;
+    if (b.y < yb) b.y += (yb - b.y) * Math.min(1, dt * 6);
+    if (b.y > yt) b.y += (yt - b.y) * Math.min(1, dt * 6);
+  }
+}
+
+/* -------------------------------------------------------------- drawing */
+
+const VERT = `
+attribute vec2 p;
+void main() { gl_Position = vec4(p, 0.0, 1.0); }
+`;
+
+const FRAG = `
+precision highp float;
+#define N 24
+uniform vec2 uRes;          // canvas pixels
+uniform float uY;           // lamp height, lamp units
+uniform vec4 uBlob[N];      // x, y, r, heat
+uniform int uCount;
+uniform vec2 uDown;         // gravity direction, lamp frame
+uniform float uOffset;      // home-screen scroll, -0.5..0.5
+uniform vec3 uAccent, uColour, uCrest, uBackdrop, uFloor;
+uniform float uTime;
+
+/* The field: (r/d)^4 per blob, so an isolated blob's surface sits at d = r
+ * and z = sqrt(1 - 1/sqrt(f)) is exactly a sphere's height over it. Where
+ * blobs meet the field sums and the height blends, which is the neck; the
+ * fourth power keeps that to blobs that are actually touching, where a
+ * plain inverse square had the whole lamp reading as one. */
+void field(vec2 p, out float f, out vec2 g, out float heat) {
+  f = 0.0; g = vec2(0.0); heat = 0.0;
+  float wsum = 0.0;
+  for (int i = 0; i < N; i++) {
+    if (i >= uCount) break;
+    vec4 b = uBlob[i];
+    vec2 d = p - b.xy;
+    float d2 = max(dot(d, d), 1e-6);
+    float q = b.z * b.z / d2;
+    float w = q * q;
+    f += w;
+    g += -4.0 * w * d / d2;
+    heat += w * b.w;
+    wsum += w;
+  }
+  heat /= max(wsum, 1e-6);
+}
+
+vec3 backdrop(vec2 p) {
+  float v = clamp(p.y / uY, 0.0, 1.0);
+  // Dark indigo at the top, a lit violet floor, and a spherical vignette.
+  vec3 c = mix(uFloor, uBackdrop, pow(v, 0.55));
+  float vig = 1.0 - 0.35 * length(vec2(p.x * 0.7, (v - 0.5) * 1.4));
+  c *= vig;
+  // The bulb: orange, from below, falling off fast.
+  float bulb = exp(-v * 5.5) * exp(-p.x * p.x * 1.6);
+  c += uAccent * bulb * 0.55;
+  return c;
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  // Parallax: the lamp slides under the icons, a little.
+  vec2 p = vec2((uv.x * 2.0 - 1.0) + uOffset * 0.25, uv.y * uY);
+
+  float f; vec2 g; float heat;
+  field(p, f, g, heat);
+
+  vec3 bg = backdrop(p);
+  // Anti-aliased silhouette from the field's own gradient.
+  float px = 2.0 / uRes.x;
+  // Only meaningful at the rim: over the body the gradient outruns the
+  // field near its peak and the ratio collapses, so it is floored there.
+  float edge = clamp((f - 1.0) / (length(g) * px * 1.5 + 1e-4), 0.0, 1.0);
+  edge = max(edge, smoothstep(1.0, 1.3, f));
+  if (edge <= 0.0) { gl_FragColor = vec4(bg, 1.0); return; }
+
+  // Sphere-profile height and its normal.
+  float fz = max(f, 1.0001);
+  float z = sqrt(1.0 - inversesqrt(fz));
+  vec2 dz = g / (4.0 * z * fz * sqrt(fz) + 1e-4);
+  // dz is per lamp unit; a blob's height is measured against its own radius,
+  // so scale so that a reference blob has unit slope at its rim.
+  vec3 n = normalize(vec3(-dz * 0.19, 1.0));
+  vec3 V = vec3(0.0, 0.0, 1.0);
+  float ndv = max(n.z, 0.0);
+  float fres = 0.04 + 0.96 * pow(1.0 - ndv, 5.0);
+
+  // Thickness, for the tint and the refraction.
+  float thick = z;
+  float v = clamp(p.y / uY, 0.0, 1.0);
+
+  // What is behind the blob, refracted: the backdrop offset by the normal.
+  vec3 through = backdrop(p - n.xy * 0.35 * thick);
+  // Tint by height: orange in the bulb's light, the wax's own colour in the
+  // middle, violet at the crest.
+  vec3 tint = v < 0.5 ? mix(uAccent, uColour, smoothstep(0.0, 0.5, v))
+                      : mix(uColour, uCrest, smoothstep(0.5, 1.0, v));
+  vec3 col = through * mix(vec3(1.0), tint, 0.85) * (1.1 + 0.5 * thick);
+
+  // Light through the glass from the bulb below, held in the wax: warmer and
+  // brighter low down, and brighter where the blob is thick.
+  float warmth = exp(-v * 2.8);
+  col += tint * (0.20 + 0.35 * warmth) * thick * (0.7 + 0.6 * heat);
+  col += uAccent * warmth * 0.35 * thick;
+
+  // Rim: the crest colour, by Fresnel.
+  col += mix(tint, uCrest, 0.5) * fres * 0.9;
+
+  // The window highlight: hard white, upper-left, on every shoulder.
+  vec3 L1 = normalize(vec3(-0.55, 0.75, 0.62));
+  vec3 H1 = normalize(L1 + V);
+  float s1 = pow(max(dot(n, H1), 0.0), 160.0);
+  float s1b = pow(max(dot(n, H1), 0.0), 14.0);
+  col += vec3(1.0, 0.98, 0.96) * (s1 * 1.6 + s1b * 0.16);
+  // The bulb's own reflection, orange, from below.
+  vec3 L2 = normalize(vec3(uDown.xy * 0.9, 0.45));
+  vec3 H2 = normalize(L2 + V);
+  float s2 = pow(max(dot(n, H2), 0.0), 36.0);
+  col += uAccent * s2 * 0.6 * warmth;
+
+  // A touch of glow bleeding off the bright parts, because it is a phone.
+  col += tint * 0.06;
+
+  gl_FragColor = vec4(mix(bg, col, edge), 1.0);
+}
+`;
+
+let gl, prog, uni = {}, buf;
+function initGL() {
+  gl = canvas.getContext("webgl", { alpha: false, antialias: false, powerPreference: "high-performance" })
+    || canvas.getContext("experimental-webgl");
+  if (!gl) throw new Error("no webgl");
+  const sh = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, "p");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  for (const name of ["uRes", "uY", "uBlob", "uCount", "uDown", "uOffset",
+                      "uAccent", "uColour", "uCrest", "uBackdrop", "uFloor", "uTime"]) {
+    uni[name] = gl.getUniformLocation(prog, name);
+  }
+  gl.uniform3fv(uni.uAccent, CONFIG.accent);
+  gl.uniform3fv(uni.uColour, CONFIG.colour);
+  gl.uniform3fv(uni.uCrest, CONFIG.crest);
+  gl.uniform3fv(uni.uBackdrop, CONFIG.backdrop);
+  gl.uniform3fv(uni.uFloor, CONFIG.floor);
+}
+
+const blobData = new Float32Array(24 * 4);
+let parallax = 0, parallaxTarget = 0;
+
+function draw() {
+  const n = Math.min(24, blobs.length);
+  for (let i = 0; i < n; i++) {
+    const b = blobs[i];
+    blobData[i * 4] = b.x; blobData[i * 4 + 1] = b.y;
+    blobData[i * 4 + 2] = b.r; blobData[i * 4 + 3] = b.theta;
+  }
+  gl.viewport(0, 0, W, H);
+  gl.uniform2f(uni.uRes, W, H);
+  gl.uniform1f(uni.uY, Y);
+  gl.uniform4fv(uni.uBlob, blobData);
+  gl.uniform1i(uni.uCount, n);
+  gl.uniform2f(uni.uDown, gDir.x, gDir.y);
+  gl.uniform1f(uni.uOffset, parallax);
+  gl.uniform1f(uni.uTime, now * 0.001);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+function resize() {
+  const s = CONFIG.renderScale * (window.devicePixelRatio || 1);
+  W = Math.max(64, Math.round(innerWidth * s));
+  H = Math.max(64, Math.round(innerHeight * s));
+  canvas.width = W; canvas.height = H;
+  ASPECT = H / W;
+  Y = 2 * ASPECT;
+}
+window.addEventListener("resize", () => { resize(); });
+
+/* --------------------------------------------------------------- clock */
+
+let raf = 0, last = 0, now = 0;
+let diagOn = false, diagSince = 0, diagFrames = 0, diagJs = 0;
+
+function advance(t) {
+  const t0 = performance.now();
+  let dt = (t - last) / 1000;
+  last = t;
+  if (!(dt > 0)) dt = 1 / 60;
+  dt = Math.min(dt, 1 / 20);
+  now = t;
+  // Substeps, so a slow frame does not let a blob tunnel through another.
+  const sub = dt > 1 / 40 ? 2 : 1;
+  for (let i = 0; i < sub; i++) step(dt / sub);
+  parallax += (parallaxTarget - parallax) * Math.min(1, dt * 6);
+  draw();
+  if (diagOn) {
+    diagFrames++; diagJs += performance.now() - t0;
+    if (t - diagSince > 2000) {
+      console.log(`lava fps=${(diagFrames * 1000 / (t - diagSince)).toFixed(1)} js=${(diagJs / diagFrames).toFixed(1)}ms canvas=${W}x${H} blobs=${blobs.length}`);
+      diagSince = t; diagFrames = 0; diagJs = 0;
+    }
+  }
+}
+
+function frame(t) {
+  raf = requestAnimationFrame(frame);
+  advance(t);
+}
+
+/* ---------------------------------------------------- wallpaper manners */
+
+let wakeLock = null;
+async function keepAwake() {
+  if (!navigator.wakeLock || document.visibilityState !== "visible") return;
+  try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") keepAwake();
+});
+function goImmersive(e) {
+  if (e.pointerType && e.pointerType !== "touch") return;
+  keepAwake();
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+  }
+  window.removeEventListener("pointerdown", goImmersive);
+}
+window.addEventListener("pointerdown", goImmersive);
+
+function installIcon(size) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  const grad = g.createLinearGradient(0, 0, 0, size);
+  grad.addColorStop(0, "#08061c"); grad.addColorStop(1, "#3a0e3c");
+  g.fillStyle = grad; g.fillRect(0, 0, size, size);
+  const blob = (x, y, r, col) => {
+    const rg = g.createRadialGradient(x - r * 0.3, y - r * 0.35, r * 0.1, x, y, r);
+    rg.addColorStop(0, "#fff"); rg.addColorStop(0.25, col); rg.addColorStop(1, "#6a1150");
+    g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  };
+  blob(size * 0.5, size * 0.72, size * 0.24, "#ff6a3a");
+  blob(size * 0.36, size * 0.42, size * 0.15, "#ff4fb0");
+  blob(size * 0.66, size * 0.3, size * 0.11, "#c06cff");
+  return c.toDataURL("image/png");
+}
+(function installable() {
+  const head = document.head;
+  const manifest = {
+    name: "Lava lamp", short_name: "Lava", start_url: location.href,
+    display: "fullscreen", orientation: "portrait",
+    background_color: "#06030f", theme_color: "#06030f",
+    icons: [192, 512].map((s) => ({ src: installIcon(s), sizes: `${s}x${s}`, type: "image/png" })),
+  };
+  const link = document.createElement("link");
+  link.rel = "manifest";
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+  head.appendChild(link);
+})();
+
+/* ------------------------------------------------ the native host, if any
+ *
+ * The same seven calls the shaker page exposes, in the same units, so the
+ * Android service hosts either page without knowing which it has.
+ */
+let hostOffset = null;
+window.__shaker = {
+  motion(x, y, z, spin) {
+    onMotion({
+      accelerationIncludingGravity: { x, y, z },
+      rotationRate: spin === undefined ? null : { alpha: spin },
+    });
+  },
+  /* Home-screen page swipes. The lamp slides under the icons a little, and
+   * the liquid is dragged the other way, so the wax leans into the swipe. */
+  offset(t) {
+    parallaxTarget = (t - 0.5);
+    if (hostOffset === null) { hostOffset = t; return; }
+    const d = Math.max(-0.3, Math.min(0.3, t - hostOffset));
+    hostOffset = t;
+    flow.x -= d * 1.8;
+  },
+  /* A tap on the glass: the wax under it flinches away, and the poke stirs
+   * the liquid a little. */
+  tap(nx, ny) {
+    const px = nx * 2 - 1, py = (1 - ny) * Y;
+    for (const b of blobs) {
+      const dx = b.x - px, dy = b.y - py;
+      const d = Math.hypot(dx, dy) || 1e-6;
+      const reach = b.r + 0.45;
+      if (d > reach) continue;
+      const k = (1 - d / reach) * 0.9;
+      b.x += dx / d * k * 0.35;
+      b.y += dy / d * k * 0.35;
+      b.theta = Math.min(1, b.theta + k * 0.15);
+    }
+  },
+  pause() { cancelAnimationFrame(raf); raf = 0; },
+  resume() { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); },
+  drive() { cancelAnimationFrame(raf); raf = 0; last = performance.now(); },
+  tick() { advance(performance.now()); },
+  diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; diagJs = 0; },
+};
+
+/* Read-only state, for the test harness. */
+window.__lava = {
+  blobs, flow, gDir, config: CONFIG,
+  step(dt) { now += dt * 1000; step(dt); },
+  reseed() { seed(); },
+};
+
+/* ----------------------------------------------------------------- go */
+
+resize();
+seed();
+initGL();
+// Burn in: a lamp that has been on for a while, not one just switched on.
+for (let i = 0; i < 600; i++) { now += 50; step(0.05); }
+last = performance.now();
+keepAwake();
+raf = requestAnimationFrame(frame);
+</script>
+</body>
+</html>

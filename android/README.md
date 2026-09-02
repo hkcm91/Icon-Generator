@@ -47,12 +47,21 @@ software fallback locks a normal canvas rather than `lockHardwareCanvas()`,
 which is API 26. Nothing is lost by that, since a detached WebView renders in
 software either way.
 
-Then: **Settings → Wallpaper → Live Wallpapers → Liquid Shaker**, or long-press
-the home screen.
+Then: **Settings → Wallpaper → Live Wallpapers → Liquid Shaker** or
+**Lava Lamp**, or long-press the home screen. The APK carries both pages as
+two wallpaper services on one engine: `ShakerWallpaperService` hosts
+`index.html`, `LavaWallpaperService` hosts `lava.html`, and the only thing
+the second class knows is which page to load. To set the lamp from a shell:
 
-The page is not duplicated into the app. Both builds copy it out of
-`../wallpaper/index.html`, so there is one copy of it in the repository and the
-APK cannot drift from what you tested in a browser.
+```bash
+adb shell am start -a android.service.wallpaper.CHANGE_LIVE_WALLPAPER \
+  -e android.service.wallpaper.extra.LIVE_WALLPAPER_COMPONENT \
+  com.hkcm.liquidshaker/.LavaWallpaperService
+```
+
+The pages are not duplicated into the app. Both builds copy them out of
+`../wallpaper/`, so there is one copy of each in the repository and the APK
+cannot drift from what you tested in a browser.
 
 ## What the service actually does
 

@@ -3,4 +3,6 @@
     <string name="app_name">Liquid Shaker</string>
     <string name="wallpaper_name">Liquid Shaker</string>
     <string name="wallpaper_description">Tilt to pour it, shake to throw the glitter.</string>
+    <string name="lava_name">Lava Lamp</string>
+    <string name="lava_description">Tilt to pour the wax, twist to stir it, tap to poke it.</string>
 </resources>
