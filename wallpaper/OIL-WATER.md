@@ -424,89 +424,97 @@ gone in a quarter second. Radius does most of the work — at five radii and
 2,600px/s the oil bulges by a fifth and heals over about three seconds, which
 is what a finger in a viscous liquid does.
 
-## Several blobs, and why the seed is the only source of them
+## The oil has to rise
 
-The page used to be one oil layer that a shake tore up and that rebuilt itself.
-It now starts as several separate blobs, which is a different toy, and getting
-there needed three things at once.
+The page was tuned to hold seven seeded blobs apart for as long as possible,
+and to do that the buoyancy came down from 130 to 4. That was the wrong trade,
+and it took a flat "still doesn't look or behave like oil in water" to see it.
 
-**The seed places blobs rather than growing them.** Radii are drawn stratified
-log-uniform over a five-to-one range — one sample per band, jittered inside it
-— rather than as n independent draws, because independent draws routinely
-return a set that happens to be all one size, and n identical circles read as
-printed dots rather than as liquid. Centres are placed by Poisson-disc
-rejection, largest first, with a minimum separation of the two radii plus two
-interface widths, because uniform random placement clumps and a touching pair
-merges within the first second. The field is the *maximum* of the individual
-tanh profiles, not their sum: summing pushes `phi` past 1 wherever two are
-close and raises the floor everywhere else, and the free energy then spends
-frames undoing both.
+Buoyancy is not one property among several here. Oil is the lighter phase, so
+it rises, and rising is the behaviour that makes this oil and water rather than
+coloured shapes on a gradient. Nothing had ever measured it. `stats().centroid`
+now does — where the oil's centre of mass sits along the gravity direction, 0
+against the up wall and 1 against the down wall, so it means the same thing
+with the phone turned:
 
-**Nothing splits a drop.** This is the important constraint and it was
-measured, not assumed: a longer shake takes the blob count *down*, from seven
-to three, because shaking drives blobs into each other and every contact is a
-permanent merge. There is no fragmentation to balance it — a drop at this
-grid, tension and viscosity deforms and recovers rather than breaking. So the
-count only ever declines, the seed is the only source of blobs there is, and a
-shake consolidates rather than resetting.
+| | centroid at seed | +5s | +20s | +60s |
+| --- | --- | --- | --- | --- |
+| buoyancy 4 (as shipped) | 0.54 | 0.535 | 0.539 | 0.445 |
+| buoyancy 130 | 0.54 | 0.31 | 0.13 | 0.09 |
 
-That is a consequence of the two previous fixes rather than a separate choice.
-The viscosity that took the ridges out and the interfacial tension that took
-the thinness out are exactly the two things that stop a drop breaking up; at
-the old `nu = 32` and `tension = 600` a shake produced thirty-odd bodies, and
-they were the stringy, crenellated bodies that were the complaint. Fragmenting
-and blobby are the same dial, at opposite ends.
+A tenth of the cell in a minute against most of it in twenty seconds. The
+blobs were hanging motionless in the middle of the water, and no amount of
+shaping them was going to fix that.
 
-**Buoyancy sets how long the blobs last, and it is nearly free.** Buoyancy is
-what makes oil rise, and rising is what makes blobs meet. But the shake
-couples through the same term: gravity-driven creaming goes as `BUOY`, the
-shake goes as `BUOY × SHAKE_GAIN`. Holding that product fixed while lowering
-`BUOY` buys lifetime at no cost to the shake. Seven seeded blobs surviving to:
+## A shake cannot make an emulsion; turning it over can
 
-| `BUOY` | gain | peak RMS in the shake | +10s | +40s | +120s |
-| --- | --- | --- | --- | --- | --- |
-| 130 | 25 | 206 px/s | 6 | 1 | 1 |
-| 46 | 71 | 165 | 6 | 3 | 1 |
-| 20 | 167 | 181 | 7 | 5 | 1 |
-| 9 | 357 | 202 | 7 | 6 | 1 |
-| **4** | **833** | **207** | **7** | **6** | **4** |
+With the buoyancy back, blobs rise, meet, and merge, and a seeded set becomes
+one layer in about thirty seconds. Something has to make new ones, and it is
+worth being precise about what can.
 
-The shake does not weaken down the column, which is the whole point. What this
-says physically is that the two liquids are nearly density-matched — which is
-what a liquid-motion toy actually contains, and why the blobs in one drift
-rather than cream — and the amplification the shake needs rises in exact
-proportion to pay for it.
+**A shake cannot.** Measured across every viscosity from 15 to 90, the blob
+count after a shake only ever falls — a longer shake takes seven to three. The
+reason is structural rather than a tuning failure: the shake enters as a
+*uniform* body force, so what it produces is large-scale sloshing, and the
+projection removes the uniform part. Breaking a drop needs straining flow at
+the drop's own scale, which in a real jar comes from turbulence and on a
+96-cell grid does not exist.
 
-**Mobility was tried as a fourth lever and is not one.** Lowering it slows
-Ostwald ripening, which is what removes the small blobs, but 0.10 gave *fewer*
-blobs at a minute than 0.25 and 0.04 leaked the oil away entirely — 0.25 → 0.01
-over seven minutes, as the advection loses mass faster than a weak relaxation
-can re-sharpen it. It stays at 0.25.
+**Turning the phone over can.** Oil held underneath water is Rayleigh–Taylor
+unstable: the interface fingers, the fingers pinch off, and the drops rise.
+This solver has that instability for free, and it is the only mechanism on the
+page that *creates* blobs. Viscosity suppresses it, and at `nu = 90` it
+suppressed it completely — which nothing was measuring, because the metrics
+only ever looked at a shake. Blobs after a flip:
 
-**The honest limit:** the blobs decline. Seven hold for a minute, six at a
-minute, and after several minutes it is a few large ones. A wallpaper left
-alone for an hour is not showing seven blobs. Fixing that would mean either
-inventing a fragmentation mechanism the grid cannot support, or re-seeding on
-a shake, which would be oil teleporting into new drops. Neither is worth
-doing; `blobs` is a knob, and a shake is a deformation, not a reset.
+| `nu` | +1s | +3s | +6s | +12s | +25s | +50s | peak | ridges / skin at peak |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 90 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 8 / 0.06 |
+| **45** | 2 | 6 | 3 | 3 | 2 | 1 | **6** | 3.9 / 0.16 |
+| 25 | 4 | 5 | 5 | 3 | 2 | 1 | 5 | 3.7 / 0.16 |
 
-## What it looks like
+`nu` is 45. It is a narrow window: 90 is past the edge of a cliff, and below
+about 25 the outlines start to string out again.
 
-`docs/video/oil-water.mp4` — 22.5 seconds, 30fps, one deterministic take from
-`seed=17`: a second and a half at rest, a two-and-a-half second shake at
-2.5Hz, four seconds to settle, then the phone turned through a full revolution
-with a pause at each quarter.
+So the cycle the page actually offers is: oil rises and gathers into a layer;
+turn the phone and that layer is underneath, so it fingers, pinches into
+several drops, and they rise and re-merge over about forty seconds. That is
+what a real bottle does, and it is why the video is a rotation rather than a
+shake.
+
+## Two things the metrics get wrong
+
+**`skinFraction` punishes small drops.** It measures the fraction of oil that
+has not reached the well, as a proxy for tendrils, and a small round drop is
+legitimately mostly interface. It reads 0.42 on the frame that finally looked
+right — a layer at the top with several rounded drops rising under it, one
+pair mid-coalescence — which is the same figure it gives a field of threads.
+Read it together with `lobes` and `roundness`, never alone.
+
+**`lobes` counts fingers as ridges.** A Rayleigh–Taylor plume with three
+fingers scores six crossings, correctly and undesirably: the metric was built
+to catch a crenellated edge and cannot tell that apart from a shape that is
+supposed to have lobes in it. It read 8–12 during the fingering, which is the
+instability working rather than failing.
+
+Both were steering toward the still, smooth, single-blob cell that was the
+thing being complained about.
+
+## What it looks like## What it looks like
+
+`docs/video/oil-water.mp4` — 34 seconds, 30fps, one deterministic take from
+`seed=17`, and it is the cycle rather than a demo of a gesture: seven seeded
+drops rise and gather into a layer, a two-second shake stirs it, then the phone
+is turned over twice and each turn leaves the layer underneath the water, where
+it fingers, pinches into fresh drops, and they rise again.
 
 The take is driven on the virtual clock, two 60Hz solver ticks per captured
-frame, so it plays at real speed and is reproducible rather than a recording
-of one particular run.
+frame, so it plays at real speed and is reproducible rather than a recording of
+one particular run.
 
-Two things in it are worth watching. The shake deforms the blobs and slides
-them past each other without any of them breaking — which is the constraint
-described above, not a shortcoming of the take. And the rotation lags: gravity
-is low-passed with a 0.66s time constant, so the blobs do not snap to the new
-"up", they drift after it, which is a consequence of the sensor filter rather
-than anything drawn.
+Watch the second half rather than the shake. The shake only deforms; the turns
+are what make drops, and the lag between the turn and the oil responding is the
+0.66s time constant on the gravity filter rather than anything drawn.
 
 ## Options
 
@@ -517,7 +525,7 @@ Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
 | `mode` | `full` | `full` fills the screen; `pouch` floats a squircle on a backdrop |
 | `grid` | `96` | Cells across, and the most important number here. It sets the smallest droplet that can exist — an interface is about three cells wide, so a bead is never smaller than four or five — and therefore whether this behaves like two liquids at all. At 56 a shaken ribbon is seven cells across with three of them interface: no bulk to neck, so it cannot break into drops |
 | `oil` | `0.25` | Oil as a fraction of the cell. Past about a third the seeded blobs run out of room to be placed without touching; past about two thirds the water is the minority phase and the emulsion inverts, which is real and looks odd |
-| `blobs` | `7` | How many oil blobs to seed. This is the only source of blobs there is — see below |
+| `blobs` | `7` | How many oil blobs to seed. They rise and merge into a layer over about half a minute; turning the phone over is what makes new ones |
 | `layout` | `blobs` | `blobs` seeds separate drops; `layer` seeds oil floating on water, the original arrangement |
 | `ramp` | shaker's blue | The water, along the gravity axis. Same parameter and same default across all three pages |
 | `tint` | `#e8806c` | The oil. Ember Glow — the two phases have to differ in *hue*, or the separation the physics works so hard at is invisible |
@@ -528,7 +536,7 @@ Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
 | `sm` | `24` | Contour smoothing passes |
 | `buoyancy` | `1` | Density difference. At 0 the fluids weigh the same, they never separate, and shaking does literally nothing |
 | `visc` | `1` | Multiplies `nu`. Momentum diffusivity sets how fast droplets rise and, through it, how many ridges the oil's outline carries |
-| `nu` | `90` | Momentum diffusivity in cells²/s. The ridge knob — see above |
+| `nu` | `45` | Momentum diffusivity in cells²/s. Sets how many ridges the outline carries, and above about 60 it suppresses the fingering that makes drops — see above |
 | `vort` | `0` | Vorticity confinement. Non-zero puts back small eddies, and corrugates the oil |
 | `glass` | `0` | 0 is opaque water (a wallpaper); 1 drops the water so an icon shows the home screen through the cell |
 | `seed` | `20260831` | Names a cell: the same seed gives the same starting interface and the same sequence of shakes |
@@ -577,19 +585,20 @@ Driven headless in Chromium at 393×852 on the virtual clock described above.
 
 | Property | Result |
 | --- | --- |
-| Determinism from `seed` | three runs bit-identical: 7 blobs, 0 ridges, roundness 0.99, oil 0.247, rms 2 |
-| Sensor-rate independence (30 / 60 / 144 events per second) | 7 blobs and 0 ridges at all three; roundness 0.98 / 0.99 / 0.99, oil 0.249 / 0.247 / 0.247. Before the filters were made time-based the skin fraction spread 0.15 / 0.32 / 0.61 |
-| Mass, across a shake and 60s of settling | oil fraction 0.247 → 0.252 → 0.239; the loss is one small blob ripening away, not a leak. At the old shake gain a third of the oil disappeared |
+| Determinism from `seed`, at a fixed sensor rate | three runs bit-identical |
+| Sensor-rate independence (30 / 60 / 144 events per second) | **statistical, not exact, and that is new.** Over four seeds at three rates: centroid 0.11 ± 0.01, skin 0.45 ± 0.03, thickness 110 ± 25px, blobs 2.7 ± 1.0. The bulk behaviour — the oil climbs to the top — is rate-independent; which particular pair of drops merges is not, because coalescence after a shake is chaotic. At `nu = 90` every rate returned identical numbers, and that was the cell being too damped to do anything |
+| The oil rises | centroid 0.54 → 0.31 → 0.13 → 0.09 at seed / +5s / +15s / +40s |
+| Turning the phone over makes drops | 1 body before the flip, 3 at +3s, peaking at 6, back to 1–3 after forty seconds |
+| Mass, across a shake and 60s of settling | oil fraction 0.250 → 0.244 → 0.228; the loss is small blobs ripening into large ones, not a leak. At the old shake gain a third of the oil disappeared |
 | Rest state | 2–3 px/s RMS |
-| Settling after a 2.5s shake | 190 → 23 → 2 px/s at +0 / +2 / +10s |
-| Blob count across a 2.5s shake | 7 at rest, 7 at the end of the shake, 7 at +10s, 6 at +60s |
-| Roundness across a 2.5s shake | 1.00 at rest, 0.73 mid-shake, 0.98 by +2s, 0.99 by +10s |
-| Oil with no interior ("tendrils") | 0.23 at the end of the shake, 0.20 at +10s. Higher than the layer scored, and correctly so: small blobs are mostly interface |
-| Ridges per body | 4.2 at the end of the shake, 0 once settled |
+| Settling after a 2.5s shake | 290 → 114 → 18 → 2 px/s at +0 / +3 / +15s / +45s |
+| Blob count across a 2.5s shake | falls, never rises — 7 seeded, 6 at +5s, 4 at +15s, 1 at +40s. Only the flip puts them back |
+| Oil with no interior ("tendrils") | 0.42 four seconds after a shake — but see the note above on why this figure is not readable on its own |
+| Ridges per body | 4.1 four seconds after a shake; 8–12 during Rayleigh–Taylor fingering, which is fingers rather than ridges |
 | A planted square, no gravity | isoperimetric quotient 0.81 → 0.99 in 2s, 1.00 by 4s |
 | A planted plus-sign, no gravity | 0.69 → 1.00 in 2s |
 | Five planted droplets, no gravity, 40s | 4 of 5 survive (was 2 of 5 under the global multiplier) |
-| Tap and page-offset interaction, then pause/resume | no error, state finite; a tap raises RMS to 12 px/s and deforms the blobs without merging them |
+| Tap and page-offset interaction, then pause/resume | no error, state finite; a tap raises RMS to 59 px/s and deforms the blobs without merging them |
 | `layout=layer` still works | 1 body, thickness 192px, roundness 0.79, oil 0.423 |
 | Three different seeds | 7 blobs each, oil 0.250 / 0.250 / 0.251, all with a visible spread of sizes |
 | Mobility set to zero | interface smears to 96% of the cell and never separates — i.e. it becomes the shaker's dye |

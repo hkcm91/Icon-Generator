@@ -581,34 +581,25 @@ window.addEventListener("keydown", (e) => {
 /* ------------------------------------------------------------- the solver */
 
 /* Buoyancy: px/s^2 per g of effective gravity, acting on the density
- * difference between the phases. It was 130, and it is now 4.
+ * difference between the phases.
  *
- * This is the number that decides how long several blobs stay several blobs.
- * Nothing in this model splits a drop -- measured, a longer shake takes the
- * count from seven to three, because shaking drives blobs into each other and
- * every contact is a permanent merge -- so the seed is the only source of
- * blobs there is, and everything after it is decline. Buoyancy sets the rate:
- * it is what makes the oil rise, and rising is what makes blobs meet.
+ * This was dropped to 4 to make several seeded blobs last, and that was the
+ * wrong trade. Buoyancy is not one property among several here -- it is the
+ * behaviour that makes this oil and water rather than coloured shapes. Oil is
+ * the lighter phase, so it rises, and at 4 it did not: measured, the oil's
+ * centre of mass moved a tenth of the cell in sixty seconds. Blobs that hang
+ * motionless in the middle of the water are not oil in water whatever they
+ * look like, and no amount of shaping them fixes that.
  *
- * Halving it does not halve the shake, though, because the drive couples
- * through the same term. Gravity-driven creaming goes as BUOY; the shake goes
- * as BUOY * SHAKE_GAIN. Holding that product fixed while lowering BUOY buys
- * blob lifetime for free. Measured, seven seeded blobs surviving to:
+ * Back at 130 the same measurement is 0.29 of the cell to 0.09 in thirty
+ * seconds -- the oil climbs and gathers, which is the thing the eye is
+ * actually reading for.
  *
- *   BUOY  gain   peak rms   +10s  +40s  +120s
- *    130    25      206        6     1      1
- *     46    71      165        6     3      1
- *     20   167      181        7     5      1
- *      9   357      202        7     6      1
- *      4   833      207        7     6      4
- *
- * The peak speed during the shake does not move, which is the point.
- *
- * Physically this says the two liquids are nearly density-matched, which is
- * what a liquid-motion toy actually contains -- the blobs in one drift rather
- * than cream. The cost is that the amplification the shake needs rises in
- * exact proportion, and SHAKE_GAIN goes up by the same factor to pay it. */
-const BUOY = 4;
+ * The cost is real and is accepted: rising is what makes blobs meet, and
+ * every meeting is a permanent merge, so a seeded set of blobs becomes a
+ * layer in about thirty seconds. What puts them back is the flip below, not a
+ * longer blob lifetime. */
+const BUOY = 130;
 /* How many g of effective gravity a g of hand motion is worth, and the one
  * number on this page that is a lie. It is named here rather than buried
  * because it is worth being straight about which part is physics.
@@ -644,32 +635,47 @@ const BUOY = 4;
  *     25           115 px              100%          22 px/s
  *     10           191 px              100%          12 px/s, never breaks up
  *
- * 25 was the corner. The number here is 800 rather than 25 only because the
- * buoyancy came down by the same factor to make several blobs last -- see the
- * note on BUOY. What the fluid feels is the product, and the product is
- * unchanged.
+ * 25 is the corner: below it a shake only sloshes the layers and they never
+ * separate into bodies at all; above it the tearing starts and the thickness
+ * falls off a cliff.
+ *
+ * It went to 800 for a while, to pay for a buoyancy of 4. The buoyancy is back
+ * at 130 and so is this.
  */
-const SHAKE_GAIN = num("gain", 800);
-/* Momentum diffusivity, cells^2/s, and the knob that decides how many ridges
- * the oil's outline has.
+const SHAKE_GAIN = num("gain", 25);
+/* Momentum diffusivity, cells^2/s. It sets how many ridges the oil's outline
+ * carries, and it also decides whether the cell can make blobs at all.
  *
  * It sat at 32 and could not be raised, because the explicit diffusion below
  * clamped its coefficient -- see the note there. Once the clamp was replaced
- * by sub-stepping, the small-scale flow that corrugates the boundary could
+ * by sub-stepping, the small-scale flow that corrugates a boundary could
  * finally be damped. Counting curvature sign changes per body on one seeded
  * shake, area-weighted (a circle scores 0, a peanut 2):
  *
  *   nu    at shake end   +1s   +3s   +10s   mean thickness
  *    32        20         10     6      4        121 px
+ *    45         -          -     -      -            -
  *    60         8          6     6      0        163 px
  *    90         4          6     6      0        183 px
- *   130         4          4     6      0        192 px
  *
- * 90 is where the outline becomes a few long curves rather than a crenellated
- * edge, and it is as far as this should go: past it the cell is so viscous
- * that a shake barely deforms the layer at all.
+ * On that evidence it went to 90, and 90 turned out to be past the edge of a
+ * cliff nothing was measuring. Turning the phone over puts the oil underneath
+ * the water, which is Rayleigh-Taylor unstable: the layer should finger and
+ * pinch off into rising drops, and that is the only mechanism on this page
+ * that *creates* blobs -- a shake merely deforms them and drives them
+ * together. Viscosity suppresses the instability, and at 90 it suppresses it
+ * completely. Blobs counted after a flip:
+ *
+ *   nu    +1s  +3s  +6s  +12s  +25s  +50s   peak   ridges/skin at peak
+ *    90     1    1    1     1     1     1      1        8 / 0.06
+ *    45     2    6    3     3     2     1      6      3.9 / 0.16
+ *    25     4    5    5     3     2     1      5      3.7 / 0.16
+ *
+ * 45 is the compromise, and it is a narrow one: it fingers into six drops,
+ * and the outline at the peak is smoother than 90 managed, because drops that
+ * small are held round by tension rather than by being stirred slowly.
  */
-const NU = num("nu", 90);
+const NU = num("nu", 45);
 const BULK_DRAG = 0.15;    // 1/s
 const WALL_DRAG = 1.6;     // 1/s, in the cells touching glass
 /* Vorticity confinement, off.
@@ -2029,6 +2035,31 @@ window.__shaker = {
           num2 += crossings * A; den += A;
         }
         return den > 0 ? num2 / den : 0;
+      })(),
+      /* Where the oil is, vertically, as a fraction of the cell: 0 is hard
+       * against the top, 1 against the bottom. Measured along the gravity
+       * direction rather than the screen, so it means the same thing with the
+       * phone turned.
+       *
+       * This is the number that says whether the page is behaving like oil in
+       * water at all. Oil is the lighter phase, so it rises; a cell where the
+       * oil's centre of mass does not travel is not oil in water, whatever
+       * the shapes in it look like. Nothing measured that until now. */
+      centroid: (() => {
+        let m = 0, acc = 0;
+        for (let j = 1; j < GH - 1; j++)
+          for (let i = 1; i < GW - 1; i++) {
+            const w = Math.max(0, phi[j * GW + i]);
+            if (w <= 0) continue;
+            /* Distance along gravity from the centre, then re-centred, so
+             * that 0 is the up wall and 1 the down wall whichever way the
+             * phone is held. Projecting the raw corner-relative position
+             * instead goes negative once gDir points up, which is what the
+             * first version of this did. */
+            const x = (i - 1) / (GW - 2) - 0.5, y = (j - 1) / (GH - 2) - 0.5;
+            acc += w * (0.5 + x * gDir.x + y * gDir.y); m += w;
+          }
+        return m > 0 ? acc / m : 0;
       })(),
       skinFraction: (() => {
         let oil = 0, skin = 0;
