@@ -4004,7 +4004,13 @@ function fixedStep(dt, time) {
    * accumulating (14% -> 34% of all glitter) and drew two bright stripes down
    * the sides; the microglitter did it alone, the hero flakes never did.
    * Raising the body's own settleRate fixes it too, but at the cost of the
-   * hanging drift this whole layer exists for. */
+   * hanging drift this whole layer exists for.
+   *
+   * This slows the trap rather than defeating it. Paired over six seeds
+   * (same shake, +30s to +150s at rest): the outer band grew by +13pp on
+   * average without the floor and shrank by 3pp with it, lower in every
+   * seed — but three of the six still climbed. The delivery mechanism is
+   * the post-shake recirculation, which this does not touch. */
   const WALL_SHED_RATE = 0.5;
 
   /* Wall response. Reflecting the inward correction and keeping the
