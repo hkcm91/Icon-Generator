@@ -84,7 +84,7 @@ LOOKS = {
         "threshold": 0.75, "stretch": 0.7, "pool": 0.04, "depth": 0.7,
         "gloss": 1.0, "swirl": 0,
         "glow": 0.7, "glow_reach": 0.75, "bulb": 2600.0, "crown": 140.0,
-        "backlight": 0.0, "glint": 1200.0, "bloom": 0.35,
+        "backlight": 0.0, "glint": 3000.0, "glint_size": 0.25, "bloom": 0.35,
         "env": 7.0, "haze": 0.12, "density": 2.6, "dof": 7.0,
         "liquid_colour": "0.05,0.03,0.20", "crest": "0.40,0.22,0.92",
         "backdrop": "0.001,0.002,0.009", "backdrop_floor": "0.16,0.04,0.20",
@@ -369,10 +369,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     out.add_argument("--backlight-colour", default="0.55,0.12,0.85",
                      help="colour of that backlight as r,g,b")
     out.add_argument("--glint", type=float, default=0.0,
-                     help="wattage of one small hard light, high and to the "
-                          "front-left. Every other source here is broad and "
-                          "gives a broad sheen; a wet highlight is a small "
-                          "bright point. 0 disables it")
+                     help="wattage of one white panel high and to the "
+                          "front-left, lighting the wax alone. Every other "
+                          "source here is a warm wash; this is the mirror "
+                          "highlight on a wet blob. 0 disables it")
+    out.add_argument("--glint-size", type=float, default=0.15,
+                     help="side of that glint panel as a fraction of the "
+                          "frame reach. Small is a pin-prick sparkle; around "
+                          "0.35 it reads as the broad white window reflection "
+                          "a wet blob carries on its shoulder")
     out.add_argument("--bloom", type=float, default=0.0,
                      help="0-1 glow bleeding off bright areas, via the "
                           "compositor. Cycles has none of its own, and it is "
@@ -943,6 +948,10 @@ def wax_material(reference: bpy.types.Object, height: float, colour,
     put(bsdf, ("Subsurface Radius",), (1.0, 0.45, 0.22))
     put(bsdf, ("Coat Weight", "Clearcoat"), 0.35 + 0.65 * gloss)
     put(bsdf, ("Coat Roughness", "Clearcoat Roughness"), 0.12 - 0.10 * gloss)
+    # A wet skin reflects more than a 1.5 varnish does: the reference's
+    # white shoulder highlight is a hard mirror, so glossy pushes the coat
+    # IOR up and the reflection with it.
+    put(bsdf, ("Coat IOR",), 1.5 + 0.4 * gloss)
     try:
         bsdf.subsurface_method = "RANDOM_WALK"
     except TypeError:
@@ -1979,15 +1988,32 @@ def build_lighting(args, height: float, r_max: float, centre: float,
                         (math.radians(-90), 0.0, 0.0), ortho * 0.9,
                         args.backlight, args.backlight_rgb)
         if args.glint > 0.0:
-            glint_data = bpy.data.lights.new("Glint", "POINT")
+            # A square panel, not a point. Through the tinted liquid a point
+            # light's reflection never arrived on the wax however bright it
+            # was made: a hard coat gets its highlight from the paths that
+            # bounce off it and go looking for the light, and inside a
+            # volume Cycles loses those. A panel is found by light sampling
+            # from the surface instead, which survives. It is also the shape
+            # the reference shows: a soft-edged window on every shoulder.
+            glint_data = bpy.data.lights.new("Glint", "AREA")
+            glint_data.shape = "SQUARE"
+            glint_data.size = reach * args.glint_size
             glint_data.energy = args.glint
-            glint_data.shadow_soft_size = 0.05
             glint_data.color = (1.0, 0.97, 0.95)
+            # The light sits outside the bottle. To a shadow ray the glass
+            # wall is opaque (a light seen through refraction is a caustic,
+            # which Cycles drops) and the tinted liquid absorbs whatever
+            # gets past it, so with shadows on the glint never reached the
+            # wax at all. It exists to put a highlight on a coat, and a
+            # highlight is view-dependent anyway: no shadow rays.
+            glint_data.use_shadow = False
             glint = link(bpy.data.objects.new("Glint", glint_data))
             glint.location = (-reach * 0.5, -reach * 0.45, centre + height * 0.4)
+            aim = Vector((0.0, 0.0, centre)) - Vector(glint.location)
+            glint.rotation_euler = aim.to_track_quat("-Z", "Y").to_euler()
             hide_from_camera(glint)
-            # A small source in front of the column reflects in the front
-            # glass wall as a bright spot, whatever ray flags it carries.
+            # A source in front of the column reflects in the front glass
+            # wall as a bright patch, whatever ray flags it carries.
             # Light-link it to the wax alone: it then puts a highlight on
             # every blob and does not exist as far as the glass is concerned.
             receivers = bpy.data.collections.new("Glint_Receivers")
@@ -2063,7 +2089,13 @@ def configure_render(args, scene: bpy.types.Scene) -> None:
     scene.cycles.transmission_bounces = 24
     scene.cycles.transparent_max_bounces = 24
     scene.cycles.volume_bounces = 6
-    scene.cycles.blur_glossy = 0.6
+    # Filter Glossy blurs every glossy reflection seen after a bounce, and
+    # the wax is only ever seen after one: the camera ray refracts through
+    # the glass wall first. At 0.6 a point light's reflection in a blob's
+    # coat smeared into a broad sheen and no setting of the light could
+    # sharpen it. Near zero the wet highlight is a hard white spot, which
+    # is the whole point of the coat; the denoiser takes the fireflies.
+    scene.cycles.blur_glossy = 0.05
     # The bulb is a small bright source seen through two refracting surfaces
     # and a volume, which is the textbook recipe for fireflies. Clamping the
     # indirect ray costs a little bloom and removes them.
