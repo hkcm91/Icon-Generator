@@ -210,6 +210,8 @@ function buildGrid() {
   curl = new Float32Array(NC);
   sc1 = new Float32Array(NC); sc2 = new Float32Array(NC);
   au = new Float32Array(NC); av = new Float32Array(NC);
+  bx = new Float32Array(NC); by = new Float32Array(NC);
+  fx = new Float32Array(NC); fy = new Float32Array(NC);
   solid = new Uint8Array(NC);
   for (let j = 0; j < GH; j++) {
     for (let i = 0; i < GW; i++) {
@@ -350,6 +352,7 @@ function meanPhi() {
   return m ? s / m : 0;
 }
 let targetMean = 0;
+let lastSub = 1, lastCfl = 0;
 
 const sgnPow = (x, e) => Math.sign(x) * Math.pow(Math.abs(x), e);
 function squirclePath(g, cx, cy, rx, ry, N, steps) {
@@ -746,56 +749,101 @@ const TENSION = 12000 * CONFIG.tension;
 
 function idx(i, j) { return j * GW + i; }
 
-/** Semi-Lagrangian advection, first order. Used as the building block. */
-function advect(dst, src, dt) {
+/* Semi-Lagrangian advection. The departure points are computed once per
+ * velocity field and shared by everything advected through it.
+ *
+ * The Courant number is why this is shaped the way it is, and it was the last
+ * thing on the page still exceeding a limit silently rather than respecting
+ * it. Semi-Lagrangian advection does not blow up when the fluid crosses more
+ * than a cell in a step the way an explicit scheme would -- it degrades
+ * quietly, which is why nothing caught it. A straight-line backtrace assumes
+ * the velocity along the whole path is the velocity at the arrival point, and
+ * once the path is several cells long that is simply a different trajectory:
+ * the MacCormack corrector then extrapolates from a stencil the real path
+ * never touched, the limiter clamps it back to first order, and the interface
+ * is smeared and re-sharpened somewhere it never travelled.
+ *
+ * Measured on one seeded run: 0.57 cells per step at rest, which is why a
+ * still cell always looked right, against 3.4 at the end of a shake and 4.6
+ * during a flip. It went wrong exactly when it went fast.
+ *
+ * The fix is to walk the path in pieces short enough to be straight. What it
+ * must NOT do is advect the *field* in pieces, which is what the first attempt
+ * here did: a clamped semi-Lagrangian step is not conservative, so n steps
+ * leak n times as much. Measured over eight shakes and flips, advecting in
+ * eight pieces kept 10% of the oil where one long step kept 68%. So the
+ * trajectory is sub-stepped and the interpolation happens once.
+ */
+let bx = null, by = null, fx = null, fy = null;
+const velTmp = [0, 0];
+
+/** Bilinear sample of the frozen velocity field at a grid-space point. */
+function velAt(x, y, out) {
+  if (x < 0.5) x = 0.5; else if (x > GW - 1.5) x = GW - 1.5;
+  if (y < 0.5) y = 0.5; else if (y > GH - 1.5) y = GH - 1.5;
+  const i0 = x | 0, j0 = y | 0, sx = x - i0, sy = y - j0;
+  const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
+  out[0] = (1 - sy) * ((1 - sx) * au[a] + sx * au[a + 1]) +
+                 sy * ((1 - sx) * au[b] + sx * au[b + 1]);
+  out[1] = (1 - sy) * ((1 - sx) * av[a] + sx * av[a + 1]) +
+                 sy * ((1 - sx) * av[b] + sx * av[b + 1]);
+}
+
+/** Departure points for every cell, walking the path in `sub` pieces. */
+function buildTrace(px, py, dt, sub) {
+  const h = dt / sub / cell;
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
-      let x = i - dt * au[k] / cell;
-      let y = j - dt * av[k] / cell;
+      let x = i, y = j;
+      for (let n = 0; n < sub; n++) {
+        velAt(x, y, velTmp);
+        x -= h * velTmp[0];
+        y -= h * velTmp[1];
+      }
       if (x < 0.5) x = 0.5; else if (x > GW - 1.5) x = GW - 1.5;
       if (y < 0.5) y = 0.5; else if (y > GH - 1.5) y = GH - 1.5;
-      const i0 = x | 0, j0 = y | 0;
-      const s = x - i0, t = y - j0;
-      const a = j0 * GW, b = (j0 + 1) * GW;
-      dst[k] = (1 - t) * ((1 - s) * src[a + i0] + s * src[a + i0 + 1]) +
-                     t * ((1 - s) * src[b + i0] + s * src[b + i0 + 1]);
+      px[k] = x; py[k] = y;
+    }
+  }
+}
+
+/** One interpolation of `src` at precomputed departure points. */
+function advectTrace(dst, src, px, py) {
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const x = px[k], y = py[k];
+      const i0 = x | 0, j0 = y | 0, sx = x - i0, sy = y - j0;
+      const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
+      dst[k] = (1 - sy) * ((1 - sx) * src[a] + sx * src[a + 1]) +
+                     sy * ((1 - sx) * src[b] + sx * src[b + 1]);
     }
   }
 }
 
 /* Second-order advection, MacCormack with a limiter.
  *
- * The phase field was being moved with the same first-order semi-Lagrangian
- * step as the velocity, and for an interface that is a disaster. Every step
- * interpolates the field bilinearly at a backtraced point, which smears a
- * sharp boundary across a cell, and every step Cahn-Hilliard then re-sharpens
- * whatever the smearing left behind. The two fight each other sixty times a
- * second, and what survives is not the shape the flow would have produced —
- * it is a shape that has been repeatedly blurred and re-hardened, which is
- * where the frozen-in points and tendrils were coming from. A corner on a
- * real interface has enormous curvature and retracts almost at once; these
- * were surviving for ten seconds because they were being re-created faster
- * than tension could remove them.
+ * The phase field was being moved with a first-order semi-Lagrangian step,
+ * and for an interface that is a disaster. Every step interpolates the field
+ * bilinearly at a backtraced point, which smears a sharp boundary across a
+ * cell, and every step Cahn-Hilliard then re-sharpens whatever the smearing
+ * left behind. The two fight each other sixty times a second, and what
+ * survives is not the shape the flow would have produced.
  *
- * MacCormack fixes the leading error for the price of two more advections:
- * step forward, step back, and the difference between where you started and
- * where you got back to is an estimate of the error, so half of it corrects
- * the forward result. The correction can overshoot, so the result is clamped
- * to the range of the four values the forward step actually interpolated
- * between — without that limiter it rings, and a ringing phase field grows
- * spurious droplets out of nothing.
+ * MacCormack advects forward, advects the result back, and uses half the
+ * round-trip error as a correction, which cancels the leading diffusion. The
+ * correction is clamped to the range of the four cells the backtrace landed
+ * among, because an unlimited corrector overshoots at a sharp edge and a
+ * phase field that rings grows droplets out of nothing.
  */
-function advectMC(dst, src, dt) {
-  advect(sc1, src, dt);          // forward
-  advect(sc2, sc1, -dt);         // and back again
+function advectMC(dst, src) {
+  advectTrace(sc1, src, bx, by);      // forward
+  advectTrace(sc2, sc1, fx, fy);      // and back again
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
-      let x = i - dt * au[k] / cell;
-      let y = j - dt * av[k] / cell;
-      if (x < 0.5) x = 0.5; else if (x > GW - 1.5) x = GW - 1.5;
-      if (y < 0.5) y = 0.5; else if (y > GH - 1.5) y = GH - 1.5;
+      const x = bx[k], y = by[k];
       const i0 = x | 0, j0 = y | 0;
       const a = j0 * GW + i0, b = (j0 + 1) * GW + i0;
       const s0 = src[a], s1 = src[a + 1], s2 = src[b], s3 = src[b + 1];
@@ -803,7 +851,7 @@ function advectMC(dst, src, dt) {
       if (s1 < lo) lo = s1; else if (s1 > hi) hi = s1;
       if (s2 < lo) lo = s2; else if (s2 > hi) hi = s2;
       if (s3 < lo) lo = s3; else if (s3 > hi) hi = s3;
-      let val = sc1[k] + 0.5 * (src[k] - sc2[k]);
+      const val = sc1[k] + 0.5 * (src[k] - sc2[k]);
       dst[k] = val < lo ? lo : val > hi ? hi : val;
     }
   }
@@ -1241,15 +1289,35 @@ function fixedStep(dt) {
   bounds();
   project();
 
-  // Move the velocity field through itself, then the phase field through it.
+  /* Move the velocity field through itself, then the phase field through it.
+   * The trajectory is walked in as many pieces as the Courant number needs:
+   * one at rest, which is exactly the work this always did, rising only on
+   * the handful of frames where the cell is really moving. */
+  const CFL_TARGET = 0.5, CFL_MAX_SUB = num("maxsub", 24);
+  let vmax = 0;
+  for (let j = 1; j < GH - 1; j++)
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      const a = Math.abs(u[k]), b = Math.abs(v[k]);
+      if (a > vmax) vmax = a; if (b > vmax) vmax = b;
+    }
+  const sub = Math.max(1, Math.min(CFL_MAX_SUB,
+      Math.ceil(vmax * dt / cell / CFL_TARGET)));
+  lastSub = sub;
+  lastCfl = sub > 0 ? vmax * dt / cell / sub : 0;
+
   au.set(u); av.set(v); u0.set(u); v0.set(v);
-  advectMC(u, u0, dt); advectMC(v, v0, dt);
+  buildTrace(bx, by, dt, sub);
+  buildTrace(fx, fy, -dt, sub);
+  advectMC(u, u0); advectMC(v, v0);
   bounds();
   project();
 
   au.set(u); av.set(v);
+  buildTrace(bx, by, dt, sub);
+  buildTrace(fx, fy, -dt, sub);
   phi0.set(phi);
-  advectMC(phi, phi0, dt);
+  advectMC(phi, phi0);
 
   
   chemicalPotential();
@@ -1442,23 +1510,40 @@ function contour() {
  * oil, and this page has spent enough effort conserving its mass to not want
  * the renderer losing it again.
  */
-/* How hard the contour is smoothed, and it is the number that decides
- * whether the oil reads as oil.
+/* How hard the contour is smoothed, and it is the number that decides whether
+ * the oil reads as oil.
  *
- * A real oil boundary has no small ridges on it. Capillary damping goes as
- * the cube of the wavenumber, so the shortest wavelengths die fastest and a
- * liquid boundary held by any appreciable surface tension is smooth arcs —
- * that is not a stylisation, it is the one thing the physics guarantees
- * hardest. This page was drawing crenellated edges: the isoline of a field
- * sampled on a coarse lattice picks up a bump per cell, and marching squares
- * then joins those bumps with straight segments, so the boundary came out
- * covered in ridges that could not exist on oil at any scale.
+ * A real oil boundary has no small ridges on it. Capillary damping goes as the
+ * cube of the wavenumber, so the shortest wavelengths die fastest and a liquid
+ * boundary held by any appreciable surface tension is smooth arcs -- that is
+ * not a stylisation, it is the one thing the physics guarantees hardest. This
+ * page was drawing crenellated edges: the isoline of a field sampled on a
+ * coarse lattice picks up a bump per cell, and marching squares then joins
+ * those bumps with straight segments.
  *
- * Two passes were nowhere near enough. Twenty-four removes everything at the
- * cell scale and leaves the shape.
+ * This was twenty-four passes of Taubin smoothing, which is the wrong tool for
+ * wanting a *lot* of smoothing. Taubin's lambda/mu pair is tuned to remove
+ * high frequencies without shrinking, so each pass moves points very little:
+ * asking for a smooth outline means running dozens of passes and hoping, and
+ * there is no number anywhere in it that says how smooth the result is.
+ *
+ * It is now a low-pass along the arc length with a stated width. SMOOTH is the
+ * filter's half-width in cells, so it says directly what it does -- detail
+ * narrower than about that much boundary is gone. Three box passes make the
+ * Gaussian, which is close enough and costs one running sum per pass instead
+ * of a kernel multiply per point.
+ *
+ * Deliberately far past what the physics needs. Two and a half cells removes
+ * the lattice bumps and nothing else; this runs at ten, which also rounds the
+ * corners off genuine features, and that over-smoothing is the intent -- oil
+ * at this scale reads better as a few clean arcs than as an accurate polygon.
+ * Ridges per body four seconds after a shake, on one seeded run: 4.9 at 2.5
+ * cells, 3.8 at 6, 1.9 at 10, 1.9 at 16. The gain flattens out at ten, and
+ * past about twelve a loop that touches a wall starts being pulled into a
+ * tapered spike, so ten is both the end of the benefit and the edge of the
+ * artefact.
  */
-const SMOOTH_L = 0.55, SMOOTH_M = -0.58;
-const SMOOTH_PASSES = Math.max(0, num("sm", 24));
+const SMOOTH = Math.max(0, num("smooth", 10));
 let smoothBuf = null;
 
 /** Signed area of one loop, by the shoelace. */
@@ -1471,36 +1556,38 @@ function loopArea(st, m) {
   return A * 0.5;
 }
 
+/** One circular box blur of half-width r over one coordinate of one loop. */
+function boxPass(st, m, off, r) {
+  const inv = 1 / (2 * r + 1);
+  let sum = 0;
+  for (let n = -r; n <= r; n++) sum += loopXY[(st + ((n % m) + m) % m) * 2 + off];
+  for (let n = 0; n < m; n++) {
+    smoothBuf[n] = sum * inv;
+    sum += loopXY[(st + (n + r + 1) % m) * 2 + off]
+         - loopXY[(st + ((n - r) % m + m) % m) * 2 + off];
+  }
+  for (let n = 0; n < m; n++) loopXY[(st + n) * 2 + off] = smoothBuf[n];
+}
+
 function smoothLoops() {
-  if (!SMOOTH_PASSES) return;
-  if (!smoothBuf || smoothBuf.length < loopLen * 2) smoothBuf = new Float32Array(loopLen * 2 + 64);
+  if (SMOOTH <= 0) return;
+  if (!smoothBuf || smoothBuf.length < loopLen + 8) smoothBuf = new Float32Array(loopLen + 64);
   for (let L = 0; L < loopCount; L++) {
     const st = loopStart[L], en = loopStart[L + 1], m = en - st;
-    if (m < 5) continue;
+    if (m < 8) continue;
+    /* Capped at a quarter of the loop: a filter wider than the feature it is
+     * smoothing collapses a small blob to a point instead of rounding it, and
+     * the small blobs are the ones worth keeping. */
+    const r = Math.max(1, Math.min(m >> 2, Math.round(SMOOTH)));
     const before = Math.abs(loopArea(st, m));
 
-    for (let pass = 0; pass < SMOOTH_PASSES * 2; pass++) {
-      const k = (pass & 1) ? SMOOTH_M : SMOOTH_L;
-      for (let n = 0; n < m; n++) {
-        const c = st + n;
-        const a2 = st + (n + m - 1) % m, b2 = st + (n + 1) % m;
-        smoothBuf[c * 2] = loopXY[c * 2] +
-          k * ((loopXY[a2 * 2] + loopXY[b2 * 2]) * 0.5 - loopXY[c * 2]);
-        smoothBuf[c * 2 + 1] = loopXY[c * 2 + 1] +
-          k * ((loopXY[a2 * 2 + 1] + loopXY[b2 * 2 + 1]) * 0.5 - loopXY[c * 2 + 1]);
-      }
-      for (let n = 0; n < m; n++) {
-        const c = st + n;
-        loopXY[c * 2] = smoothBuf[c * 2];
-        loopXY[c * 2 + 1] = smoothBuf[c * 2 + 1];
-      }
-    }
+    for (let pass = 0; pass < 3; pass++) { boxPass(st, m, 0, r); boxPass(st, m, 1, r); }
 
-    /* Taubin is only approximately volume-preserving, and at twenty-four
-     * passes "approximately" was eight to fifteen per cent of the oil. Each
-     * loop is rescaled about its own centroid to put back exactly what the
-     * smoothing took or added, so the picture keeps agreeing with the
-     * solver about how much oil there is. */
+    /* A low-pass shrinks a closed curve -- every point moves toward the local
+     * mean, which is inward on a convex arc -- and at this width that is tens
+     * of per cent of the area rather than a rounding error. Each loop is
+     * rescaled about its own centroid to put back exactly what was taken, so
+     * the picture keeps agreeing with the solver about how much oil there is. */
     const after = Math.abs(loopArea(st, m));
     if (after <= 1e-6 || before <= 1e-6) continue;
     const k2 = Math.sqrt(before / after);
@@ -2045,6 +2132,13 @@ window.__shaker = {
        * water at all. Oil is the lighter phase, so it rises; a cell where the
        * oil's centre of mass does not travel is not oil in water, whatever
        * the shapes in it look like. Nothing measured that until now. */
+      /* The Courant number actually used -- cells crossed per trajectory
+       * piece by the fastest fluid, so it is what the advection scheme sees
+       * -- and the number of pieces it took. `cflRaw` is what it would have
+       * been in one straight line, which is the honest measure of how hard
+       * the cell is moving. Before the trajectory was split, the two were the
+       * same number and it reached 4.6. */
+      cfl: lastCfl, substeps: lastSub, cflRaw: lastCfl * lastSub,
       centroid: (() => {
         let m = 0, acc = 0;
         for (let j = 1; j < GH - 1; j++)

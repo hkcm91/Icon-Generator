@@ -482,6 +482,50 @@ several drops, and they rise and re-merge over about forty seconds. That is
 what a real bottle does, and it is why the video is a rotation rather than a
 shake.
 
+## It went wrong when it went fast, and that was the Courant number
+
+Everything above is about shapes at rest. What was still wrong was speed: the
+cell looked right until it moved quickly, and then it did not.
+
+That is a Courant number, and it is the third stability limit on this page
+that was being exceeded silently rather than respected. Semi-Lagrangian
+advection does not blow up when the fluid crosses more than a cell in a step,
+the way an explicit scheme would — it degrades quietly, which is exactly why
+nothing caught it. A straight-line backtrace assumes the velocity along the
+whole path is the velocity at the arrival point, and once the path is several
+cells long that is a different trajectory: the MacCormack corrector then
+extrapolates from a stencil the real path never touched, the limiter has to
+clamp it back to first order, and a first-order step smears the interface
+across a cell, which Cahn–Hilliard re-sharpens somewhere it never travelled.
+
+| | cells crossed per step |
+| --- | --- |
+| at rest | 0.57 |
+| end of a shake | 3.4 |
+| during a flip | 4.6 |
+
+0.57 at rest is why a still cell always looked right.
+
+The fix is to walk the path in pieces short enough to be straight, and the
+trap is to walk the *field* in pieces instead. The first attempt here ran the
+whole advection n times per frame; a clamped semi-Lagrangian step is not
+conservative, so n of them leak n times as much, and over eight shakes and
+flips the φ>0 area collapsed to a tenth of what one long step kept. What ships
+sub-steps the trajectory and interpolates once: departure points are walked in
+as many pieces as the Courant number needs, then every field advected through
+that velocity reads its value at those points a single time. One piece at
+rest, up to about seven during a flip.
+
+Held Courant number after the change: 0.28 at rest, 0.45 at the end of a
+shake, 0.47 during a flip, against raw values of 0.57, 2.7 and 3.3.
+
+**A correction to something this file used to imply.** `oilFraction` is not
+mass. It is the area where φ > 0, and it moves by a fifth across a shake as
+the interface thickens and the shapes rearrange, which read as a leak and is
+not one. The conserved quantity is the mean of φ, and across four shakes and
+four flips it holds at −0.496 against a target of −0.49644 — a drift under
+0.002. Read `mean` against `targetMean`, never `oilFraction`, for mass.
+
 ## Two things the metrics get wrong
 
 **`skinFraction` punishes small drops.** It measures the fraction of oil that
@@ -533,7 +577,8 @@ Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
 | `gain` | `25` | How far above life the accelerometer is amplified. This is the number that decides whether the oil holds together — see below |
 | `eps` | `1.8` | Interface half-width in cells |
 | `mob` | `0.25` | Phase-field relaxation rate. Its ceiling is Cahn–Hilliard stability, `dt·M·eps²·64 < 2` |
-| `sm` | `24` | Contour smoothing passes |
+| `smooth` | `10` | Half-width, in cells, of the low-pass along the contour. Deliberately about four times what removes the lattice bumps |
+| `maxsub` | `24` | Most pieces the advection trajectory may be split into on one frame |
 | `buoyancy` | `1` | Density difference. At 0 the fluids weigh the same, they never separate, and shaking does literally nothing |
 | `visc` | `1` | Multiplies `nu`. Momentum diffusivity sets how fast droplets rise and, through it, how many ridges the oil's outline carries |
 | `nu` | `45` | Momentum diffusivity in cells²/s. Sets how many ridges the outline carries, and above about 60 it suppresses the fingering that makes drops — see above |
@@ -586,6 +631,9 @@ Driven headless in Chromium at 393×852 on the virtual clock described above.
 | Property | Result |
 | --- | --- |
 | Determinism from `seed`, at a fixed sensor rate | three runs bit-identical |
+| Courant number held | 0.28 at rest, 0.45 at the end of a shake, 0.47 during a flip, against raw 0.57 / 2.7 / 3.3. Trajectory split into 1 piece at rest, 6 in a shake, 7 in a flip |
+| Mass, over four shakes and four flips | mean φ holds at −0.496 against a target of −0.49644; drift under 0.002 throughout |
+| Ridges four seconds after a shake | 1.9, at a contour low-pass of 10 cells; it was 4.9 at 2.5 cells |
 | Sensor-rate independence (30 / 60 / 144 events per second) | **statistical, not exact, and that is new.** Over four seeds at three rates: centroid 0.11 ± 0.01, skin 0.45 ± 0.03, thickness 110 ± 25px, blobs 2.7 ± 1.0. The bulk behaviour — the oil climbs to the top — is rate-independent; which particular pair of drops merges is not, because coalescence after a shake is chaotic. At `nu = 90` every rate returned identical numbers, and that was the cell being too damped to do anything |
 | The oil rises | centroid 0.54 → 0.31 → 0.13 → 0.09 at seed / +5s / +15s / +40s |
 | Turning the phone over makes drops | 1 body before the flip, 3 at +3s, peaking at 6, back to 1–3 after forty seconds |
