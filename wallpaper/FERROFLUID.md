@@ -124,6 +124,18 @@ crest rather than beside it. Measured over a minute at five phone sizes,
 anything from 20 to 50 px produced the same crest statistics to within the
 run-to-run scatter, so there was nothing to tune and the physics chose it.
 
+**How hard the magnets drive depends on how finely the liquid is resolved**,
+and that is not a nicety either. A finer liquid needs harder driving to make
+the same shapes — the same field over a pool of twice as many drops raises a
+smooth mound where it used to raise a crown — so going to 1800 drops needed the
+field up by half and `pull` up by seven tenths. But `drops` deliberately does
+*not* grow with the screen, so a tablet's liquid is as coarse as the phone's
+used to be, and driving that as hard took the tablets apart the moment it was
+applied flat: 12% of drops still in one body at 1024×1366, twenty thrown out of
+the cell. So the compensation follows the resolution it is compensating for,
+interpolated between the two spacings by name. With it the same run is 99%,
+nothing escaped.
+
 **A broader magnet makes sharper spikes**, which is backwards until you see
 why. Held tight and strong, the field is effectively a point: the pool is
 hauled bodily up underneath it and what rises is a dome — a geyser. Held
@@ -299,8 +311,20 @@ drags about, that never grows a single peak.
 ## How it is drawn
 
 A thousand discs are not a liquid; one contour around the sum of a thousand
-kernels is — but only if the kernels are wide enough, and that single number
-decided more of how this reads than any force in the solver. At the original
+kernels is — but only if there are enough of them and they are wide enough, and
+those two numbers decided more of how this reads than any force in the solver.
+
+**A thousand was not enough.** At 8.9 px of spacing the outline was visibly
+made of things: bead-strings, one-drop-thick worms, white lagoons torn open
+where the pool stretched, specks flying off. Round after round of retuning the
+forces moved that not at all, because it was never a force problem — a spike
+thirty pixels wide was three particles, and three particles cannot be a cone.
+At 1800 the same scene is a smooth continuous body with a clean conical peak.
+Nothing else in this document produced a change of that size.
+
+It costs 3.6 ms a frame → 5.9. `drops=1000` is the way back for a slow device
+and `drops=700` faster still; both look like the older, grainier piece, which
+is the honest description of what they are. At the original
 1.44 drop spacings each drop barely overlapped its neighbours, so the outline
 undulated at the drop scale: bead-strings, one-drop-thick worms, a silhouette
 visibly made of *things*. A liquid has no such scale. Widened to 2.4 the field
@@ -419,12 +443,12 @@ Append as query parameters, e.g. `ferrofluid.html?spike=30&filings=0`.
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a square tile on the paper |
 | `fill` | `0.185` | Fraction of the cell's area holding liquid |
-| `drops` | `1000` | Drop count. Deliberately not scaled with the screen: the spacing is derived from the fill area and this, so a fixed count means a larger screen shows the same picture larger rather than the same picture made of more and finer drops |
+| `drops` | `1800` | Drop count, and the single biggest lever on whether this reads as a liquid or as a swarm of particles — see **How it is drawn**. Lower it for speed at the cost of the look |
 | `ink` | `#0b0b0d` | The liquid |
 | `paper` | `#f2f2f3` | Everything else |
 | `poles` | `2` | Drifting magnets. `0` leaves a pool that only answers the phone |
 | `field` | `1` | Overall magnet strength |
-| `pull` | `1.3` | Magnetophoretic force near a pole, in gravities. A *body* force, so raising it lifts the pool as one mass and drowns the spikes — see the geyser-versus-crown note above |
+| `pull` | `1.3` | Magnetophoretic force near a pole, in gravities, before the resolution scaling below. A *body* force, so raising it lifts the pool as one mass and drowns the spikes |
 | `spike` | `20` | Surface traction at full magnetisation, in gravities (capped at 3 in flight) |
 | `chain` | `0.1` | Dipole force between neighbouring drops |
 | `tension` | `0.01` | Surface tension, as surface-area minimisation, in gravities. `0` is the older look: taller spikes, and a visibly more shredded one. Above about `0.02` it starts rounding the crown off into mounds |
@@ -477,15 +501,15 @@ clock, so runs are comparable.
 | --- | --- |
 | Runtime errors across 12 configurations and 8 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped, at any size — tablets included, for the first time |
 | Drops leaving the cell — ever, in any of the below | 0 of 1000 |
-| A 2 s shake | 92% of drops in a body before, 89% immediately after, 89% ten seconds later; peak speed 929 px/s |
-| Four taps in nine seconds, the worst a user can do to it | 98% -> 93% -> 81%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
-| Five home-screen swipes arriving in one frame | 92% -> 86% -> 91%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
-| 52° of tilt held 12 s | 100% in a body, occupying 83,323–416,876 of 420×880 |
-| Face up on a desk for a minute | 82% in a body, and the liquid's top averages 51% down the screen. Before the weight had a floor it covered the screen |
-| 45 s idle | 99% in a body, drop count constant |
-| 60 fps against 30 fps, 8 s idle | mean 2.5 px apart, max 11 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
-| JavaScript per frame, 1000 drops | 4.6 ms median, 5.4 ms at the 95th percentile, with a realistic gap between frames — 0.9 ms of that is the wider metaball kernel, A/B'd. `drops=700` takes it to 3.6 / 4.0 ms. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
-| Frame-to-frame change with the liquid at rest | 0.13/255 mean, 0.24% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
+| A 2 s shake | 92% of drops in a body before, 98% immediately after, 93% ten seconds later; peak speed 874 px/s |
+| Four taps in nine seconds, the worst a user can do to it | 99% -> 96% -> 91%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
+| Five home-screen swipes arriving in one frame | 92% -> 91% -> 95%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
+| 52° of tilt held 12 s | 98% in a body, occupying 60,226–417,877 of 420×880 |
+| Face up on a desk for a minute | 87% in a body, and the liquid's top averages 64% down the screen. Before the weight had a floor it covered the screen |
+| 45 s idle | 98% in a body, drop count constant |
+| 60 fps against 30 fps, 8 s idle | mean 3.4 px apart, max 11 px, against a drop spacing of 6.6 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
+| JavaScript per frame, 1800 drops | 5.9 ms median, 7.1 ms at the 95th percentile, with a realistic gap between frames. `drops=700` takes it to 2.8 / 3.2 ms, and looks it. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
+| Frame-to-frame change with the liquid at rest | 0.23/255 mean, 0.37% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
 
 Two of those numbers were themselves wrong before this table was checked
 against how the thing runs. The frame cost was quoted as 8.5 ms, which was a

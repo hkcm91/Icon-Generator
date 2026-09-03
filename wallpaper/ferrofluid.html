@@ -95,7 +95,7 @@ const CONFIG = {
    * derived from the fill area and this number, so a fixed count means a
    * larger screen shows the same picture larger, rather than the same picture
    * made out of more and finer drops. */
-  drops: Math.round(num("drops", 1000)),
+  drops: Math.round(num("drops", 1800)),
 
   /* Ink and paper. Everything else in the page is one of these two or a grey
    * between them; there is no third colour anywhere. */
@@ -401,7 +401,25 @@ function buildSources() {
  * read it and they have to agree: the magnets themselves, and the iron filings,
  * which weight their ink by how much of this the strongest magnet is currently
  * exerting. */
-const AMBIENT_FIELD = CONFIG.field * 1.3;
+/* How hard the magnets drive, against how finely the liquid is resolved: 0 at
+ * the spacing this was originally tuned at, 1 at the spacing a phone gets now.
+ *
+ * A finer liquid needs harder driving to make the same shapes — the same field
+ * over a pool of twice as many drops raises a smooth mound where it used to
+ * raise a crown. But `drops` deliberately does not grow with the screen, so a
+ * tablet's liquid is as coarse as the phone's used to be, and driving *that*
+ * as hard took the tablets apart again the moment it was applied flat: 12% of
+ * drops still in one body at 1024x1366, twenty of them thrown out of the cell.
+ * So the compensation follows the resolution it is compensating for. */
+const SPACING_COARSE = 8.9, SPACING_FINE = 6.6;
+const drive = () =>
+  Math.max(0, Math.min(1, (SPACING_COARSE - spacing) / (SPACING_COARSE - SPACING_FINE)));
+
+/* What an ambient magnet is pulling with at the top of its cycle. Two things
+ * read it and they have to agree: the magnets themselves, and the iron
+ * filings, which weight their ink by how much of this the strongest magnet is
+ * currently exerting. */
+const ambientField = () => CONFIG.field * mix(1.3, 1.95, drive());
 const RING_NORM = Math.pow(1.5, 1.5) * Math.SQRT2;   // = 1/max(r/(r²+z²)^{3/2} · z²)
 
 /* A magnet can also be a *pair* of opposite poles a short way apart — a bar
@@ -728,7 +746,7 @@ function stepPoles(t, dt) {
      * not: a near standoff is a tighter, stronger magnet, which is what makes
      * a crown of spikes rather than a broad mound. */
     p.z = mix(FAR_Z, NEAR_Z, strength);
-    p.strength = AMBIENT_FIELD * strength * p.sign;
+    p.strength = ambientField() * strength * p.sign;
     /* Which way the bar magnet points, laid out in the gravity frame with
      * everything else. Across the cell rather than along it, though the two
      * measured within noise of each other — the axis is not the lever the
@@ -1034,7 +1052,7 @@ function applyBodyForces(dt) {
   const sx = -accel.x * G * 1.25, sy = -accel.y * G * 1.25;
   // ∇H has units of 1/length, so the pull is made dimensionless against a
   // typical pole standoff. That is what lets `pull` read as gravities.
-  const pull = CONFIG.pull * G * refU() * 0.16;
+  const pull = CONFIG.pull * mix(1, 1.7, drive()) * G * refU() * 0.16;
   const pullCap = PULL_CLAMP * G;
   const spike = CONFIG.spike * G;
   const spikeCap = SPIKE_CLAMP * G;
@@ -1932,7 +1950,7 @@ function drawFilings(g) {
    * is a picture of a magnet that is not there. Weighted, the hatch comes up
    * as a magnet comes down and is gone while it is away, so it says when
    * something is about to happen rather than merely where. */
-  const duty = Math.min(1, ref / AMBIENT_FIELD);
+  const duty = Math.min(1, ref / ambientField());
   const step = Math.max(22, U * 0.07);
   const len = step * 0.38;
   g.strokeStyle = rgba(INK, 1);
