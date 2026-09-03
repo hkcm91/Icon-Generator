@@ -25,6 +25,8 @@
  *   FF_MP4       where to write            (default /tmp/ferrofluid/ferrofluid.mp4)
  *   FF_SECONDS   clip length               (default 23)
  *   FF_QUERY     extra page parameters     (default none)
+ *   FF_W FF_H    viewport, in CSS pixels   (default 432x912, a phone)
+ *   FF_SCALE     device pixel ratio        (default 2)
  *   FFMPEG       an ffmpeg with libx264
  *   PW_CHROMIUM  a chromium binary, if Playwright cannot find its own
  */
@@ -43,8 +45,16 @@ const QUERY = process.env.FF_QUERY ?? '';
 const SECONDS = Number(process.env.FF_SECONDS ?? 30);
 
 /* A phone-shaped viewport at twice the scale. Both dimensions have to stay
- * even: yuv420p subsamples chroma by two, and every player wants yuv420p. */
-const W = 432, H = 912, SCALE = 2;
+ * even: yuv420p subsamples chroma by two, and every player wants yuv420p —
+ * which is why the overrides are rounded down to even rather than trusted.
+ *
+ * Worth overriding for one thing in particular: the magnets are single poles
+ * below the reference size and bar magnets above it, so a phone-shaped clip
+ * says nothing about how it behaves on a tablet. */
+const even = (v) => Math.max(2, Math.floor(v / 2) * 2);
+const W = even(Number(process.env.FF_W ?? 432));
+const H = even(Number(process.env.FF_H ?? 912));
+const SCALE = Number(process.env.FF_SCALE ?? 2);
 const FPS = 30;                    // captured
 const SUB = 2;                     // physics steps per captured frame
 const DT = 1000 / (FPS * SUB);     // so the simulation still runs at 60 Hz
