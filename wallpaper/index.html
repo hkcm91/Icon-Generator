@@ -3568,35 +3568,55 @@ function paintSurfaceBubbleGlint(poly) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(Math.atan2(displayTan.y, displayTan.x));
-  const glow = ctx.createRadialGradient(-rx * 0.28, -ry * 0.34, 0,
-    0, 0, rx);
-  glow.addColorStop(0, "rgba(255,255,255,.42)");
-  glow.addColorStop(0.30, "rgba(255,255,255,.15)");
-  glow.addColorStop(0.78, "rgba(169,224,255,.06)");
-  glow.addColorStop(1, "rgba(91,166,225,0)");
+  /* No outline. A trapped pocket of air seen through glass has no drawn edge:
+   * what makes it read as air is a soft interior brightness, one elongated
+   * specular off the curved film, and a dark refracted band along its
+   * underside where light leaving the liquid is bent away from the eye. The
+   * previous full ellipse stroke, crisp arcs and hard white dot read as a
+   * diagram of a bubble laid over the picture. Everything here is a gradient
+   * with no hard edge. */
+  // Interior: brighter and slightly desaturated toward the upper-left.
+  const glow = ctx.createRadialGradient(-rx * 0.30, -ry * 0.40, 0, 0, 0, rx);
+  glow.addColorStop(0, "rgba(255,255,255,.34)");
+  glow.addColorStop(0.35, "rgba(240,250,255,.14)");
+  glow.addColorStop(0.80, "rgba(190,230,250,.05)");
+  glow.addColorStop(1, "rgba(120,180,230,0)");
   ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // A complete film outline, bright upper arc and cool lower refraction make
-  // this read as one trapped bubble instead of a smooth dent in the waterline.
+  ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+
+  // Underside: a dark refracted band, soft on both edges, hugging the lower
+  // rim of the pocket. This is what separates air from a pale smear.
+  ctx.save();
+  ctx.scale(1, ry / rx);
+  const under = ctx.createRadialGradient(0, rx * 0.12, rx * 0.66, 0, rx * 0.12, rx * 1.02);
+  under.addColorStop(0, "rgba(20,70,140,0)");
+  under.addColorStop(0.55, "rgba(20,70,140,.20)");
+  under.addColorStop(0.85, "rgba(30,90,160,.12)");
+  under.addColorStop(1, "rgba(30,90,160,0)");
+  ctx.fillStyle = under;
+  ctx.beginPath(); ctx.arc(0, rx * 0.12, rx * 1.02, 0.06 * Math.PI, 0.94 * Math.PI); ctx.fill();
+  ctx.restore();
+
+  // Specular: one soft elongated highlight along the upper film, not a dot.
+  ctx.save();
+  ctx.translate(-rx * 0.26, -ry * 0.42);
+  ctx.rotate(-0.18);
+  ctx.scale(1, 0.34);
+  const spec = ctx.createRadialGradient(0, 0, 0, 0, 0, rx * 0.42);
+  spec.addColorStop(0, "rgba(255,255,255,.72)");
+  spec.addColorStop(0.45, "rgba(255,255,255,.28)");
+  spec.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = spec;
+  ctx.beginPath(); ctx.arc(0, 0, rx * 0.42, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  // A faint, wide, soft brightening along the upper rim in place of the old
+  // crisp arc: the film catches light, it is not drawn on.
   ctx.lineCap = "round";
-  ctx.lineWidth = Math.max(1, bubbleUnit * 0.9);
-  ctx.strokeStyle = "rgba(220,245,255,.38)";
-  ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.lineWidth = Math.max(1.4, bubbleUnit * 1.35);
-  ctx.strokeStyle = "rgba(255,255,255,.67)";
-  ctx.beginPath(); ctx.ellipse(0, 0, rx * 0.91, ry * 0.76, 0,
-    Math.PI * 1.08, Math.PI * 1.78); ctx.stroke();
-  ctx.lineWidth = Math.max(1, bubbleUnit);
-  ctx.strokeStyle = "rgba(42,126,205,.28)";
-  ctx.beginPath(); ctx.ellipse(0, ry * 0.08, rx * 0.94, ry * 0.83, 0,
-    0.12 * Math.PI, 0.88 * Math.PI); ctx.stroke();
-  ctx.fillStyle = "rgba(255,255,255,.62)";
-  ctx.beginPath();
-  ctx.ellipse(-rx * 0.31, -ry * 0.28, Math.max(2.2, rx * 0.075),
-    Math.max(1.2, ry * 0.14), -0.22, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.lineWidth = Math.max(3, bubbleUnit * 3.2);
+  ctx.strokeStyle = "rgba(255,255,255,.10)";
+  ctx.beginPath(); ctx.ellipse(0, 0, rx * 0.90, ry * 0.78, 0,
+    Math.PI * 1.10, Math.PI * 1.80); ctx.stroke();
   ctx.restore();
 }
 
@@ -3815,6 +3835,29 @@ function render(time) {
   ctx.fillStyle = under;
   ctx.fillRect(0, 0, W, H);
 
+  /* Depth. A flat gradient reads as a printed colour; a real body of liquid
+   * gets deeper and darker with distance from the light, which enters at
+   * the top, and toward the glass at the sides. Two multiplied gradients:
+   * one down the gravity axis into the bottom third, one radial toward the
+   * edges. Multiply deepens the blue rather than greying it. */
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  const deep = ctx.createLinearGradient(
+    CX + displayUp.x * (displayLevel - displayUpExtent * 0.75),
+    CY + displayUp.y * (displayLevel - displayUpExtent * 0.75),
+    CX - displayUp.x * displayUpExtent, CY - displayUp.y * displayUpExtent);
+  deep.addColorStop(0, "rgba(255,255,255,1)");
+  deep.addColorStop(1, "rgba(150,178,222,1)");
+  ctx.fillStyle = deep;
+  ctx.fillRect(0, 0, W, H);
+  const edge = ctx.createRadialGradient(CX, CY, Math.min(RX, RY) * 0.55,
+    CX, CY, Math.hypot(RX, RY) * 1.02);
+  edge.addColorStop(0, "rgba(255,255,255,1)");
+  edge.addColorStop(1, "rgba(172,196,232,1)");
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
   // Depth pass two: everything in front of the mid-plane, over the tint.
   drawMicro(true);
   drawParticles(starSplit, stars.length, bubbleSplit, bubbles.length, time);
@@ -3898,6 +3941,14 @@ function render(time) {
     ctx.strokeStyle = "rgba(126,180,208,.5)";
     ctx.lineWidth = Math.max(1, RX * 0.0035);
     path(band * 0.42); ctx.stroke();
+
+    /* And a dark refracted line just under the bright rim, inside the
+     * liquid. Seen from the front, the underside of an air-liquid interface
+     * bends light away from the eye, so a real waterline carries a thin
+     * shadow beneath its highlight. Without it the rim floats. */
+    ctx.strokeStyle = "rgba(18,64,130,.30)";
+    ctx.lineWidth = Math.max(1.2, RX * 0.0045);
+    path(-band * 0.18); ctx.stroke();
   }
   ctx.lineCap = "butt";
   ctx.lineJoin = "miter";
