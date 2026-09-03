@@ -703,7 +703,7 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `1650` | Medium and hero glitter count |
 | `micro` | `2000` | Cached microglitter count; with `stars`, 4,000 visible pieces. Was 20,000, which read as white static, then 6,000, which still filled the body |
-| `bubbles` | `112` | Persistent air-bubble count |
+| `bubbles` | `150` | Persistent air-bubble count. Large ones are capped at five, so most of these are fine beads |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the

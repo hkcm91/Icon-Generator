@@ -81,7 +81,9 @@ const CONFIG = {
    * keeps the settled bed and a faint shimmer between the flakes without
    * filling the liquid. */
   micro: num("micro", 2000),
-  bubbles: num("bubbles", 84),
+  // Was 84. The large population is capped at five regardless, so raising
+  // this adds fine bubbles; the seed and birth sizes below lean small too.
+  bubbles: num("bubbles", 150),
   scale: num("scale", 0.78),       // pouch mode only: size vs the short edge
   // 80 columns keeps the soft dye/flow field visually continuous while
   // removing roughly thirty per cent of the grid work done every fixed tick.
@@ -1412,7 +1414,9 @@ function bubbleSeedRadius(allowLarge) {
   if (allowLarge && Math.random() < 0.075) {
     return (10 + Math.random() * 9) * bubbleUnit;
   }
-  return (2.8 + Math.pow(Math.random(), 1.35) * 6.7) * bubbleUnit;
+  // Skewed harder toward the small end than before (1.35 / 6.7): the extra
+  // bubbles should read as fine beads, not more mid-size ones.
+  return (2.6 + Math.pow(Math.random(), 1.8) * 5.6) * bubbleUnit;
 }
 
 function bubbleBirthRadius() {
@@ -1431,7 +1435,7 @@ function bubbleBirthRadius() {
   if (large < 5 && Math.random() < 0.025 + agit * 0.13) {
     return (6.5 + Math.random() * (4.5 + agit * 5)) * bubbleUnit;
   }
-  return (2.8 + Math.random() * 4.4) * bubbleUnit;
+  return (2.6 + Math.random() * 3.6) * bubbleUnit;
 }
 
 /* Buoyant gravity for the bubbles, px/s^2 per g. Deliberately far below the
