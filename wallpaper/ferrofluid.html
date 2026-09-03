@@ -122,6 +122,10 @@ const CONFIG = {
   field: num("field", 1),          // overall magnet strength
   pull: num("pull", 1.3),
   spike: num("spike", 20),
+  /* Surface tension, as a surface-area minimisation, in gravities. Cohesion
+   * alone never gave the liquid a reason to prefer a smooth shape to a lumpy
+   * one; this does, and it is also what gives the spikes a spacing. */
+  tension: num("tension", 0.01),
   chain: num("chain", 0.1),
   /* How much of its own field the liquid makes. This is the one that turns a
    * lifted pool into a crown of spikes rather than a lifted pool: see
@@ -829,6 +833,9 @@ const MAX_CATCHUP = 3;
 let N = 0;
 let px, py, vx, vy, ox, oy;        // position, velocity, position before the step
 let den, snx, sny, surf;           // density, surface normal, how free a surface it is
+let cnx, cny;                      // the same normal before it was normalised — the colour-field
+                                   // gradient, which is ~0 in the bulk and only that is what keeps
+                                   // surface tension a surface force
 let rdx, rdy;                      // relaxation correction owed to each drop
 let ehx, ehy, egx, egy;            // applied field, and the gradient of its magnitude
 let ehux, ehuy, emm;               // its direction, and the magnetisation it alone induces
@@ -913,6 +920,7 @@ function buildParticles() {
   den = new Float32Array(N);
   rdx = new Float32Array(N); rdy = new Float32Array(N);
   snx = new Float32Array(N); sny = new Float32Array(N); surf = new Float32Array(N);
+  cnx = new Float32Array(N); cny = new Float32Array(N);
   ehx = new Float32Array(N); ehy = new Float32Array(N);
   egx = new Float32Array(N); egy = new Float32Array(N);
   ehux = new Float32Array(N); ehuy = new Float32Array(N); emm = new Float32Array(N);
@@ -924,7 +932,17 @@ function buildParticles() {
   const area = 4 * RX * RY * CONFIG.fill;
   spacing = Math.sqrt(area / (N * Math.sqrt(3) / 2));
   IR = spacing * 2.2;
-  KR = spacing * 1.44;
+  /* The metaball kernel, as a multiple of the drop spacing — and the number
+   * that decides whether this reads as a liquid or as a thousand particles.
+   *
+   * At 1.44 each drop barely overlapped its neighbours, so the surface
+   * undulated at the drop scale: bead-strings, one-drop-thick worms, a
+   * silhouette that was visibly made of things. A liquid has no such scale.
+   * Widened to 2.4 the field between neighbours is flat and the outline is
+   * the shape of the body rather than of its sampling — measured, the
+   * perimeter for a given area falls by a fifth. It costs nothing in the
+   * physics, which does not know the drawing exists, and 0.9 ms a frame. */
+  KR = spacing * 2.4;
   REST = measureRestDensity();
   G = 4.0 * refU();
   buildHash();
@@ -1158,6 +1176,11 @@ function passA(dt) {
   const selfCap = SELF_CLAMP;
   for (let i = 0; i < N; i++) {
     const m = Math.hypot(snx[i], sny[i]);
+    /* Keep the gradient before it is normalised. The direction is what the
+     * traction wants, but surface tension wants the *length* too: it is
+     * essentially zero a couple of layers into the bulk, and that is the only
+     * thing stopping a surface-area force from acting throughout the liquid. */
+    cnx[i] = snx[i]; cny[i] = sny[i];
     if (m > 1e-6) { snx[i] /= m; sny[i] /= m; } else { snx[i] = 0; sny[i] = 0; }
     /* How much of a free surface this drop is part of — which is not the
      * same as how exposed it is, and the difference is the whole stability of
@@ -1184,6 +1207,65 @@ function passA(dt) {
     const h = Math.hypot(hx, hy);
     if (h > 1e-9) { uhx[i] = hx / h; uhy[i] = hy / h; pm[i] = magnetisation(h); }
     else { uhx[i] = 0; uhy[i] = 0; pm[i] = 0; }
+  }
+}
+
+/* Surface tension, and the thing this model was missing.
+ *
+ * The liquid has had cohesion from the start — the signed pressure of the
+ * double density relaxation pulls it together wherever it is thinner than it
+ * wants to be. What it has never had is any preference for a *small* surface,
+ * and those are not the same thing. Cohesion forces balance each other
+ * perfectly well in shapes that are nothing like the smallest surface, which
+ * is why the pool has always looked lumpy and gloopy rather than liquid: every
+ * bump it acquired, it kept.
+ *
+ * This is the curvature half of Akinci, Akinci and Teschner (SIGGRAPH 2013).
+ * For a pair it is
+ *
+ *   F = -γ K (n_a - n_b),   K = 2ρ₀/(ρ_a + ρ_b)
+ *
+ * with n the *un-normalised* colour-field gradient. Where the surface is flat
+ * the neighbouring normals agree and it does nothing; over a bump they splay
+ * apart and it pulls the bump back into line. Applied antisymmetrically, so it
+ * moves no momentum and cannot push the pool across the screen. K is there so
+ * that a thinly-populated patch is not tensioned more weakly than a crowded
+ * one just for being thin.
+ *
+ * There is a second thing it buys, which is not decoration. The Rosensweig
+ * instability has no length scale without it — nothing in a bare magnetic
+ * traction prefers a spike four drops wide to one drop wide, which is why the
+ * traction needed a clamp to stop it peeling the surface off one drop at a
+ * time. In a real ferrofluid what sets the spacing of the spikes is exactly
+ * this: the balance of surface tension against gravity and the field, and the
+ * spikes come out one capillary wavelength apart. So the same term that makes
+ * it flow also makes the crown regular instead of arbitrary.
+ */
+function passTension(dt) {
+  const gam = CONFIG.tension * G * dt;
+  if (gam <= 0) return;
+  for (let a = 0; a < N; a++) {
+    const xa = px[a], ya = py[a];
+    const nax = cnx[a], nay = cny[a], da = den[a];
+    const cx = Math.floor(xa / IR) + 1, cy = Math.floor(ya / IR) + 1;
+    for (let j = cy - 1; j <= cy + 1; j++) {
+      if (j < 0 || j >= hashH) continue;
+      for (let i = cx - 1; i <= cx + 1; i++) {
+        if (i < 0 || i >= hashW) continue;
+        const c = j * hashW + i;
+        for (let k = hashStart[c], e = hashStart[c + 1]; k < e; k++) {
+          const b = hashItems[k];
+          if (b <= a) continue;
+          const dx = px[b] - xa, dy = py[b] - ya;
+          const d2 = dx * dx + dy * dy;
+          if (d2 >= IR * IR) continue;
+          const kk = gam * 2 * REST / Math.max(1e-3, da + den[b]);
+          const fx = kk * (nax - cnx[b]), fy = kk * (nay - cny[b]);
+          vx[a] -= fx; vy[a] -= fy;
+          vx[b] += fx; vy[b] += fy;
+        }
+      }
+    }
   }
 }
 
@@ -1312,6 +1394,7 @@ function stepSim(dt) {
   sortHash();
   fieldPass();
   passA(dt);
+  passTension(dt);
   applyBodyForces(dt);
   for (let i = 0; i < N; i++) {
     ox[i] = px[i]; oy[i] = py[i];
@@ -1396,7 +1479,9 @@ let F;                             // the scalar field
 let coverCanvas, coverCtx, coverImage;
 let blurCanvas, blurCtx;
 
-const ISO = 0.62;
+/* The isolevel, raised with the kernel above so the liquid covers the same
+ * fraction of the screen as before rather than fattening by a tenth. */
+const ISO = 1.6;
 const ANISO = 1.9;                 // how prolate a saturated free surface gets
 
 function buildField() {
@@ -1557,6 +1642,7 @@ function contours() {
     }
     if (loop.length >= 8) loops.push(loop);
   }
+
   return loops;
 }
 

@@ -205,8 +205,36 @@ near-density whose pressure is strictly repulsive and stops the first from
 collapsing everything to a point.
 
 Cohesion, incompressibility, and two beads merging when they touch all fall
-out of those two terms. There is no surface-tension force anywhere in the
-file, and no special case for a droplet.
+out of those two terms, and there is no special case for a droplet.
+
+**Cohesion is not surface tension, though, and for a long time this had only
+the first.** That turns out to be the difference between a liquid and a swarm.
+Akinci, Akinci and Teschner make the point exactly ([SIGGRAPH
+2013](https://history.siggraph.org/learning/versatile-surface-tension-and-adhesion-for-sph-fluids-by-akinci-akinci-and-teschner/)):
+cohesion forces "can trivially balance each other in a form that does not
+necessarily correspond to the smallest surface area". A pool held together by
+cohesion alone keeps every bump it ever acquires, because nothing in it prefers
+a smooth shape to a lumpy one.
+
+So the curvature half of their model is here now. For a pair of drops,
+
+    F = -γ K (n_a - n_b),   K = 2ρ₀/(ρ_a + ρ_b)
+
+with **n the un-normalised colour-field gradient** — that detail is the whole
+thing. Normalised, every drop in the bulk would get a unit vector pointing in
+whatever direction its rounding errors happened to face, and a surface-area
+force would act throughout the liquid. Un-normalised it is essentially zero two
+layers in, so the term is a surface force because of what it is made of rather
+than because of a flag. It is applied antisymmetrically, so it moves no
+momentum and cannot push the pool across the screen.
+
+There is a second thing it buys, which is not decoration. The Rosensweig
+instability *has no length scale* without it: nothing in a bare magnetic
+traction prefers a spike four drops wide to one drop wide, which is why the
+traction has always needed a clamp to stop it peeling the surface off one drop
+at a time. In a real ferrofluid what sets the spacing is precisely this balance
+— surface tension against gravity and the field — and the peaks come out about
+one capillary wavelength apart.
 
 The rest density is not a tuned constant. It is measured at startup by summing
 the solver's own kernel over a hexagonal packing at the drop spacing, which
@@ -271,7 +299,18 @@ drags about, that never grows a single peak.
 ## How it is drawn
 
 A thousand discs are not a liquid; one contour around the sum of a thousand
-kernels is. The field is splatted on a grid and the isoline extracted with
+kernels is — but only if the kernels are wide enough, and that single number
+decided more of how this reads than any force in the solver. At the original
+1.44 drop spacings each drop barely overlapped its neighbours, so the outline
+undulated at the drop scale: bead-strings, one-drop-thick worms, a silhouette
+visibly made of *things*. A liquid has no such scale. Widened to 2.4 the field
+between neighbours is flat and the outline is the shape of the body rather than
+of its sampling — measured, the perimeter for a given area falls by a fifth,
+with the isolevel raised alongside so the liquid covers the same fraction of
+the screen instead of fattening by a tenth. It changes no physics at all; the
+solver does not know the drawing exists.
+
+The field is splatted on a grid and the isoline extracted with
 marching squares, keyed by grid edge rather than by coordinate — so the
 contour is chained by integer identity and never by a tolerance on two floats
 that ought to be equal. The grid extends past the screen by the kernel's
@@ -388,6 +427,7 @@ Append as query parameters, e.g. `ferrofluid.html?spike=30&filings=0`.
 | `pull` | `1.3` | Magnetophoretic force near a pole, in gravities. A *body* force, so raising it lifts the pool as one mass and drowns the spikes — see the geyser-versus-crown note above |
 | `spike` | `20` | Surface traction at full magnetisation, in gravities (capped at 3 in flight) |
 | `chain` | `0.1` | Dipole force between neighbouring drops |
+| `tension` | `0.01` | Surface tension, as surface-area minimisation, in gravities. `0` is the older look: taller spikes, and a visibly more shredded one. Above about `0.02` it starts rounding the crown off into mounds |
 | `self` | `1` | How much of its own field the liquid makes — the spike/no-spike dial |
 | `hsat` | `0.8` | Saturation field. The applied field is deliberately kept near half of this; saturated, the liquid's response is flat and it has no reason to prefer a peak to a plain |
 | `gloss` | `1` | Specular sheen |
@@ -437,15 +477,15 @@ clock, so runs are comparable.
 | --- | --- |
 | Runtime errors across 12 configurations and 8 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped, at any size — tablets included, for the first time |
 | Drops leaving the cell — ever, in any of the below | 0 of 1000 |
-| A 2 s shake | 92% of drops in a body before, 90% immediately after, 89% ten seconds later; peak speed 911 px/s |
-| Four taps in nine seconds, the worst a user can do to it | 99% -> 92% -> 81%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
-| Five home-screen swipes arriving in one frame | 92% -> 88% -> 99%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
-| 52° of tilt held 12 s | 99% in a body, occupying 42,307–416,876 of 420×880 |
-| Face up on a desk for a minute | 81% in a body, and the liquid's top averages 50% down the screen. Before the weight had a floor it covered the screen |
-| 45 s idle | 98% in a body, drop count constant |
-| 60 fps against 30 fps, 8 s idle | mean 2.6 px apart, max 11 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
-| JavaScript per frame, 1000 drops | 4.2 ms median, 4.7 ms at the 95th percentile, with a realistic gap between frames. `drops=700` takes it to 3.0 / 3.9 ms. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
-| Frame-to-frame change with the liquid at rest | 0.17/255 mean, 0.36% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
+| A 2 s shake | 92% of drops in a body before, 89% immediately after, 89% ten seconds later; peak speed 929 px/s |
+| Four taps in nine seconds, the worst a user can do to it | 98% -> 93% -> 81%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
+| Five home-screen swipes arriving in one frame | 92% -> 86% -> 91%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
+| 52° of tilt held 12 s | 100% in a body, occupying 83,323–416,876 of 420×880 |
+| Face up on a desk for a minute | 82% in a body, and the liquid's top averages 51% down the screen. Before the weight had a floor it covered the screen |
+| 45 s idle | 99% in a body, drop count constant |
+| 60 fps against 30 fps, 8 s idle | mean 2.5 px apart, max 11 px, against a drop spacing of 8.9 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
+| JavaScript per frame, 1000 drops | 4.6 ms median, 5.4 ms at the 95th percentile, with a realistic gap between frames — 0.9 ms of that is the wider metaball kernel, A/B'd. `drops=700` takes it to 3.6 / 4.0 ms. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
+| Frame-to-frame change with the liquid at rest | 0.13/255 mean, 0.24% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
 
 Two of those numbers were themselves wrong before this table was checked
 against how the thing runs. The frame cost was quoted as 8.5 ms, which was a

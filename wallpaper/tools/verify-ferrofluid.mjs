@@ -215,7 +215,8 @@ const check = (name, ok, result) => {
   check('a 2 s shake, and 10 s after it',
         shaken.escaped === 0 && recovered.escaped === 0 && recovered.bodyPct >= 80,
         `in a body ${settled.bodyPct}% -> ${shaken.bodyPct}% -> ${recovered.bodyPct}%, ` +
-        `0 escaped, peak speed ${shaken.maxV} px/s`);
+        `${shaken.escaped} escaped in the shake and ${recovered.escaped} after it, ` +
+        `peak speed ${shaken.maxV} px/s`);
   await page.close();
 }
 
