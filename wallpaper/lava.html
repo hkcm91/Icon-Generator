@@ -536,15 +536,21 @@ void main() {
   vec3 ground = backdrop(qq);
   vec3 behind = eB > 0.0 ? mix(ground, shade(q, nB, tB, ground), eB) : ground;
 
-  vec3 col = eF > 0.0 ? mix(behind, shade(p, nF, tF, behind), eF) : behind;
+  // Where the front crosses a back blob its edge is a hard line over a
+  // bright ground while the outer silhouette is soft against the dark, and
+  // the two read as different focus. Over wax, blend the front in across a
+  // wider band of the field, so the crossing has the same softness as
+  // the rest of the rim.
+  float eFs = mix(eF, smoothstep(0.7, 1.3, fF), eB);
+  vec3 col = eFs > 0.0 ? mix(behind, shade(p, nF, tF, behind), eFs) : behind;
 
   // A soft halo just outside every blob, where the field is nearly there:
   // the light the wax throws into the haze around it.
   float v = clamp(p.y / uY, 0.0, 1.0);
   vec3 tint = v < 0.5 ? mix(uAccent, uColour, smoothstep(0.0, 0.5, v))
                       : mix(uColour, uCrest, smoothstep(0.5, 1.0, v));
-  float halo = smoothstep(0.15, 1.0, max(fF, fB)) * (1.0 - max(eF, eB));
-  col += tint * halo * 0.22;
+  float halo = smoothstep(0.45, 1.0, max(fF, fB)) * (1.0 - max(eF, eB));
+  col += tint * halo * 0.16;
 
   col = bubbles(p, col);
 
@@ -552,7 +558,7 @@ void main() {
   col = col / (1.0 + 0.10 * col);
   // Grain, live, so it reads as a photograph of a liquid rather than a
   // gradient.
-  col += (hash21(gl_FragCoord.xy + fract(uTime * 7.31) * 113.0) - 0.5) * 0.05;
+  col += (hash21(gl_FragCoord.xy + fract(uTime * 7.31) * 113.0) - 0.5) * 0.035;
   gl_FragColor = vec4(col, 1.0);
 }
 `;
