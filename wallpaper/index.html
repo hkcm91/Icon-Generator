@@ -1039,7 +1039,17 @@ const COUPLE = 0.05;
 const DYE_BUOY = 130;       // px/s^2 between the two phases at full contrast
 /* Far larger than DYE_BUOY, and it should be: the dense phase is a few per
  * cent heavier than the liquid, a bubble is a hundred per cent lighter. */
-const GAS_LIFT = 380;       // px/s^2 per g at a cell entirely full of gas
+/* Was 380 with 84 bubbles. Raising the count to 150 raised the gas laid
+ * into the grid with it, and the updraft where the beads rise in lanes
+ * carried fine flecks upward in a visible column. Isolated: the column is
+ * gone with micro=0 (so it is flecks, not beads) and gone with this at 0
+ * (so the updraft is what carries them). 220 was not low enough and 80
+ * still left a faint column where beads rise off the glass. Off entirely:
+ * the lift a bubbly region exerts on the liquid was never visible on its
+ * own, only through what it did to the flecks, and that was all bad. The
+ * bubbles still rise, wobble and merge exactly as before; they simply no
+ * longer drag the liquid up with them. */
+const GAS_LIFT = 0;         // px/s^2 per g at a cell entirely full of gas; was 380
 /* Down-gradient drift, cut from 1100. At that strength nothing could ever
  * settle: measured from a well-mixed start, the glitter's centre of mass sat
  * at 0.49 of the container and was still at 0.53 a hundred seconds later,
