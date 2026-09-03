@@ -136,6 +136,18 @@ the cell. So the compensation follows the resolution it is compensating for,
 interpolated between the two spacings by name. With it the same run is 99%,
 nothing escaped.
 
+**How high it is held decides whether the spikes go up or sideways**, and
+that one is pure geometry rather than magnitude. The standoff used to be z/√2,
+the radius of the pole's own field ring, on the reasoning that this puts the
+strongest part of the field on the crest. It does — and it puts the crest in
+the one place the field has no *in-plane* component at all. Directly over a
+pole lifted out of the plane the in-plane field is zero; it peaks on the ring,
+where it points radially. So the traction extruded the surface *sideways*, and
+every shape came out as a claw or a breaking wave curling left or right instead
+of a peak standing up. Held half again higher than its own standoff, the liquid
+sits out in the far field where the field points *at* the pole, and the same
+traction extrudes it straight up.
+
 **A broader magnet makes sharper spikes**, which is backwards until you see
 why. Held tight and strong, the field is effectively a point: the pool is
 hauled bodily up underneath it and what rises is a dome — a geyser. Held
@@ -501,15 +513,15 @@ clock, so runs are comparable.
 | --- | --- |
 | Runtime errors across 12 configurations and 8 viewports, each resized mid-run and each sent a NaN tap, a NaN motion and a NaN offset | none, and no drop lost or escaped, at any size — tablets included, for the first time |
 | Drops leaving the cell — ever, in any of the below | 0 of 1000 |
-| A 2 s shake | 92% of drops in a body before, 98% immediately after, 93% ten seconds later; peak speed 874 px/s |
-| Four taps in nine seconds, the worst a user can do to it | 99% -> 96% -> 91%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
-| Five home-screen swipes arriving in one frame | 92% -> 91% -> 95%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
-| 52° of tilt held 12 s | 98% in a body, occupying 60,226–417,877 of 420×880 |
-| Face up on a desk for a minute | 87% in a body, and the liquid's top averages 64% down the screen. Before the weight had a floor it covered the screen |
-| 45 s idle | 98% in a body, drop count constant |
+| A 2 s shake | 93% of drops in a body before, 94% immediately after, 92% ten seconds later; peak speed 874 px/s |
+| Four taps in nine seconds, the worst a user can do to it | 99% -> 95% -> 94%. Before the pull was clamped the same sequence left a spray across the whole screen that never recombined |
+| Five home-screen swipes arriving in one frame | 93% -> 89% -> 96%. Before the relaxation was bounded, two of these left every drop pinned at the speed limit and still pinned there ten seconds later, with the pool gone |
+| 52° of tilt held 12 s | 99% in a body, occupying 73,390–417,877 of 420×880 |
+| Face up on a desk for a minute | 88% in a body, and the liquid's top averages 63% down the screen. Before the weight had a floor it covered the screen |
+| 45 s idle | 99% in a body, drop count constant |
 | 60 fps against 30 fps, 8 s idle | mean 3.4 px apart, max 11 px, against a drop spacing of 6.6 px. The two are not bit-identical: the accumulator loses one step in 480 to floating point, and the sensor filters run per event rather than per simulated second, as they do on a handset |
-| JavaScript per frame, 1800 drops | 5.9 ms median, 7.1 ms at the 95th percentile, with a realistic gap between frames. `drops=700` takes it to 2.8 / 3.2 ms, and looks it. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
-| Frame-to-frame change with the liquid at rest | 0.23/255 mean, 0.37% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
+| JavaScript per frame, 1800 drops | 6.3 ms median, 7.2 ms at the 95th percentile, with a realistic gap between frames — a quarter cheaper than when 1800 drops first landed, from folding surface tension into a walk that already existed and from a contour grid the wider splat kernel no longer needs to be fine. `drops=700` takes it to 2.8 / 3.2 ms, and looks it. Following the crest costs 0.1 ms of that, measured against the same page with it removed |
+| Frame-to-frame change with the liquid at rest | 0.25/255 mean, 0.38% of pixels moving more than 12 levels — the residue of drops still very slightly settling. It was a third higher before the surface normal was measured over arc length, and what moved then was the highlight rather than the liquid |
 
 Two of those numbers were themselves wrong before this table was checked
 against how the thing runs. The frame cost was quoted as 8.5 ms, which was a
