@@ -75,7 +75,7 @@ const CONFIG = {
   colour: [1.0, 0.30, 0.68],   // bubblegum, the wax itself
   crest: [0.40, 0.22, 0.92],   // violet, at the top
   backdrop: [0.008, 0.005, 0.038],
-  floor: [0.30, 0.07, 0.34],
+  floor: [0.42, 0.10, 0.46],
   renderScale: 0.5,   // fragment work per pixel is the whole cost; half is plenty
 };
 
@@ -436,7 +436,7 @@ vec3 backdrop(vec2 p) {
   vec3 c = mix(uFloor, uBackdrop, pow(v, 0.7));
   float m = fbm(vec2(p.x * 1.3, p.y * 0.9) + vec2(uTime * 0.012, -uTime * 0.03));
   float m2 = fbm(vec2(p.x * 3.1 + 5.0, p.y * 2.2) + vec2(-uTime * 0.02, -uTime * 0.05));
-  c *= 0.62 + 0.7 * m + 0.28 * m2;
+  c *= 0.55 + 0.85 * m + 0.35 * m2;
   // Warm haze rising off the bulb, drifting.
   c += mix(uAccent, uColour, 0.35) * exp(-v * 2.6) * (0.10 + 0.26 * m);
   c += uCrest * (0.02 + 0.06 * m2) * (0.4 + 0.6 * v);
@@ -484,15 +484,17 @@ vec3 shade(vec2 p, vec3 n, float thick, vec3 behind) {
                       : mix(uColour, uCrest, smoothstep(0.5, 1.0, v));
   // Transmission: the deeper the path, the more of the wax's colour it
   // carries, but the ground stays visible through all of it.
-  vec3 pass = mix(vec3(1.0), tint, 0.3 + 0.3 * thick);
-  vec3 col = behind * pass * 1.8;
-  // Lit from within: the bulb below, and the wax's own colour carried up
-  // the whole column so a blob at the top still reads as lit glass.
+  // Transmission first and most: what is behind comes through at nearly
+  // full strength, tinted, and everything the blob adds of its own is kept
+  // small enough not to drown it. That is the whole of transparency.
+  vec3 pass = mix(vec3(1.0), tint, 0.15 + 0.2 * thick);
+  vec3 col = behind * pass * 1.6;
   float warmth = exp(-v * 3.0);
-  col += tint * (0.10 + 0.22 * warmth) * thick;
-  col += uAccent * warmth * 0.16 * thick;
-  float rim = 0.04 + 0.96 * pow(1.0 - ndv, 2.0);
-  col += mix(tint, uCrest, 0.45) * rim * 1.25;
+  col += tint * (0.03 + 0.12 * warmth) * thick;
+  col += uAccent * warmth * 0.10 * thick;
+  // The rim is thin, so the body stays a window.
+  float rim = 0.04 + 0.96 * pow(1.0 - ndv, 2.8);
+  col += mix(tint, uCrest, 0.45) * rim * 1.3;
   vec3 L1 = normalize(vec3(-0.5, 0.7, 0.7));
   vec3 H1 = normalize(L1 + V);
   // Soft, not a hard pin of white: a hard specular is what makes a blob
@@ -524,7 +526,7 @@ vec3 backLayer(vec2 q, out float eB) {
   float fB; vec2 gB; float tB; vec3 nB;
   field(q, 0.0, fB, gB);
   surface(fB, gB, eB, tB, nB);
-  vec2 qq = q - nB.xy * 0.28 * tB * eB;
+  vec2 qq = q - nB.xy * 1.4 * tB * eB;
   vec3 ground = backdrop(qq);
   return eB > 0.0 ? mix(ground, shade(q, nB, tB, ground), eB) : ground;
 }
@@ -546,8 +548,8 @@ void main() {
   float eB;
   vec3 behind;
   if (eF > 0.0) {
-    vec2 q = p - nF.xy * 0.85 * tF;
-    float rad = (0.05 + 0.12 * tF) * eF;
+    vec2 q = p - nF.xy * 1.4 * tF;
+    float rad = (0.015 + 0.045 * tF) * eF;
     float rot = hash21(gl_FragCoord.xy) * 6.2832;
     behind = vec3(0.0);
     float cover = 0.0;
