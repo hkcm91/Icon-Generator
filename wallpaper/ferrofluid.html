@@ -1,0 +1,2428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ferrofluid</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #f2f2f3; overflow: hidden;
+    overscroll-behavior: none; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #tap {
+    position: fixed; inset: auto 0 8% 0; text-align: center;
+    font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #9a9a9e; pointer-events: none; transition: opacity .5s;
+  }
+  #tap.hide { opacity: 0; }
+  #enable {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    padding: 14px 22px; border: 0; border-radius: 999px;
+    background: #111214; color: #fff; font: 600 16px system-ui, sans-serif;
+    box-shadow: 0 6px 20px rgba(0,0,0,.25); display: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="tap">drag a magnet</div>
+<button id="enable">Enable motion</button>
+<script>
+"use strict";
+
+/* Ferrofluid — real-time interactive wallpaper, black on white.
+ *
+ * The one of these with no colour in it at all: a magnetic liquid is already
+ * black, and a black liquid on white paper is entirely silhouette. That is
+ * the constraint the whole thing is built around — if the shape is not right
+ * there is nothing else to look at.
+ *
+ * The setup being simulated is a thin vertical cell: ferrofluid between two
+ * plates a hair apart, magnets moving in the plane behind it. That framing is
+ * not arbitrary. The Rosensweig instability — the spikes that make a
+ * ferrofluid worth looking at — throws its peaks *along* the field, so a
+ * field out of the screen would put every spike behind the silhouette where
+ * none of it can be seen. In a Hele-Shaw cell the field lies in the plane,
+ * the spikes lie in the plane, and the silhouette is the whole of the
+ * physics.
+ *
+ * Four coupled pieces:
+ *
+ *   - the magnets. Point poles with a standoff, so the field is finite where
+ *     they sit. Two of them drift and pulse on their own; taps add more.
+ *   - a particle liquid, integrated with Clavet's double density relaxation.
+ *     The far side of that pressure term is attractive, which is where the
+ *     cohesion comes from: this liquid pulls itself into beads and merges
+ *     them on contact without a surface-tension term bolted on the side.
+ *   - the magnetism proper, as three separate forces, because they are three
+ *     separate pieces of physics: a body force up the field gradient, which
+ *     moves the liquid; a magnetic traction on the free surface, which is
+ *     what makes it spike; and the dipole force between neighbours, which is
+ *     what makes it chain.
+ *   - a metaball field and a marching-squares contour, which is how eight
+ *     hundred particles become one liquid with a single hard edge.
+ *
+ * All of it runs on a fixed timestep; see FIXED_DT for why that is not
+ * optional.
+ *
+ * The host interface at the bottom (window.__wallpaper, aliased as
+ * window.__shaker) is the same one the liquid shaker exposes, so the Android
+ * service hosts either page without knowing which one it has.
+ */
+
+const params = new URLSearchParams(location.search);
+const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
+
+const mix = (a, b, k) => a + (b - a) * k;
+const smooth = (k) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k));
+
+const CONFIG = {
+  /* "full" — the screen itself is the cell, liquid edge to edge. This is the
+   * wallpaper. "pouch" — a square tile floating on the paper, which is the
+   * icon framing rather than a wallpaper one. */
+  mode: params.get("mode") === "pouch" ? "pouch" : "full",
+  squircleN: num("n", 4),          // 2 = circle, 4 = squircle, 8 = near square
+  scale: num("scale", 0.82),       // pouch mode only: size vs the short edge
+
+  /* How much liquid there is, as a fraction of the cell's area. A fifth is
+   * about a finger of fluid lying along the floor, with the rest of the
+   * screen free for it to be thrown into. */
+  fill: num("fill", 0.185),
+  /* Drop count, deliberately *not* scaled with the screen. The spacing is
+   * derived from the fill area and this number, so a fixed count means a
+   * larger screen shows the same picture larger, rather than the same picture
+   * made out of more and finer drops. */
+  drops: Math.round(num("drops", 1800)),
+
+  /* Ink and paper. Everything else in the page is one of these two or a grey
+   * between them; there is no third colour anywhere. */
+  ink: params.get("ink") || "#0b0b0d",
+  paper: params.get("paper") || "#f2f2f3",
+
+  /* The magnets.
+   *
+   * `pull` is the magnetophoretic force near a pole, in gravities — at 1 a
+   * magnet lifts the liquid off the floor. `spike` is the surface traction
+   * that drives the normal-field instability, and `chain` the dipole force
+   * between neighbours. Those last two are shape, not motion: turning both
+   * off leaves a liquid a magnet still drags about but that never grows a
+   * single peak.
+   *
+   * The balance between the first and the second is the whole difference
+   * between a geyser and a crown, and it does not go the way it looks. `pull`
+   * is a *body* force: it acts on all the liquid at once, so more of it lifts
+   * the pool as one mass and drowns the instability that makes the peaks. It
+   * came down from 3.2 to 1.3 when the magnets were widened, and the surface
+   * went from four blunt mounds to eight spikes standing twice as proud.
+   * Measured, over three seeds — see the notes. */
+  poles: Math.round(num("poles", 2)),
+  field: num("field", 1),          // overall magnet strength
+  pull: num("pull", 1.3),
+  spike: num("spike", 20),
+  /* Surface tension, as a surface-area minimisation, in gravities. Cohesion
+   * alone never gave the liquid a reason to prefer a smooth shape to a lumpy
+   * one; this does, and it is also what gives the spikes a spacing. */
+  tension: num("tension", 0.01),
+  chain: num("chain", 0.1),
+  /* How much of its own field the liquid makes. This is the one that turns a
+   * lifted pool into a crown of spikes rather than a lifted pool: see
+   * SELF_FIELD. */
+  self: num("self", 1),
+
+  /* Look. `gloss` is the specular sheen that makes it read as liquid metal
+   * rather than a hole in the page, `shadow` lifts it off the paper, and
+   * `filings` is the iron-filing hatch that makes the field visible. Each is
+   * the kind of thing that is either restrained or ruinous, so each is a
+   * multiplier that can be taken to zero. */
+  gloss: num("gloss", 1),
+  shadow: num("shadow", 1),
+  filings: num("filings", 1),
+
+  /* Simulation grid in CSS pixels — the one real performance knob. Raising it
+   * coarsens the contour and the shading together. */
+  grid: num("grid", 0),            // 0 = derive it from the drop spacing
+};
+
+/** #rgb or #rrggbb to channel bytes. */
+function parseHex(s) {
+  const h = s.trim().replace("#", "");
+  const v = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16);
+  return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+}
+const INK = parseHex(CONFIG.ink);
+const rgba = (c, a) => `rgba(${c.r},${c.g},${c.b},${a})`;
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d", { alpha: false });
+const hint = document.getElementById("tap");
+const enableBtn = document.getElementById("enable");
+
+let W = 0, H = 0, DPR = 1;
+let CX = 0, CY = 0, RX = 0, RY = 0;   // cell centre and half-extents
+let corner = 0;                        // squircle corner radius
+let U = 1;                             // the short edge: the reference length
+
+/* ---------------------------------------------------------------- geometry */
+
+let outline = [];
+const OUTLINE_STEPS = 200;
+const sgnPow = (v, p) => Math.sign(v) * Math.pow(Math.abs(v), p);
+
+/** The cell boundary, sampled once per resize. Four superellipse corner arcs;
+ *  the straight runs fall out of joining them. Used for the icon clip and,
+ *  in pouch mode, to draw the tile. */
+function buildOutline() {
+  outline = [];
+  const e = 2 / CONFIG.squircleN;
+  const r = Math.max(1, corner);
+  const L = CX - RX, R = CX + RX, T = CY - RY, B = CY + RY;
+  const arcs = [[R - r, B - r, 0], [L + r, B - r, 1], [L + r, T + r, 2], [R - r, T + r, 3]];
+  const per = Math.max(6, OUTLINE_STEPS >> 2);
+  for (const [cx, cy, k] of arcs) {
+    for (let i = 0; i <= per; i++) {
+      const t = (k + i / per) * Math.PI * 0.5;
+      outline.push({ x: cx + r * sgnPow(Math.cos(t), e), y: cy + r * sgnPow(Math.sin(t), e) });
+    }
+  }
+}
+
+/* ------------------------------------------------------------------- motion
+ *
+ * Lifted wholesale from the liquid shaker, deliberately. Both wallpapers are
+ * fed by the same Android service through the same call in the same units, so
+ * two motion models would mean two things to keep honest and two places for a
+ * sign error to hide.
+ */
+
+const gDir = { x: 0, y: 1 };
+let gMag = 1;
+const gravRaw = { x: 0, y: 1, z: 0 };
+const accel = { x: 0, y: 0, z: 0 };
+let haveAccelGravity = false;
+let swirlInput = 0;
+const GRAVITY_DIRECTION_FLOOR = 0.06;
+const GRAVITY_FLOOR = 0.55;
+
+/* Screen size past which the physics stops growing with the screen.
+ *
+ * Gravity is taken from the short edge and the magnets' standoff is a fraction
+ * of it, so that the liquid falls the same way relative to the frame whatever
+ * the frame is. But the solver's stiffnesses are absolute pixel corrections at
+ * a fixed timestep and they do not grow with anything, so left uncapped both
+ * eventually outrun what the pressure can undo in a step: drops pass through
+ * one another and the liquid comes apart. Measured at 600×1000, capping these
+ * took the pool from 13% of its drops in a body to 83%.
+ *
+ * Past this reference the liquid falls at a phone's absolute rate rather than
+ * a scaled one and the magnets stay a phone's size, which on a large display
+ * reads as slightly more languid. That is the whole of the cost — and it is
+ * only part of the cure; see the known-bad sizes in tools/verify-ferrofluid. */
+const PHYSICS_REF = 520;
+/** The short edge, as the physics is allowed to see it. */
+/* The reference length for everything magnetic — and it is the *cell's* short
+ * edge, not the screen's. They are the same in the wallpaper, where the screen
+ * is the cell, and they are not in pouch mode, where the cell is a squircle
+ * covering a fraction of it. Sizing the magnets to the screen there made them
+ * oversized for the pool they were working, which cost nothing while the
+ * standoffs were small and tore the 512x512 pouch apart the moment they were
+ * not: 36% of drops left in one body, three of them out of the cell. */
+const refU = () => Math.min(2 * Math.min(RX, RY), PHYSICS_REF);
+
+/* MEMS accelerometers never become perfectly quiet. Remove the noise floor as
+ * a vector, so diagonals are treated the same as axes, then ease what is left
+ * in and out — a slower attack gives the liquid mass, a quicker release lets
+ * it come properly to rest instead of preserving a residual indefinitely. */
+const ACCEL_DEAD_ZONE = 0.045;     // g
+const ACCEL_LIMIT = 2.6;
+
+function filterAcceleration(x, y, z) {
+  const m = Math.hypot(x, y, z);
+  let tx = 0, ty = 0, tz = 0;
+  if (m > ACCEL_DEAD_ZONE) {
+    const kept = Math.min(ACCEL_LIMIT, m - ACCEL_DEAD_ZONE);
+    tx = x / m * kept; ty = y / m * kept; tz = z / m * kept;
+  }
+  const k = Math.hypot(tx, ty, tz) > Math.hypot(accel.x, accel.y, accel.z) ? 0.14 : 0.28;
+  accel.x += (tx - accel.x) * k;
+  accel.y += (ty - accel.y) * k;
+  accel.z += (tz - accel.z) * k;
+  if (Math.hypot(accel.x, accel.y, accel.z) < 0.003) { accel.x = 0; accel.y = 0; accel.z = 0; }
+}
+
+function setGravityVector(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const m = Math.min(1, Math.hypot(x, y));
+  // Flat on a table there is no meaningful in-plane direction; keep the last
+  // good one rather than snapping to sensor noise.
+  if (m > GRAVITY_DIRECTION_FLOOR) { gDir.x = x / m; gDir.y = y / m; }
+  /* And there is no meaningful in-plane *weight* either, which is the more
+   * consequential half.
+   *
+   * The premise of the piece is a cell standing on its edge. Lay the phone
+   * face up on a desk — which is most of the time a phone is anywhere — and
+   * the cell is horizontal, gravity leaves the plane entirely, and the liquid
+   * is weightless in the only two directions that are drawn. Nothing then
+   * opposes the magnets: measured, forty seconds of it climbed the walls and
+   * covered the whole screen in a black starburst with the icons somewhere
+   * underneath. It is not even wrong — a horizontal Hele-Shaw cell really does
+   * that — but the thing holding a real one down is friction against the
+   * plate, and there is no plate in a two-dimensional model to have friction
+   * against.
+   *
+   * So the weight has a floor: half a gravity along whichever way was last
+   * down, which keeps it a pool that a magnet can lift instead of a liquid
+   * with nothing to fall back to. It was a third until the magnets were
+   * widened to make a crown rather than a dome — a broader magnet's far field
+   * grows as the square of its standoff, so it reaches much further, and flat
+   * on a desk it walked the liquid a sixth of the way further up the screen
+   * than before. Upright this constant does nothing at all: real gravity is
+   * 1 g and the floor never binds. */
+  gMag = Math.max(GRAVITY_FLOOR, m);
+}
+
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) return;
+  hint.classList.add("hide");
+  const first = !haveAccelGravity;
+  haveAccelGravity = true;
+
+  // Device +Y runs up the screen while canvas +y runs down, hence the sign
+  // flip on x only. Units of g.
+  const sx = -a.x / 9.81, sy = a.y / 9.81;
+  const sz = Number.isFinite(a.z) ? a.z / 9.81 : 0;
+
+  /* Split the reading into gravity and hand motion with a low-pass filter.
+   * The slow component is which way is down; the residual is the shake. */
+  if (first) {
+    // Starting from the hard-coded upright vector would read the first second
+    // of a still phone as a shake while the baseline caught up.
+    gravRaw.x = sx; gravRaw.y = sy; gravRaw.z = sz;
+    setGravityVector(sx, sy);
+    accel.x = 0; accel.y = 0; accel.z = 0;
+  } else {
+    const k = 0.025;
+    gravRaw.x += (sx - gravRaw.x) * k;
+    gravRaw.y += (sy - gravRaw.y) * k;
+    gravRaw.z += (sz - gravRaw.z) * k;
+    setGravityVector(gravRaw.x, gravRaw.y);
+    filterAcceleration(sx - gravRaw.x, sy - gravRaw.y, sz - gravRaw.z);
+  }
+
+  // A twist about the viewing axis sweeps the magnets around the cell.
+  if (e.rotationRate) {
+    let spin = (e.rotationRate.alpha || 0) / 360;
+    if (Math.abs(spin) < 0.012) spin = 0;
+    swirlInput += (Math.max(-3, Math.min(3, spin)) - swirlInput) * 0.18;
+  }
+}
+
+function onOrientation(e) {
+  // Once the accelerometer supplies gravity, ignore deviceorientation — the
+  // two disagree slightly and letting both write causes a slow wobble.
+  if (haveAccelGravity) return;
+  if (e.beta === null && e.gamma === null) return;
+  hint.classList.add("hide");
+  const b = (e.beta || 0) * Math.PI / 180;
+  const gm = (e.gamma || 0) * Math.PI / 180;
+  setGravityVector(-Math.cos(b) * Math.sin(gm), Math.sin(b));
+}
+
+function listenMotion() {
+  window.addEventListener("deviceorientation", onOrientation, true);
+  window.addEventListener("devicemotion", onMotion, true);
+}
+
+// iOS 13+ gates the sensors behind a user gesture; Android and WebView
+// wallpapers do not, so only surface the button when it is actually needed.
+const needsPermission =
+  typeof DeviceMotionEvent !== "undefined" &&
+  typeof DeviceMotionEvent.requestPermission === "function";
+
+if (needsPermission) {
+  enableBtn.style.display = "block";
+  enableBtn.addEventListener("click", async () => {
+    try {
+      await DeviceMotionEvent.requestPermission();
+      if (typeof DeviceOrientationEvent?.requestPermission === "function") {
+        await DeviceOrientationEvent.requestPermission();
+      }
+    } catch (_) { /* denied — the pointer fallback still works */ }
+    enableBtn.style.display = "none";
+    listenMotion();
+  });
+} else {
+  listenMotion();
+}
+
+/* ------------------------------------------------------------------ magnets
+ *
+ * A pole is a point with a standoff out of the plane. The standoff is not
+ * decoration: a true point source has an infinite field at its own position,
+ * and a liquid pulled infinitely hard collapses to a dot in one step. Lifting
+ * the pole off the plane makes the field finite everywhere in it, and makes
+ * strength and reach separately adjustable — a deep pole is a weak, broad
+ * one, which is what moving a magnet away from the glass does.
+ *
+ * In-plane, the field of such a pole is zero directly above it, peaks on a
+ * ring of radius z/√2, and falls off as an inverse square beyond. The ring is
+ * worth knowing about, because it is why a magnet held against the glass
+ * grows a crown of spikes around itself rather than one spike at the middle.
+ * `q` is normalised so that the peak of that ring is exactly `strength`.
+ */
+
+const poles = [];
+let ambientPoles = 0;
+
+/* The single poles the field is actually summed over. A magnet in `poles` is
+ * what the choreography moves, what a tap creates and what the filings
+ * normalise against; each one contributes either two sources (an ambient
+ * dipole) or one (a fingertip). Rebuilt once a step rather than unpacked
+ * inside the field evaluation, which runs once per drop per step. */
+const SRC_MAX = 24;
+const srcX = new Float64Array(SRC_MAX), srcY = new Float64Array(SRC_MAX);
+const srcZ = new Float64Array(SRC_MAX), srcQ = new Float64Array(SRC_MAX);
+let srcN = 0;
+
+function buildSources() {
+  srcN = 0;
+  for (let i = 0; i < poles.length && srcN + 2 <= SRC_MAX; i++) {
+    const p = poles[i];
+    if (!p.dip) {                              // a fingertip: one pole
+      srcX[srcN] = p.x; srcY[srcN] = p.y; srcZ[srcN] = p.z; srcQ[srcN] = p.q;
+      srcN++;
+      continue;
+    }
+    const h = DIPOLE_SEP * p.z * 0.5;
+    srcX[srcN] = p.x + p.ax * h; srcY[srcN] = p.y + p.ay * h;
+    srcZ[srcN] = p.z; srcQ[srcN] = p.q; srcN++;
+    srcX[srcN] = p.x - p.ax * h; srcY[srcN] = p.y - p.ay * h;
+    srcZ[srcN] = p.z; srcQ[srcN] = -p.q; srcN++;
+  }
+}
+
+/* What an ambient magnet is pulling with at the top of its cycle. Two things
+ * read it and they have to agree: the magnets themselves, and the iron filings,
+ * which weight their ink by how much of this the strongest magnet is currently
+ * exerting. */
+/* How hard the magnets drive, against how finely the liquid is resolved: 0 at
+ * the spacing this was originally tuned at, 1 at the spacing a phone gets now.
+ *
+ * A finer liquid needs harder driving to make the same shapes — the same field
+ * over a pool of twice as many drops raises a smooth mound where it used to
+ * raise a crown. But `drops` deliberately does not grow with the screen, so a
+ * tablet's liquid is as coarse as the phone's used to be, and driving *that*
+ * as hard took the tablets apart again the moment it was applied flat: 12% of
+ * drops still in one body at 1024x1366, twenty of them thrown out of the cell.
+ * So the compensation follows the resolution it is compensating for. */
+const SPACING_COARSE = 8.9, SPACING_FINE = 6.6;
+const drive = () =>
+  Math.max(0, Math.min(1, (SPACING_COARSE - spacing) / (SPACING_COARSE - SPACING_FINE)));
+
+/* What an ambient magnet is pulling with at the top of its cycle. Two things
+ * read it and they have to agree: the magnets themselves, and the iron
+ * filings, which weight their ink by how much of this the strongest magnet is
+ * currently exerting. */
+const ambientField = () => CONFIG.field * mix(1.3, 1.95, drive());
+const RING_NORM = Math.pow(1.5, 1.5) * Math.SQRT2;   // = 1/max(r/(r²+z²)^{3/2} · z²)
+
+/* A magnet can also be a *pair* of opposite poles a short way apart — a bar
+ * magnet rather than a single pole — and on a big screen it is.
+ *
+ * A single pole's field falls off as an inverse square. That is what grows a
+ * crown of spikes, and it is also what takes a large pool apart: the reach
+ * grows as the square of the standoff, so the broad near field the crown needs
+ * comes with a far field that drags liquid about a screen away. Two opposite
+ * poles cancel at a distance and fall off as an inverse *cube* instead, which
+ * removes that completely — 45 s at four large sizes, two seeds each, went from
+ * as low as 51% of drops in one body to 100% everywhere with none escaped.
+ *
+ * It does not save the spikes, and the hope that it would was wrong. The same
+ * cancellation weakens the near field, and measured over three seeds the
+ * surface goes from 7.6 peaks standing 55 px proud to 3.4 standing 27 px. Nor
+ * is there a setting in between: placing the return pole deeper, so it cancels
+ * less close to the glass, slides continuously back to the single pole's
+ * behaviour — spikes and tablet collapse together, in step. The field that
+ * lifts the surface a standoff away and the field that reaches across the
+ * screen are the same field, and the pool sits only a couple of standoffs from
+ * the magnet, so there is no gap between the two scales to work in.
+ *
+ * A fingertip stays a single pole either way. A touch is meant to be felt
+ * across the screen, and 1/r³ would not carry that far. */
+const DIPOLE_SEP = num("dip", 0.9);        // pole spacing, in standoffs
+
+/* And it is a bar magnet only on a big screen.
+ *
+ * The two shapes are a straight trade and there is no setting that wins both.
+ * A single pole reaches far, which is what grows a crown of spikes on a phone
+ * and what takes a tablet's pool apart; the pair cancels that reach, which
+ * saves the tablet and blunts the crown to a mound. Measured, the whole knob
+ * just slides between those two ends — a return pole placed deeper recovers
+ * the spikes exactly as fast as it gives the tablet back. That is not a
+ * failure to tune: the field that lifts the surface a standoff away and the
+ * field that drags liquid a screen away are the same field, and the pool sits
+ * only a couple of standoffs from the magnet, so there is no gap between the
+ * two scales to work in.
+ *
+ * So it is chosen by the thing that decides which end matters. Below the
+ * reference size the cell is a phone, nothing is far away, and the single pole
+ * costs nothing; above it the far reach is the whole problem and the crown is
+ * worth giving up to have a pool at all. The magnets are a fiction either way
+ * — no real magnet changes type with the size of the glass — but on a big cell
+ * the useful fiction is a bar magnet. */
+function dipoleOn() { return DIPOLE_SEP > 0 && U > PHYSICS_REF; }
+
+/* The peak in-plane field of a unit dipole at unit standoff, found once by
+ * scanning the plane, so that `strength` goes on meaning "the strongest field
+ * this magnet makes" as it did for a single pole. Everything downstream —
+ * saturation, the pull, the traction — is calibrated against that meaning, so
+ * getting it from a formula that no longer applies would silently rescale the
+ * whole model. Peak field goes as q/z² for any fixed pole spacing measured in
+ * standoffs, so one number covers every z. */
+const DIPOLE_NORM = (() => {
+  if (DIPOLE_SEP <= 0) return RING_NORM;
+  const h = DIPOLE_SEP * 0.5;
+  let best = 0;
+  for (let x = -4; x <= 4; x += 0.01) {
+    for (let y = 0; y <= 3; y += 0.01) {
+      let hx = 0, hy = 0;
+      for (const [sx, q] of [[h, 1], [-h, -1]]) {
+        const dx = x - sx, dy = y;
+        const r = Math.sqrt(dx * dx + dy * dy + 1);
+        const r3 = r * r * r;
+        hx += q * dx / r3; hy += q * dy / r3;
+      }
+      const m = Math.hypot(hx, hy);
+      if (m > best) best = m;
+    }
+  }
+  return 1 / best;
+})();
+
+/* Saturation, and the single most consequential number in the file.
+ *
+ * Real ferrofluid magnetises to a ceiling and no further; past it, more field
+ * buys only more gradient. What matters here is *where the liquid sits on
+ * that curve*. Saturated, its response to the field is flat, so the field it
+ * makes at itself changes nothing and the surface has no reason to prefer a
+ * peak over a plain — the whole surface rises together, or, past a threshold,
+ * the whole surface leaves at once. Only in the bend of the curve does a
+ * bump concentrating field lines actually magnetise harder than the flat
+ * around it, and that difference is the entire Rosensweig instability.
+ *
+ * So the applied field is deliberately kept at roughly half of this. */
+const HSAT = num("hsat", 0.8);
+const magnetisation = (h) => h / Math.sqrt(HSAT * HSAT + h * h);
+
+function buildPoles() {
+  poles.length = 0;
+  ambientPoles = Math.max(0, Math.min(4, CONFIG.poles));
+  for (let i = 0; i < ambientPoles; i++) {
+    poles.push({
+      x: CX, y: CY, z: refU() * 0.17, strength: 0, q: 0,
+      // Alternating polarity, so a pair is a bar magnet rather than two of
+      // the same end. It changes nothing about how hard the liquid is pulled
+      // — that goes as H² either way — and everything about the shape of the
+      // field between them, which is the part you can see.
+      sign: i % 2 ? -1 : 1,
+      /* Evenly spaced around the working cycle below, on a period they share
+       * exactly, so that while one magnet is carrying liquid up the other is
+       * already on its way back down for the next handful. Offsets that drift
+       * against each other look better on paper and are worse to watch: they
+       * come into phase every minute or two, and the pool lies flat and dead
+       * for a whole cycle while both magnets are away at the top. */
+      phase: i / Math.max(1, ambientPoles),
+      period: 13,
+      held: 0,                      // where across the cell it took hold
+      down: null,                   // its height last step, for the speed limit
+      crest: Infinity, tick: 0,     // the liquid under it, and when it was read
+      dip: false,                   // a bar magnet or a single pole, by size
+      ax: 1, ay: 0,                 // which way it is pointing, set each step
+      life: Infinity, born: Infinity, peak: 0,
+    });
+  }
+}
+
+/* How high the liquid stands under a magnet, as a distance down from the
+ * middle of the cell along gravity — the same axis the path below is written
+ * on. `win` is how far to either side to look.
+ *
+ * Not the topmost drop, and not a handful of them either: a spray of beads
+ * thrown clear by a tap is not a column, and a magnet that took one for a
+ * column would leave the pool to chase a speck across the screen. This asks
+ * where the top *three percent* of the liquid under it is, which is a crest
+ * something is actually holding up. Reading it off eight drops was enough to
+ * take a 600x1000 cell apart. */
+const crestBuf = new Float64Array(128);
+function crestUnder(alongPole, win) {
+  if (!px) return Infinity;
+  const K = Math.max(8, Math.min(crestBuf.length, Math.round(N * 0.03)));
+  const tx = -gDir.y, ty = gDir.x;
+  let n = 0;
+  for (let i = 0; i < N; i++) {
+    const dx = px[i] - CX, dy = py[i] - CY;
+    if (Math.abs(tx * dx + ty * dy - alongPole) > win) continue;
+    const dn = gDir.x * dx + gDir.y * dy;
+    if (n < K) {                               // fill, then keep the highest few
+      let j = n++;
+      while (j > 0 && crestBuf[j - 1] > dn) { crestBuf[j] = crestBuf[j - 1]; j--; }
+      crestBuf[j] = dn;
+    } else if (dn < crestBuf[K - 1]) {
+      let j = K - 1;
+      while (j > 0 && crestBuf[j - 1] > dn) { crestBuf[j] = crestBuf[j - 1]; j--; }
+      crestBuf[j] = dn;
+    }
+  }
+  return n === K ? crestBuf[K - 1] : Infinity;
+}
+
+/* The ambient pair works the pool in turn, and their paths are laid out in the
+ * gravity frame — so tilting the phone takes the magnets with it and "above
+ * the pool" keeps meaning above the pool.
+ *
+ * Above the pool is the whole point. A magnet below a dish of ferrofluid is
+ * the textbook Rosensweig picture, but it is a picture of a field pointing
+ * out of the dish; here the field lies in the plane, so a magnet under the
+ * liquid pulls the liquid down into itself and the surface has nothing to do.
+ * Held over it, the same magnet lifts and spikes with the same force, and
+ * what you get is the demonstration everyone has actually seen: the liquid
+ * standing up off the surface and reaching for it.
+ *
+ * Nothing here is a keyframe. Everything visible is the liquid responding to
+ * a field that happens to be moving. */
+function stepPoles(t, dt) {
+  const tanx = -gDir.y, tany = gDir.x;
+  const rDown = Math.hypot(gDir.x * RX, gDir.y * RY);
+  const rAlong = Math.hypot(tanx * RX, tany * RY);
+
+  /* The surface of the pool, in the units the path below is written in: -1 is
+   * the ceiling, +1 the floor, and this is the level the liquid starts at.
+   *
+   * Everything is measured from there rather than from the middle of the
+   * screen, because the pull falls off as roughly the fifth power of distance
+   * and the entire difference between a magnet that is working and one that is
+   * decoration is a few tens of pixels of standoff. Written as absolute
+   * heights this choreography would stop working the moment the fill or the
+   * screen changed. */
+  const surface = 1 - 2 * CONFIG.fill;
+  const OVER = 1 / Math.max(1, rDown);           // one pixel, in these units
+
+  const PARK = surface - 34 * OVER;              // waiting, well off the liquid
+  /* Just above the liquid, and *not* in it. A magnet that dives below the
+   * surface puts its ring of peak field inside the pool, where the pull tears
+   * the interior apart in every direction at once and the free surface has
+   * nothing to do — held there for a third of every cycle it took the whole
+   * pool apart into a spray of beads. Held a little over the surface, the same
+   * ring straddles it, and what it pulls on is the boundary. */
+  const GRAB = surface - 14 * OVER;
+  /* How far up a magnet is allowed to carry, and how fast it may travel to do
+   * it. Raised together: the ceiling alone does nothing, because the magnet
+   * cannot reach it inside the phase, and the speed alone does nothing,
+   * because there is nowhere to go. Together they are the difference between a
+   * crest that stands a third of the way up the screen and a column that
+   * stands halfway — which is the only presence available without more liquid,
+   * and more liquid is what the solver will not take.
+   *
+   * Both scale with the resolution, for the same reason the drive does: a
+   * coarse liquid cannot be carried as far before it tears. Carrying a tablet's
+   * as far as a phone's dropped 820x1180 to 19% of drops in one body with two
+   * of them out of the cell. */
+  const TOP = surface - mix(150, 260, drive()) * OVER;
+
+  /* The magnet's standoff while it is working, and while it is away.
+   *
+   * The near one is the difference between a geyser and a crown, and it is
+   * backwards until you see why: a *broader* magnet makes sharper spikes. Held
+   * tight and strong the field is effectively a point, the pool is hauled up
+   * bodily underneath it as one mass, and what rises is a dome. Held broader, a
+   * whole band of surface sits above the instability threshold at once and the
+   * surface gets to pick its own wavelength across it — which is what a crown
+   * of spikes is. The same argument says the body force has to come down as
+   * this goes up, since bulk pull is exactly what lifts the pool as one mass;
+   * that is why CONFIG.pull is 1.3 and not 3.2.
+   *
+   * Wider still is not better: at 0.13 and below the band is so wide the tips
+   * pinch off and it throws beads instead of growing spikes, confirmed across
+   * three seeds. */
+  const NEAR_Z = refU() * 0.13, FAR_Z = refU() * 0.2;
+
+  /* How far above the liquid a magnet is allowed to be while it is carrying
+   * it, and how fast it may move to get there.
+   *
+   * The speed limit is not a smoothing. Following the crest is a feedback loop
+   * — the liquid climbs, so the magnet climbs, so the liquid climbs — and with
+   * no bound on how fast the magnet may answer, one splash is enough to start
+   * it: the magnet jumps to the beads, which pulls up more liquid, which moves
+   * the crest again. Unbounded it took a 600x1000 cell entirely off the floor
+   * and left a spray of beads over the whole screen. A hand cannot do that
+   * because a hand cannot move that fast, and neither can this. */
+  /* The standoff was z/√2, the radius of the pole's own field ring, on the
+   * reasoning that this puts the strongest part of the field on the crest.
+   * It does — and it puts the crest in the one place the field has no *in-plane*
+   * component at all.
+   *
+   * That is the geometry of a pole lifted out of the plane: directly over it
+   * the in-plane field is zero, and it peaks on the ring, where it points
+   * radially — sideways. So the traction extruded the surface sideways, and
+   * every shape came out as a claw or a breaking wave curling left or right
+   * rather than a peak standing up. Held higher than its own standoff instead,
+   * the liquid sits out in the far field where the field points *at* the pole,
+   * and the same traction extrudes it straight up. That one factor is the
+   * difference between sideways and vertical; it is not a magnitude. */
+  const REACH = NEAR_Z / Math.SQRT2 * 1.5 * OVER;
+  const RATE = mix(190, 260, drive()) * OVER * dt;   // px per second, in these units
+  const WIN = refU() * 0.17;                     // how wide "under it" is
+
+  for (let i = 0; i < ambientPoles; i++) {
+    const p = poles[i];
+    const u = (t / p.period + p.phase) % 1;      // once round the cycle
+    const swirl = swirlInput * 0.35;
+
+    /* Where in the cycle, and what the magnet is doing there. Written as
+     * fractions of the cycle so the phases read off in order.
+     *
+     * This is the demonstration everyone has actually seen someone do with a
+     * bottle of ferrofluid: bring the magnet down until the liquid leaps to
+     * it, hold while it climbs, lift, and let the column stretch and fall
+     * back. Nothing here is keyframed — the shape is entirely the liquid's
+     * answer to a field that is being moved. What is scripted is only where
+     * the magnet goes and how hard it is pulling when it gets there.
+     *
+     * A magnet works for a third of its cycle and is away for the rest, and
+     * with the pair half a period apart that leaves two clear seconds in every
+     * cycle when nothing is pulling at all. The rest is not padding. Magnetic
+     * force here runs into a clamp measured in gravities, and two magnets
+     * holding it there without a break give the pressure solver nothing to
+     * catch up in: run continuously it took a 600x1000 cell apart. It is also
+     * better to watch. A lift reads as a lift because of the stillness before
+     * it, and a surface that is never at rest never shows one. */
+    let down, strength, hold;
+    if (u < 0.10) {                              // still away
+      down = PARK;
+      strength = 0.08;
+      hold = 0;
+    } else if (u < 0.18) {                       // come down to it
+      const k = smooth((u - 0.10) / 0.08);
+      down = mix(PARK, GRAB, k);
+      strength = mix(0.08, 1, k);
+      hold = 0;
+    } else if (u < 0.28) {                       // hold while it climbs
+      down = GRAB;
+      strength = 1;
+      hold = smooth((u - 0.18) / 0.10);
+    } else if (u < 0.44) {                       // lift, and let it stretch
+      const k = smooth((u - 0.28) / 0.16);
+      down = mix(GRAB, TOP, k);
+      strength = 1;
+      hold = 1;
+    } else if (u < 0.50) {                       // let go
+      const k = smooth((u - 0.44) / 0.06);
+      down = TOP;
+      strength = mix(1, 0.08, k);
+      hold = 1 - k;
+    } else {                                     // go back for another
+      const k = smooth((u - 0.50) / 0.50);
+      down = mix(TOP, PARK, k);
+      strength = 0.08;
+      hold = 0;
+    }
+
+    /* Across the cell: it travels while it is empty-handed and holds its
+     * ground while it has liquid, so a lift reads as a lift rather than as a
+     * swipe. */
+    const drift = Math.sin(t * 0.21 + p.phase * 6.283) * 0.62
+                + Math.sin(t * 0.089 + p.phase * 2.7) * 0.2;
+    const along = drift * (1 - 0.75 * hold) + p.held * 0.75 * hold;
+    if (hold < 0.02) p.held = drift;             // remember where it grabbed
+
+    /* The lift keeps pace with what it is lifting.
+     *
+     * Written as a height against the clock instead, the magnet simply outruns
+     * the liquid: the pull falls off as roughly the fifth power of distance, so
+     * a magnet sixty pixels clear of the crest is exerting a hundredth of what
+     * it was at the surface, and what you watch is a mound sitting still while
+     * a fan of iron filings sails off up the screen — which is precisely the
+     * thing that makes this look like a picture of ferrofluid rather than
+     * ferrofluid. So the schedule above only says how high the magnet is
+     * *allowed* to be; where it actually goes is a fixed standoff above the
+     * liquid it is holding, and it climbs at the speed the liquid can follow.
+     *
+     * A hand holding a magnet does the same thing, and for the same reason: it
+     * watches. The column stretches until it necks, the liquid drops away, and
+     * the magnet is then free to run up to the ceiling — which is the moment
+     * the schedule is fading it out anyway. */
+    const alongPx = rAlong * 0.6 * (along + swirl);
+    if (hold > 0.01) {
+      /* Not on every step. The scan is the most expensive thing in here, and
+       * the magnet is speed-limited to about three pixels a step — so a crest
+       * measured four steps ago is at most a dozen pixels stale against a
+       * standoff of thirty-five. Staggered by pole, so the two never land on
+       * the same step. */
+      p.tick = (p.tick + 1) & 3;
+      if (p.tick === (i & 3) || !Number.isFinite(p.crest)) p.crest = crestUnder(alongPx, WIN);
+      if (Number.isFinite(p.crest)) {
+        down = mix(down, Math.max(down, p.crest * OVER - REACH), hold);
+      }
+    } else {
+      p.crest = Infinity;
+    }
+    if (p.down === null) p.down = down;          // first step, or a new cell
+    down = p.down = Math.max(p.down - RATE, Math.min(p.down + RATE, down));
+
+    p.x = CX + gDir.x * rDown * down + tanx * alongPx;
+    p.y = CY + gDir.y * rDown * down + tany * alongPx;
+    /* Pressed against the glass while it is working, drawn back while it is
+     * not: a near standoff is a tighter, stronger magnet, which is what makes
+     * a crown of spikes rather than a broad mound. */
+    p.z = mix(FAR_Z, NEAR_Z, strength);
+    p.strength = ambientField() * strength * p.sign;
+    /* Which way the bar magnet points, laid out in the gravity frame with
+     * everything else. Across the cell rather than along it, though the two
+     * measured within noise of each other — the axis is not the lever the
+     * separation is. */
+    p.ax = tanx; p.ay = tany;
+    p.dip = dipoleOn();
+  }
+
+  // Transient poles decay, and are dropped once they do nothing.
+  for (let i = poles.length - 1; i >= ambientPoles; i--) {
+    const p = poles[i];
+    p.life -= dt;
+    if (p.life <= 0) { poles.splice(i, 1); continue; }
+    const u = Math.min(1, p.life / p.born);
+    p.strength = p.peak * u * u * (3 - 2 * u);
+  }
+
+  /* A dipole and a single pole need different constants to make `strength`
+   * mean the same thing — the strongest field the magnet makes. */
+  for (const p of poles) {
+    p.q = (p.dip ? DIPOLE_NORM : RING_NORM) * p.strength * p.z * p.z;
+  }
+  buildSources();
+}
+
+/** Field and its gradient at a point. `out` gets hx, hy, h (the magnitude)
+ *  and gx, gy — the gradient of the magnitude, which is what a body force
+ *  wants.
+ *
+ *  H = Σ q d/|d|³ with d three-dimensional, so the in-plane part falls off as
+ *  an inverse square and stays finite over a pole. The Jacobian is
+ *  differentiated rather than sampled: five finite-difference evaluations per
+ *  particle per step would be five times the arithmetic for a worse answer. */
+const fld = { hx: 0, hy: 0, h: 0, gx: 0, gy: 0 };
+function fieldAt(x, y, out) {
+  let hx = 0, hy = 0, jxx = 0, jxy = 0, jyy = 0;
+  for (let i = 0; i < srcN; i++) {
+    const dx = x - srcX[i], dy = y - srcY[i], z = srcZ[i];
+    const r2 = dx * dx + dy * dy + z * z;
+    const r = Math.sqrt(r2);
+    const r3 = r2 * r, r5 = r3 * r2;
+    const q = srcQ[i];
+    hx += q * dx / r3;
+    hy += q * dy / r3;
+    jxx += q * (1 / r3 - 3 * dx * dx / r5);
+    jxy += q * (-3 * dx * dy / r5);
+    jyy += q * (1 / r3 - 3 * dy * dy / r5);
+  }
+  const h = Math.hypot(hx, hy);
+  out.hx = hx; out.hy = hy; out.h = h;
+  // ∇|H| = (Jᵀ H)/|H|.
+  if (h > 1e-9) {
+    out.gx = (hx * jxx + hy * jxy) / h;
+    out.gy = (hx * jxy + hy * jyy) / h;
+  } else { out.gx = 0; out.gy = 0; }
+  return out;
+}
+
+/* ---------------------------------------------------------------- particles
+ *
+ * Clavet, Beaudoin and Poulin's double density relaxation (SCA 2005). Two
+ * densities per particle: the ordinary one, whose pressure is signed and so
+ * pulls the liquid together wherever it is thinner than it wants to be, and a
+ * near-density whose pressure is strictly repulsive and stops the first from
+ * collapsing everything to a point. Cohesion, incompressibility, and two
+ * drops merging when they touch all fall out of those two terms; there is no
+ * separate surface-tension force anywhere in this file.
+ *
+ * The magnetism is layered on as three forces, because they are three pieces
+ * of physics and they fail in different ways:
+ *
+ *   - `pull`  moves the liquid.  Magnetophoresis: F = μ₀M∇H, a body force up
+ *             the field gradient. Saturating in M is what stops a magnet from
+ *             becoming a black hole at close range.
+ *   - `spike` shapes the free surface. The magnetic traction on an interface
+ *             is what makes a flat pool of ferrofluid unstable and throws it
+ *             into the Rosensweig peaks. Applied here as an outward stress on
+ *             surface particles weighted by how squarely the surface faces
+ *             the field, so the surface extrudes along H and is left alone
+ *             across it. Integrated over any closed body it is exactly zero,
+ *             which is why it changes shape without moving anything.
+ *   - `chain` is the microscopic cause of the other two: induced dipoles
+ *             attract head to tail and repel side by side, so the particles
+ *             string into chains lying along the field.
+ *
+ * And one more, which is what makes the difference between a pool that lifts
+ * and a pool that spikes. `self` is the field the magnetised liquid makes at
+ * itself. A traction from an applied field alone lifts the whole surface
+ * evenly and stops there; a real ferrofluid runs away into peaks, and the
+ * reason is that a bump concentrates the field lines through itself and so
+ * magnetises harder, which grows the bump. That is the same sum as the
+ * demagnetising field with the sign kept honest: a neighbour lying along the
+ * field adds to it, a neighbour lying across it subtracts. So a drop with
+ * neighbours stacked above and below it — a column, a spike — sees more field
+ * than one lying in a flat sheet, and the instability is a consequence rather
+ * than a shape someone drew.
+ */
+
+const FIXED_DT = 1 / 60;
+const MAX_CATCHUP = 3;
+
+let N = 0;
+let px, py, vx, vy, ox, oy;        // position, velocity, position before the step
+let den, snx, sny, surf;           // density, surface normal, how free a surface it is
+let cnx, cny, odn;                 // the same normal before it was normalised — the colour-field
+                                   // gradient, which is ~0 in the bulk and only that is what keeps
+                                   // surface tension a surface force
+let rdx, rdy;                      // relaxation correction owed to each drop
+let ehx, ehy, egx, egy;            // applied field, and the gradient of its magnitude
+let ehux, ehuy, emm;               // its direction, and the magnetisation it alone induces
+let shx, shy;                      // the field the liquid makes at itself
+let uhx, uhy, pm;                  // the effective field's direction, and M in it
+
+let spacing = 10;                  // rest separation between drops
+let IR = 22;                       // interaction radius
+let KR = 16;                       // metaball kernel radius
+let REST = 2.5;                    // rest density, measured rather than guessed
+let G = 1600;                      // gravity, px/s²
+
+/* Stiffnesses, in pixels of positional correction per unit of density error
+ * per step, written against FIXED_DT so they stay meaningful if it changes. */
+const K_PRESSURE = 3400;
+const K_NEAR = 12000;
+const VISC_LINEAR = 4.2;
+const VISC_QUAD = 0.24;
+const WALL_FRICTION = 0.32;
+const CHAIN_CLAMP = 5;             // gravities; a dipole pair is a stiff spring
+/* The field one saturated neighbour at rest separation adds along the chain,
+ * in the same units H is measured in — so against HSAT this is how much of
+ * the liquid's response to itself there is. Too little and a flat pool merely
+ * rises; too much and every drop is a magnet strong enough to hold the next
+ * one regardless of what the actual magnets are doing. */
+const SELF_FIELD = 0.5;
+const SELF_CLAMP = 1.4;
+/* A ceiling on the traction, in gravities.
+ *
+ * The instability it drives has no length scale of its own — nothing in it
+ * prefers a peak four drops wide to a peak one drop wide — so given enough
+ * strength it picks the shortest wavelength there is, peels the surface layer
+ * off one drop at a time, and boils the pool away in about a second. The real
+ * liquid is saved from that by surface tension, which grows as the square of
+ * the wavenumber and so bites hardest exactly there; eight hundred drops
+ * cannot resolve a wavelength short enough for that to happen, so the ceiling
+ * stands in for it. Below the cohesion this liquid actually has, the traction
+ * shapes the surface; above it, it takes the surface apart. */
+const SPIKE_CLAMP = 3;
+/* And one on the pull, for a different reason.
+ *
+ * Magnetophoresis is a body force, and in a real liquid a body force moves the
+ * body: pressure redistributes it faster than it can pull anything apart. Here
+ * the pressure solver has a bounded correction per step, so a force that
+ * varies steeply across a few drop-widths — which is exactly what a strong
+ * magnet close to the liquid is — outruns it, and the pool is pulled apart
+ * drop by drop instead of moving. Clamping the magnitude does more than limit
+ * it: inside the clamp every drop gets the *same* pull, so the differential
+ * that does the tearing is gone and the body moves together, which is what it
+ * was supposed to do in the first place. */
+const PULL_CLAMP = 5;
+/* The furthest one step of pressure relaxation may move a drop, in drop
+ * spacings. See passB — this is the bound that stops the relaxation being a
+ * source of energy rather than a pressure. */
+const RELAX_CAP = 0.6;
+
+/** Rest density of a hexagonal packing at `spacing`, summed with the same
+ *  kernel the solver uses. Measuring it costs one loop at startup and removes
+ *  the most fragile constant in the method. */
+function measureRestDensity() {
+  let rho = 0;
+  const R = Math.ceil(IR / spacing) + 1;
+  for (let j = -R; j <= R; j++) {
+    for (let i = -R; i <= R; i++) {
+      if (i === 0 && j === 0) continue;
+      const x = (i + (j & 1) * 0.5) * spacing;
+      const y = j * spacing * Math.sqrt(3) / 2;
+      const r = Math.hypot(x, y);
+      if (r >= IR) continue;
+      const q = 1 - r / IR;
+      rho += q * q;
+    }
+  }
+  return rho;
+}
+
+function buildParticles() {
+  N = Math.max(60, Math.min(2600, CONFIG.drops));
+  px = new Float32Array(N); py = new Float32Array(N);
+  vx = new Float32Array(N); vy = new Float32Array(N);
+  ox = new Float32Array(N); oy = new Float32Array(N);
+  den = new Float32Array(N);
+  rdx = new Float32Array(N); rdy = new Float32Array(N);
+  snx = new Float32Array(N); sny = new Float32Array(N); surf = new Float32Array(N);
+  cnx = new Float32Array(N); cny = new Float32Array(N); odn = new Float32Array(N);
+  ehx = new Float32Array(N); ehy = new Float32Array(N);
+  egx = new Float32Array(N); egy = new Float32Array(N);
+  ehux = new Float32Array(N); ehuy = new Float32Array(N); emm = new Float32Array(N);
+  shx = new Float32Array(N); shy = new Float32Array(N);
+  uhx = new Float32Array(N); uhy = new Float32Array(N); pm = new Float32Array(N);
+
+  // A hexagonal packing at separation s covers s²√3/2 per particle, so this
+  // is the spacing at which N drops occupy exactly the requested area.
+  const area = 4 * RX * RY * CONFIG.fill;
+  spacing = Math.sqrt(area / (N * Math.sqrt(3) / 2));
+  IR = spacing * 2.2;
+  /* The metaball kernel, as a multiple of the drop spacing — and the number
+   * that decides whether this reads as a liquid or as a thousand particles.
+   *
+   * At 1.44 each drop barely overlapped its neighbours, so the surface
+   * undulated at the drop scale: bead-strings, one-drop-thick worms, a
+   * silhouette that was visibly made of things. A liquid has no such scale.
+   * Widened to 2.4 the field between neighbours is flat and the outline is
+   * the shape of the body rather than of its sampling — measured, the
+   * perimeter for a given area falls by a fifth. It costs nothing in the
+   * physics, which does not know the drawing exists, and 0.9 ms a frame. */
+  KR = spacing * 2.4;
+  REST = measureRestDensity();
+  G = 4.0 * refU();
+  buildHash();
+}
+
+/** Lay the liquid down as a pool on the floor, on a jittered hex lattice at
+ *  its own rest density, so it does not spend the first second of the
+ *  wallpaper's life collapsing into shape. */
+function seed() {
+  const tanx = -gDir.y, tany = gDir.x;
+  const rAlong = Math.hypot(tanx * RX, tany * RY) * 0.94;
+  const rDown = Math.hypot(gDir.x * RX, gDir.y * RY);
+  const cols = Math.max(1, Math.round(2 * rAlong / spacing));
+  const rows = Math.ceil(N / cols);
+  const rowGap = spacing * Math.sqrt(3) / 2;
+
+  for (let i = 0; i < N; i++) {
+    const c = i % cols, r = (i / cols) | 0;
+    const along = (c + (r & 1) * 0.5 + 0.5) / cols * 2 - 1;
+    const up = (rows - r - 0.5) * rowGap;
+    const jx = (Math.random() - 0.5) * spacing * 0.3;
+    const jy = (Math.random() - 0.5) * spacing * 0.3;
+    px[i] = CX + tanx * along * rAlong + gDir.x * (rDown - up) + jx;
+    py[i] = CY + tany * along * rAlong + gDir.y * (rDown - up) + jy;
+    vx[i] = 0; vy[i] = 0;
+    ox[i] = px[i]; oy[i] = py[i];
+    collide(i, spacing * 0.42);
+  }
+}
+
+/* --------------------------------------------------------- neighbour search
+ *
+ * A uniform grid rebuilt once per step by counting sort. The cell is the
+ * interaction radius, so a 3×3 block covers every neighbour that can matter —
+ * including one that has moved since the sort, which is why the same hash
+ * serves both passes of the step. */
+let hashW = 1, hashH = 1, hashStart, hashItems, hashCount, hashCursor;
+
+function buildHash() {
+  hashW = Math.max(1, Math.ceil(W / IR) + 2);
+  hashH = Math.max(1, Math.ceil(H / IR) + 2);
+  hashStart = new Int32Array(hashW * hashH + 1);
+  hashCount = new Int32Array(hashW * hashH);
+  hashCursor = new Int32Array(hashW * hashH);
+  hashItems = new Int32Array(N);
+}
+
+function hashCellOf(i) {
+  let cx = Math.floor(px[i] / IR) + 1, cy = Math.floor(py[i] / IR) + 1;
+  if (cx < 0) cx = 0; else if (cx >= hashW) cx = hashW - 1;
+  if (cy < 0) cy = 0; else if (cy >= hashH) cy = hashH - 1;
+  return cy * hashW + cx;
+}
+
+function sortHash() {
+  hashCount.fill(0);
+  for (let i = 0; i < N; i++) hashCount[hashCellOf(i)]++;
+  let acc = 0;
+  for (let c = 0; c < hashCount.length; c++) {
+    hashStart[c] = acc; hashCursor[c] = acc; acc += hashCount[c];
+  }
+  hashStart[hashCount.length] = acc;
+  for (let i = 0; i < N; i++) hashItems[hashCursor[hashCellOf(i)]++] = i;
+}
+
+/* ------------------------------------------------------------------- solver */
+
+let simTime = 0;
+
+/** The applied field at every drop, sampled once per step. Everything
+ *  magnetic downstream reads these arrays rather than calling fieldAt again,
+ *  so a pole costs one evaluation per drop per step and not four. */
+function fieldPass() {
+  for (let i = 0; i < N; i++) {
+    fieldAt(px[i], py[i], fld);
+    ehx[i] = fld.hx; ehy[i] = fld.hy;
+    egx[i] = fld.gx; egy[i] = fld.gy;
+    const h = fld.h;
+    if (h > 1e-9) { ehux[i] = fld.hx / h; ehuy[i] = fld.hy / h; emm[i] = magnetisation(h); }
+    else { ehux[i] = 0; ehuy[i] = 0; emm[i] = 0; }
+  }
+  shx.fill(0); shy.fill(0);
+}
+
+function applyBodyForces(dt) {
+  const gx = gDir.x * gMag * G, gy = gDir.y * gMag * G;
+  // In the frame of a vessel being shaken, the liquid feels the negative of
+  // the vessel's acceleration. `accel` is already the hand motion alone.
+  const sx = -accel.x * G * 1.25, sy = -accel.y * G * 1.25;
+  // ∇H has units of 1/length, so the pull is made dimensionless against a
+  // typical pole standoff. That is what lets `pull` read as gravities.
+  const pull = CONFIG.pull * mix(1, 1.7, drive()) * G * refU() * 0.16;
+  const pullCap = PULL_CLAMP * G;
+  const spike = CONFIG.spike * G;
+  const spikeCap = SPIKE_CLAMP * G;
+
+  for (let i = 0; i < N; i++) {
+    let ax = gx + sx, ay = gy + sy;
+    const m = pm[i];
+    if (m > 1e-4) {
+      /* Magnetophoresis, on the gradient of the *applied* field only. The
+       * liquid's own field has a gradient too, but the forces it exerts are
+       * internal and sum to nothing over the body; including it here would be
+       * a body pulling itself across the screen. */
+      let fx = pull * m * egx[i], fy = pull * m * egy[i];
+      const fm = Math.hypot(fx, fy);
+      if (fm > pullCap) { fx = fx / fm * pullCap; fy = fy / fm * pullCap; }
+      ax += fx; ay += fy;
+
+      // Normal-field traction: extrude the free surface along H, in whichever
+      // of the two directions it already faces.
+      const s = surf[i];
+      if (s > 0) {
+        const facing = snx[i] * uhx[i] + sny[i] * uhy[i];
+        let k = spike * m * m * s * facing;
+        if (k > spikeCap) k = spikeCap; else if (k < -spikeCap) k = -spikeCap;
+        ax += k * uhx[i];
+        ay += k * uhy[i];
+      }
+    }
+    vx[i] += ax * dt;
+    vy[i] += ay * dt;
+  }
+}
+
+/* Pass A: densities and surface normals at the current positions, plus the
+ * two pairwise velocity terms — viscosity, and the dipole force between
+ * induced moments. All four want the old positions and the neighbour list
+ * this pass is walking anyway. */
+function passA(dt) {
+  /* Last step's density, kept before this one is cleared: the surface-tension
+   * term below needs it, and this pass is the thing that computes it. */
+  odn.set(den);
+  den.fill(0);
+  snx.fill(0); sny.fill(0);
+
+  const chain = CONFIG.chain * G * Math.pow(spacing, 4);
+  const rMin = spacing * 0.7;
+  const clamp = CHAIN_CLAMP * G;
+  const selfK = CONFIG.self * SELF_FIELD * spacing * spacing * spacing * 0.5;
+  const tension = CONFIG.tension * G * dt;
+
+  for (let a = 0; a < N; a++) {
+    const xa = px[a], ya = py[a];
+    const cx = Math.floor(xa / IR) + 1, cy = Math.floor(ya / IR) + 1;
+
+    /* The moment direction, for the dipole terms. The chain force uses the
+     * effective field left over from the previous step — a one-step lag on a
+     * quantity that turns slowly, in exchange for not needing the self field
+     * before the loop that computes it. */
+    const m2a = pm[a] * pm[a];
+    const cux = uhx[a], cuy = uhy[a];
+    const mea = emm[a], eux = ehux[a], euy = ehuy[a];
+
+    for (let j = cy - 1; j <= cy + 1; j++) {
+      if (j < 0 || j >= hashH) continue;
+      for (let i = cx - 1; i <= cx + 1; i++) {
+        if (i < 0 || i >= hashW) continue;
+        const c = j * hashW + i;
+        for (let k = hashStart[c], e = hashStart[c + 1]; k < e; k++) {
+          const b = hashItems[k];
+          if (b <= a) continue;
+          const dx = px[b] - xa, dy = py[b] - ya;
+          const d2 = dx * dx + dy * dy;
+          if (d2 >= IR * IR || d2 < 1e-12) continue;
+          const d = Math.sqrt(d2);
+          const q = 1 - d / IR;
+          const q2 = q * q;
+
+          den[a] += q2; den[b] += q2;
+
+          // An outward-pointing sum. In the bulk the terms cancel; at a free
+          // surface they do not, and what is left points out of the liquid.
+          const ux = dx / d, uy = dy / d;
+          snx[a] -= q * ux; sny[a] -= q * uy;
+          snx[b] += q * ux; sny[b] += q * uy;
+
+          /* Surface tension, as surface-area minimisation — the curvature half
+           * of Akinci, Akinci and Teschner (SIGGRAPH 2013):
+           *
+           *   F = -γ K (n_a - n_b),   K = 2ρ₀/(ρ_a + ρ_b)
+           *
+           * The liquid has had cohesion from the start, but cohesion is not
+           * surface tension: their forces balance perfectly well in shapes
+           * that are nothing like the smallest surface, so every bump the pool
+           * acquired, it kept. Where the surface is flat the neighbouring
+           * normals agree and this does nothing; over a bump they splay apart
+           * and it pulls the bump back into line. Antisymmetric, so it moves
+           * no momentum. K keeps a thinly-populated patch from being tensioned
+           * more weakly than a crowded one just for being thin.
+           *
+           * The normals are the ones this pass computed *last* step, and they
+           * have to be the un-normalised gradient: a unit vector would give
+           * every drop in the bulk a direction from its rounding errors and
+           * make a surface force act throughout the liquid, while the gradient
+           * is essentially zero two layers in. Reading them a step late is the
+           * same bargain the chain force above takes — a quantity that turns
+           * slowly, in exchange for not needing a third walk of the neighbour
+           * list, which cost 0.9 ms of a 5.9 ms frame on its own.
+           *
+           * It also gives the Rosensweig instability a length scale, which a
+           * bare magnetic traction does not have: nothing in it prefers a
+           * spike four drops wide to one drop wide. In a real ferrofluid that
+           * balance is what spaces the peaks a capillary wavelength apart. */
+          if (tension > 0) {
+            const kk = tension * 2 * REST / Math.max(1e-3, odn[a] + odn[b]);
+            const fx = kk * (cnx[a] - cnx[b]), fy = kk * (cny[a] - cny[b]);
+            vx[a] -= fx; vy[a] -= fy;
+            vx[b] += fx; vy[b] += fy;
+          }
+
+          // Viscosity: an impulse along the line of centres, applied only to
+          // the approaching part of the relative velocity.
+          const rv = (vx[a] - vx[b]) * ux + (vy[a] - vy[b]) * uy;
+          if (rv > 0) {
+            const imp = dt * q * (VISC_LINEAR * rv + VISC_QUAD * rv * rv) * 0.5;
+            vx[a] -= imp * ux; vy[a] -= imp * uy;
+            vx[b] += imp * ux; vy[b] += imp * uy;
+          }
+
+          /* Dipole–dipole, both moments along ĥ:
+           *   U = C(1 − 3cos²θ)/r³,  F = C r⁻⁴[(3 − 15c²)r̂ + 6c ĥ]
+           * which is attractive head to tail, repulsive side by side, and
+           * carries the torque that turns a pair into a link of a chain. It
+           * is a stiff force at short range, hence the floor on r and the
+           * clamp: an inverse fourth power and a fixed timestep are not
+           * friends. */
+          if (m2a > 1e-4 && chain > 0) {
+            const rr = Math.max(d, rMin);
+            const rr4 = rr * rr * rr * rr;
+            const c2 = ux * cux + uy * cuy;
+            const k2 = chain * m2a * q2 / rr4;
+            let fx = k2 * ((3 - 15 * c2 * c2) * ux + 6 * c2 * cux);
+            let fy = k2 * ((3 - 15 * c2 * c2) * uy + 6 * c2 * cuy);
+            const fm = Math.hypot(fx, fy);
+            if (fm > clamp) { fx = fx / fm * clamp; fy = fy / fm * clamp; }
+            vx[a] -= fx * dt; vy[a] -= fy * dt;
+            vx[b] += fx * dt; vy[b] += fy * dt;
+          }
+
+          /* The field each of the pair makes at the other. A dipole's field
+           * along its own axis is twice as strong as across it and points the
+           * other way, so a neighbour stacked along the field reinforces it
+           * and one lying across it cancels part of it. Summed over the
+           * neighbourhood that is the demagnetising field, and it is what
+           * makes a column of liquid a better magnet than a sheet of it. */
+          if (selfK > 0) {
+            const rr = Math.max(d, rMin);
+            const inv3 = q2 / (rr * rr * rr);
+            const meb = emm[b], bux = ehux[b], buy = ehuy[b];
+            if (mea > 1e-4) {
+              const c3 = ux * eux + uy * euy;
+              shx[b] += selfK * mea * (3 * c3 * ux - eux) * inv3;
+              shy[b] += selfK * mea * (3 * c3 * uy - euy) * inv3;
+            }
+            if (meb > 1e-4) {
+              // From b to a the separation runs the other way; the sign of r̂
+              // cancels in the 3c r̂ term, so only the direction of ĥ_b matters.
+              const c4 = ux * bux + uy * buy;
+              shx[a] += selfK * meb * (3 * c4 * ux - bux) * inv3;
+              shy[a] += selfK * meb * (3 * c4 * uy - buy) * inv3;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const selfCap = SELF_CLAMP;
+  for (let i = 0; i < N; i++) {
+    const m = Math.hypot(snx[i], sny[i]);
+    /* Keep the gradient before it is normalised. The direction is what the
+     * traction wants, but surface tension wants the *length* too: it is
+     * essentially zero a couple of layers into the bulk, and that is the only
+     * thing stopping a surface-area force from acting throughout the liquid. */
+    cnx[i] = snx[i]; cny[i] = sny[i];
+    if (m > 1e-6) { snx[i] /= m; sny[i] /= m; } else { snx[i] = 0; sny[i] = 0; }
+    /* How much of a free surface this drop is part of — which is not the
+     * same as how exposed it is, and the difference is the whole stability of
+     * the thing.
+     *
+     * The density is the rest density deep in the bulk, about half of it at a
+     * free surface, and near zero on a drop flying by itself. The traction is
+     * an interface stress: it needs liquid on one side and air on the other,
+     * so it peaks at exactly half and falls to nothing at both ends. Written
+     * the obvious way instead — strongest where the drop is most exposed — it
+     * is strongest on a drop that has already left, which accelerates it
+     * further, and the pool boils itself away in about a second. */
+    const d = Math.min(1, den[i] / REST);
+    const band = 4 * d * (1 - d);
+    const alone = d <= 0.12 ? 0 : d >= 0.32 ? 1 : (d - 0.12) / 0.2;
+    surf[i] = band * alone * alone * (3 - 2 * alone);
+
+    // Applied plus self, capped: the feedback that grows a spike is the same
+    // feedback that would grow it without limit.
+    let sx = shx[i], sy = shy[i];
+    const sm = Math.hypot(sx, sy);
+    if (sm > selfCap) { sx = sx / sm * selfCap; sy = sy / sm * selfCap; }
+    const hx = ehx[i] + sx, hy = ehy[i] + sy;
+    const h = Math.hypot(hx, hy);
+    if (h > 1e-9) { uhx[i] = hx / h; uhy[i] = hy / h; pm[i] = magnetisation(h); }
+    else { uhx[i] = 0; uhy[i] = 0; pm[i] = 0; }
+  }
+}
+
+/** Pass B: the double density relaxation, on the integrated positions. */
+function passB(dt) {
+  const k = dt * dt;
+  for (let a = 0; a < N; a++) {
+    const xa = px[a], ya = py[a];
+    const cx = Math.floor(xa / IR) + 1, cy = Math.floor(ya / IR) + 1;
+    const j0 = Math.max(0, cy - 1), j1 = Math.min(hashH - 1, cy + 1);
+    const i0 = Math.max(0, cx - 1), i1 = Math.min(hashW - 1, cx + 1);
+
+    /* The neighbour set is walked twice — once to total the densities, then,
+     * knowing the pressures they imply, again to spend them. There is no way
+     * around the two passes: the correction owed to the first neighbour is
+     * not known until the last one has been counted. */
+    let rho = 0, rhoNear = 0;
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const c = j * hashW + i;
+        for (let t = hashStart[c], e = hashStart[c + 1]; t < e; t++) {
+          const b = hashItems[t];
+          if (b === a) continue;
+          const dx = px[b] - xa, dy = py[b] - ya;
+          const d2 = dx * dx + dy * dy;
+          if (d2 >= IR * IR || d2 < 1e-12) continue;
+          const q = 1 - Math.sqrt(d2) / IR;
+          rho += q * q; rhoNear += q * q * q;
+        }
+      }
+    }
+
+    const P = K_PRESSURE * (rho - REST);
+    const Pn = K_NEAR * rhoNear;
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const c = j * hashW + i;
+        for (let t = hashStart[c], e = hashStart[c + 1]; t < e; t++) {
+          const b = hashItems[t];
+          if (b === a) continue;
+          const dx = px[b] - xa, dy = py[b] - ya;
+          const d2 = dx * dx + dy * dy;
+          if (d2 >= IR * IR || d2 < 1e-12) continue;
+          const d = Math.sqrt(d2);
+          const q = 1 - d / IR;
+          const disp = k * (P * q + Pn * q * q) * 0.5;
+          const ux = dx / d, uy = dy / d;
+          rdx[b] += disp * ux; rdy[b] += disp * uy;
+          rdx[a] -= disp * ux; rdy[a] -= disp * uy;
+        }
+      }
+    }
+  }
+
+  /* Spend the corrections, with a ceiling on the total each drop may take.
+   *
+   * This is the guard that keeps the whole thing alive, and it has to be on
+   * the sum rather than on any one pair. The pressure is linear in the density
+   * error and the density error has no bound: slam the liquid into a wall and
+   * a drop can find itself with three times the neighbours it wants, and every
+   * one of those neighbours then contributes to shoving it out. A per-pair
+   * limit does nothing about forty of them agreeing.
+   *
+   * What that produces is not a wobble. The relaxation is a position
+   * projection and the velocity is recovered from the positions afterwards, so
+   * an unbounded correction is an unbounded velocity — the drop is launched,
+   * hits a wall, compresses, and is launched again. Measured: two home-screen
+   * swipes in a row left every drop pinned at the speed limit and still pinned
+   * there ten seconds later, with the pool gone. Bounding the sum bounds the
+   * velocity the relaxation can invent, which is what makes it a pressure
+   * rather than a source of energy.
+   *
+   * Capping the sum means accumulating it, which makes this Jacobi where
+   * Clavet is Gauss-Seidel: every drop is corrected against the same snapshot
+   * instead of against its predecessors' new positions. It converges a little
+   * slower per step and it is symmetric, which at this stiffness is the better
+   * trade. */
+  const cap = spacing * RELAX_CAP;
+  for (let i = 0; i < N; i++) {
+    const dx = rdx[i], dy = rdy[i];
+    const m = Math.hypot(dx, dy);
+    if (m > cap) { px[i] += dx / m * cap; py[i] += dy / m * cap; }
+    else { px[i] += dx; py[i] += dy; }
+    rdx[i] = 0; rdy[i] = 0;
+  }
+}
+
+/** Put a particle back inside the cell and rub off its tangential speed. The
+ *  correction is positional; the velocity follows from it at the end of the
+ *  step, which is what keeps the walls from injecting energy. */
+function collide(i, pad) {
+  const n = CONFIG.squircleN;
+  const L = CX - RX + pad, R = CX + RX - pad, T = CY - RY + pad, B = CY + RY - pad;
+  const r = Math.max(1e-3, corner - pad);
+  const cx = px[i] < CX ? L + r : R - r;
+  const cy = py[i] < CY ? T + r : B - r;
+  const dx = px[i] - cx, dy = py[i] - cy;
+  const outX = px[i] < CX ? dx < 0 : dx > 0;
+  const outY = py[i] < CY ? dy < 0 : dy > 0;
+
+  let hitX = 0, hitY = 0;
+  if (outX && outY) {
+    const f = Math.pow(Math.abs(dx) / r, n) + Math.pow(Math.abs(dy) / r, n);
+    if (f > 1) {
+      const s = Math.pow(f, -1 / n);
+      hitX = cx + dx * s - px[i]; hitY = cy + dy * s - py[i];
+    }
+  } else {
+    if (px[i] < L) hitX = L - px[i]; else if (px[i] > R) hitX = R - px[i];
+    if (py[i] < T) hitY = T - py[i]; else if (py[i] > B) hitY = B - py[i];
+  }
+  if (!hitX && !hitY) return;
+
+  px[i] += hitX; py[i] += hitY;
+  // Friction along the wall, taken out of the step's displacement so that the
+  // velocity recovered at the end of the step has already lost it.
+  const m = Math.hypot(hitX, hitY) || 1;
+  const nx = hitX / m, ny = hitY / m;
+  const sxd = px[i] - ox[i], syd = py[i] - oy[i];
+  const dot = sxd * nx + syd * ny;
+  px[i] -= WALL_FRICTION * (sxd - dot * nx);
+  py[i] -= WALL_FRICTION * (syd - dot * ny);
+}
+
+function stepSim(dt) {
+  sortHash();
+  fieldPass();
+  passA(dt);
+  applyBodyForces(dt);
+  for (let i = 0; i < N; i++) {
+    ox[i] = px[i]; oy[i] = py[i];
+    px[i] += vx[i] * dt; py[i] += vy[i] * dt;
+  }
+  passB(dt);
+  const pad = spacing * 0.42;
+  for (let i = 0; i < N; i++) collide(i, pad);
+  /* Recover the velocity from the step, and cap it.
+   *
+   * The cap is not taste, it is the condition the neighbour search is built
+   * on: the hash cell is one interaction radius and three cells are searched,
+   * so a drop that moves further than that in a step starts missing
+   * neighbours it is touching. Missing neighbours means missing pressure,
+   * which means it moves further still — and the failure mode is not a
+   * wobble, it is every drop in the container ending up in one hash cell with
+   * the solver quietly gone quadratic. A wallpaper cannot come back from
+   * that, so it is not allowed to start. */
+  const inv = 1 / dt;
+  const vMax = IR * inv;
+  for (let i = 0; i < N; i++) {
+    let ux = (px[i] - ox[i]) * inv, uy = (py[i] - oy[i]) * inv;
+    if (!Number.isFinite(ux) || !Number.isFinite(uy) ||
+        !Number.isFinite(px[i]) || !Number.isFinite(py[i])) {
+      // Nothing should produce this. If something does, one drop teleporting
+      // to the middle is a far better outcome than a NaN spreading through
+      // the pressure solve into every other drop.
+      px[i] = CX; py[i] = CY; ox[i] = CX; oy[i] = CY;
+      vx[i] = 0; vy[i] = 0;
+      continue;
+    }
+    const s = Math.hypot(ux, uy);
+    if (s > vMax) { const k = vMax / s; ux *= k; uy *= k; }
+    vx[i] = ux; vy[i] = uy;
+  }
+}
+
+/* A fixed timestep, not the frame interval.
+ *
+ * Position-based relaxation is only conditionally stable, and its stiffness
+ * is expressed in dt²: hand it a 40ms frame after a stall and the pressure
+ * correction overshoots into a spray of particles that never comes back. So
+ * the simulation runs at its own rate whatever the display is doing, and
+ * drops steps rather than taking longer ones. */
+let accumulator = 0;
+
+function step(dtWall) {
+  accumulator += Math.min(dtWall, 0.1);
+  let steps = 0;
+  while (accumulator >= FIXED_DT && steps < MAX_CATCHUP) {
+    stepPoles(simTime, FIXED_DT);
+    stepSim(FIXED_DT);
+    simTime += FIXED_DT;
+    accumulator -= FIXED_DT;
+    steps++;
+  }
+  if (steps >= MAX_CATCHUP) accumulator = 0;
+  return steps;
+}
+
+/* ----------------------------------------------------- the metaball surface
+ *
+ * Eight hundred discs are not a liquid; one contour around the sum of eight
+ * hundred kernels is. The field is splatted onto a grid and the isoline
+ * extracted with marching squares.
+ *
+ * The kernel is stretched along the local field direction by a factor that
+ * grows with the magnetisation and preserves its own area. That is not a
+ * cheat to draw a spike the physics did not produce — a chain of magnetised
+ * particles genuinely is a prolate object, and drawing it as a circle is what
+ * would be wrong. It is also what puts a point on the tip of a Rosensweig
+ * peak instead of a bead.
+ *
+ * The grid extends past the screen by the kernel's longest reach, so the
+ * field always falls to zero inside it and every contour closes. Without that
+ * margin a pool touching the bottom of the screen produces an open polyline
+ * and the fill goes wherever it likes.
+ */
+
+let GW = 0, GH = 0, GOX = 0, GOY = 0, mcell = 5;
+let F;                             // the scalar field
+let coverCanvas, coverCtx, coverImage;
+let blurCanvas, blurCtx;
+
+/* The isolevel, raised with the kernel above so the liquid covers the same
+ * fraction of the screen as before rather than fattening by a tenth. */
+const ISO = 1.6;
+const ANISO = 1.9;                 // how prolate a saturated free surface gets
+
+function buildField() {
+  /* The contour grid, against the drop spacing.
+   *
+   * It used to be about half a spacing, which was right when the splat kernel
+   * was 1.44 spacings wide and the field had structure at the drop scale.
+   * The kernel is 2.4 spacings now, so the field it makes is smooth over
+   * several drops and sampling it that finely buys nothing: measured, a grid
+   * of one spacing produces a picture indistinguishable from half a spacing,
+   * and pays for the drop count that does change the picture. */
+  mcell = CONFIG.grid > 0 ? CONFIG.grid : Math.max(3, Math.min(9, spacing * 0.95));
+  const pad = Math.ceil(KR * (1 + ANISO) / mcell) + 1;
+  GOX = -pad * mcell; GOY = -pad * mcell;
+  GW = Math.ceil((W - 2 * GOX) / mcell) + 1;
+  GH = Math.ceil((H - 2 * GOY) / mcell) + 1;
+  F = new Float32Array(GW * GH);
+
+  coverCanvas = document.createElement("canvas");
+  coverCanvas.width = GW; coverCanvas.height = GH;
+  coverCtx = coverCanvas.getContext("2d");
+  coverImage = coverCtx.createImageData(GW, GH);
+
+  /* A quarter of the grid resolution, purely to blur the drop shadow: two
+   * bilinear resamples cost almost nothing and are a wider, cheaper blur than
+   * anything that filters in place. */
+  blurCanvas = document.createElement("canvas");
+  blurCanvas.width = Math.max(2, GW >> 2); blurCanvas.height = Math.max(2, GH >> 2);
+  blurCtx = blurCanvas.getContext("2d");
+
+  edgeX = new Float32Array(GW * GH * 2);
+  edgeY = new Float32Array(GW * GH * 2);
+  edgeNext = new Int32Array(GW * GH * 2);
+  edgeMark = new Int32Array(GW * GH * 2);
+}
+
+function splat() {
+  F.fill(0);
+  for (let i = 0; i < N; i++) {
+    /* The effective field left by the last simulation step, self field
+     * included — so a drop at the tip of a spike, which is the one seeing the
+     * most field, is also the one drawn sharpest.
+     *
+     * Only the drops with air around them stretch. In the bulk there is no
+     * interface to be prolate about and streaking it would only show the
+     * discretisation; at a free surface, and on a drop flying alone, the
+     * elongation along the field is the real shape a magnetised body of this
+     * liquid takes, and it is what puts a point on a spike that eight hundred
+     * drops could never resolve on their own. */
+    let ax = uhx[i], ay = uhy[i], e = 1;
+    if (ax || ay) {
+      const free = 1 - Math.min(1, den[i] / REST);
+      e = 1 + ANISO * pm[i] * pm[i] * free;
+    } else { ax = 1; ay = 0; }
+    const bx = -ay, by = ax;                  // and squeezed across it
+    const ra = KR * e, rb = KR / e;           // at constant area
+    const reach = ra;
+
+    const i0 = Math.max(0, Math.ceil((px[i] - reach - GOX) / mcell));
+    const i1 = Math.min(GW - 1, Math.floor((px[i] + reach - GOX) / mcell));
+    const j0 = Math.max(0, Math.ceil((py[i] - reach - GOY) / mcell));
+    const j1 = Math.min(GH - 1, Math.floor((py[i] + reach - GOY) / mcell));
+    const ia2 = 1 / (ra * ra), ib2 = 1 / (rb * rb);
+
+    for (let j = j0; j <= j1; j++) {
+      const gy = GOY + j * mcell - py[i];
+      const row = j * GW;
+      for (let k = i0; k <= i1; k++) {
+        const gx = GOX + k * mcell - px[i];
+        const u = gx * ax + gy * ay, v = gx * bx + gy * by;
+        const q = u * u * ia2 + v * v * ib2;
+        if (q >= 1) continue;
+        const w = 1 - q;
+        F[row + k] += w * w;
+      }
+    }
+  }
+}
+
+/* -------------------------------------------------------- marching squares
+ *
+ * Crossings are keyed by the grid edge they lie on rather than by their
+ * coordinates, so the contour is chained by integer identity and not by a
+ * tolerance on two floats that ought to be equal.
+ */
+let edgeX, edgeY, edgeNext, edgeMark;
+let mark = 0;
+const starts = [];
+
+const hEdge = (i, j) => j * GW + i;                 // between (i,j) and (i+1,j)
+const vEdge = (i, j) => GW * GH + j * GW + i;       // between (i,j) and (i,j+1)
+
+function link(from, to) { edgeNext[from] = to; edgeMark[from] = mark; starts.push(from); }
+
+function setH(e, i, j, a, b) {
+  const t = (ISO - a) / (b - a);
+  edgeX[e] = GOX + (i + Math.max(0, Math.min(1, t))) * mcell;
+  edgeY[e] = GOY + j * mcell;
+}
+function setV(e, i, j, a, b) {
+  const t = (ISO - a) / (b - a);
+  edgeX[e] = GOX + i * mcell;
+  edgeY[e] = GOY + (j + Math.max(0, Math.min(1, t))) * mcell;
+}
+
+function contours() {
+  mark++;
+  starts.length = 0;
+  const loops = [];
+
+  for (let j = 0; j < GH - 1; j++) {
+    for (let i = 0; i < GW - 1; i++) {
+      const c = j * GW + i;
+      const v0 = F[c], v1 = F[c + 1], v2 = F[c + GW + 1], v3 = F[c + GW];
+      const b0 = v0 > ISO, b1 = v1 > ISO, b2 = v2 > ISO, b3 = v3 > ISO;
+      const m = (b0 ? 1 : 0) | (b1 ? 2 : 0) | (b2 ? 4 : 0) | (b3 ? 8 : 0);
+      if (m === 0 || m === 15) continue;
+
+      const e0 = hEdge(i, j), e1 = vEdge(i + 1, j), e2 = hEdge(i, j + 1), e3 = vEdge(i, j);
+      // Crossing points, cached on the edge so the two cells sharing it agree
+      // to the last bit and the chain closes.
+      if (b0 !== b1) setH(e0, i, j, v0, v1);
+      if (b1 !== b2) setV(e1, i + 1, j, v1, v2);
+      if (b3 !== b2) setH(e2, i, j + 1, v3, v2);
+      if (b0 !== b3) setV(e3, i, j, v0, v3);
+
+      /* The interior is kept on the left of every directed segment, which is
+       * what makes an enclosed void come out wound the other way and drop out
+       * of a non-zero fill without ever being identified as a hole. */
+      switch (m) {
+        case 1:  link(e3, e0); break;
+        case 2:  link(e0, e1); break;
+        case 3:  link(e3, e1); break;
+        case 4:  link(e1, e2); break;
+        case 6:  link(e0, e2); break;
+        case 7:  link(e3, e2); break;
+        case 8:  link(e2, e3); break;
+        case 9:  link(e2, e0); break;
+        case 11: link(e2, e1); break;
+        case 12: link(e1, e3); break;
+        case 13: link(e1, e0); break;
+        case 14: link(e0, e3); break;
+        // The two ambiguous cases, resolved on the cell's own average: making
+        // one consistent choice is what stops a saddle tearing the contour.
+        case 5:
+          if ((v0 + v1 + v2 + v3) * 0.25 > ISO) { link(e1, e0); link(e3, e2); }
+          else { link(e3, e0); link(e1, e2); }
+          break;
+        case 10:
+          if ((v0 + v1 + v2 + v3) * 0.25 > ISO) { link(e0, e3); link(e2, e1); }
+          else { link(e0, e1); link(e2, e3); }
+          break;
+      }
+    }
+  }
+
+  // Walk the links into closed loops.
+  for (let s = 0; s < starts.length; s++) {
+    let e = starts[s];
+    if (edgeMark[e] !== mark) continue;
+    const loop = [];
+    while (edgeMark[e] === mark) {
+      edgeMark[e] = 0;
+      loop.push(edgeX[e], edgeY[e]);
+      e = edgeNext[e];
+    }
+    if (loop.length >= 8) loops.push(loop);
+  }
+
+  return loops;
+}
+
+/* ------------------------------------------------------------------ render */
+
+const light = { x: -0.51, y: -0.86 };
+
+function updateLight() {
+  /* The light is fixed in the world, not on the screen: it comes from above
+   * and a little to one side of wherever "above" currently is. Rolling the
+   * phone therefore rolls the highlight around the liquid, which is what
+   * happens when you roll a real object under a real window. */
+  const ux = -gDir.x, uy = -gDir.y;         // up
+  const rx = -uy, ry = ux;                  // and to its right
+  const lx = ux * 0.86 - rx * 0.51, ly = uy * 0.86 - ry * 0.51;
+  const m = Math.hypot(lx, ly) || 1;
+  light.x = lx / m; light.y = ly / m;
+}
+
+/** Trace a loop with quadratics through the segment midpoints — the standard
+ *  cure for marching-squares faceting. It rounds by half a cell, which at
+ *  this grid size leaves the peaks intact. */
+function traceLoop(g, loop) {
+  const n = loop.length / 2;
+  if (n < 3) return;
+  g.moveTo((loop[0] + loop[(n - 1) * 2]) * 0.5, (loop[1] + loop[(n - 1) * 2 + 1]) * 0.5);
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    g.quadraticCurveTo(loop[i * 2], loop[i * 2 + 1],
+                       (loop[i * 2] + loop[j * 2]) * 0.5,
+                       (loop[i * 2 + 1] + loop[j * 2 + 1]) * 0.5);
+  }
+  g.closePath();
+}
+
+/** Coverage, as a small image that becomes a soft shadow once it is scaled
+ *  up. Alpha ramps through the isovalue, so the edge of the shadow is the
+ *  edge of the liquid rather than the edge of a grid cell. */
+function paintCover() {
+  const d = coverImage.data;
+  const lo = ISO * 0.35, hi = ISO * 1.15;
+  for (let c = 0, p = 0; c < F.length; c++, p += 4) {
+    let a = (F[c] - lo) / (hi - lo);
+    a = a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
+    d[p] = 0; d[p + 1] = 0; d[p + 2] = 0;
+    d[p + 3] = (a * 255) | 0;
+  }
+  coverCtx.putImageData(coverImage, 0, 0);
+}
+
+/* The sheen.
+ *
+ * Drawn as strokes along the contour rather than as a shaded image over the
+ * body, and the reason is what the material is. Ferrofluid is a black mirror:
+ * almost all of what you see on it is one hard reflection of whatever is
+ * bright in the room, riding on the edge where the surface turns away. Shade
+ * the interior instead and it comes out looking like smoke in a jar.
+ *
+ * So: clip to the silhouette, then stroke the lit runs of the outline with
+ * lines whose inner halves are all that survives the clip. Three tiers, by
+ * how squarely each run faces the light, each a stack of decreasing widths —
+ * the stack is the falloff across the band, the tiers are the falloff along
+ * it, and the narrowest line of the brightest tier is the glint.
+ */
+/* The tiers, by how squarely a run faces the light. Each is a stack of
+ * decreasing widths: the stack is the falloff across the band, the tiers are
+ * the falloff along it, and the narrowest line of the brightest tier is the
+ * glint.
+ *
+ * `curve` is how much of the tier survives on a *flat* run. A mirror-flat
+ * surface reflects the room, not a compact highlight — it is the curved parts
+ * that squeeze a whole window into a bright band — so the broad dim sheen is
+ * there wherever the light falls, and the bright tiers arrive with curvature.
+ * Without that the highlight is a constant-width line all the way round every
+ * shape, and a pool at rest reads as a black bar someone has outlined.
+ *
+ * The tiers overlap in threshold and in width so that no one of them switching
+ * on is a visible step: on a surface whose facing hovers at a boundary, a tier
+ * that carried a quarter of the brightness would pop on and off from frame to
+ * frame along the whole edge. */
+const SHEEN = [
+  { min: 0.30, curve: 1.00, band: 15, peak: 0.075 },
+  { min: 0.52, curve: 0.55, band: 7.0, peak: 0.11 },
+  { min: 0.70, curve: 0.30, band: 3.6, peak: 0.19 },
+  { min: 0.84, curve: 0.12, band: 2.0, peak: 0.46 },
+  { min: 0.93, curve: 0.06, band: 1.3, peak: 0.72 },
+  // The paper is white and the liquid is a mirror, so there is a second, far
+  // fainter line low down where it reflects the page back at you.
+  { max: -0.74, curve: 0.50, band: 3.0, peak: 0.20 },
+];
+
+/* A tier's band is stroked as a stack of narrowing lines rather than one line.
+ *
+ * A stroke has a hard edge, and a wide one at a flat alpha therefore paints a
+ * step: at fifteen pixels across it is a grey ledge running parallel to the
+ * whole outline, and the liquid comes out looking like a sticker with a bevel
+ * on it. Several narrowing passes at a fraction of the alpha each accumulate
+ * into a falloff instead, and no one of their edges is visible. Widths in
+ * geometric progression so the steps are evenly spaced in the eye rather than
+ * in pixels; anything that would land under a pixel wide is dropped, which is
+ * what leaves the tightest tiers as the single hairlines they should be. */
+const SHEEN_FALLOFF = [1, 0.62, 0.38, 0.22, 0.11];
+
+for (const tier of SHEEN) {
+  const widths = SHEEN_FALLOFF.map((f) => tier.band * f).filter((w) => w >= 0.8);
+  // Alpha per pass such that all of them together reach the tier's peak.
+  const a = 1 - Math.pow(1 - tier.peak, 1 / widths.length);
+  tier.layers = widths.map((w) => [w, a]);
+}
+
+/* How much *surface*, in pixels, a normal is measured across.
+ *
+ * Not the neighbouring vertices, and not a fixed number of them either.
+ * Marching-squares vertices land a fraction of a cell apart and each sits on a
+ * grid edge, so the direction from one to the next is mostly a record of which
+ * edge it happened to be; and counting five along is a different arc length
+ * every time, because the spacing between vertices varies with the angle the
+ * contour crosses the grid at. Both of those are noise that changes every
+ * frame as the contour is re-extracted.
+ *
+ * There is a second, larger reason, and it is the one that set this number.
+ * The metaball field ripples at the drop spacing — measured, the surface of a
+ * pool at rest undulates 0.6 px RMS with a 9 px period. Six tenths of a pixel
+ * is invisible as a shape. But a 0.6 px ripple over a 9 px period swings the
+ * surface *normal* by ±35°, which is not invisible at all: the highlight
+ * boiled along the whole edge of a liquid that was barely moving. Averaged
+ * over a couple of ripple periods the swing is a few degrees and what is left
+ * is the shape's own curvature. */
+const NORMAL_LEN = 22;
+
+/** How finely the sheen's brightness is quantised along a run. */
+const SHEEN_STEPS = 5;
+
+/* And a little further in again, because the silhouette is not stroked from
+ * these points. It is drawn as quadratics through the segment midpoints,
+ * which cuts every convex corner by up to half a grid cell — so a highlight
+ * laid exactly on the polyline sits outside the shape it is meant to be
+ * inside, and the clip takes it. Worse, it does not take all of it: what
+ * survives sits on the clip's own antialiased edge at a fraction of its
+ * coverage, so the glint that should be white comes out a mid grey and looks
+ * like a bevel. This is that half cell. */
+const sheenInset = () => num("sheenInset", mcell * 0.55);
+
+let lamBuf = new Float32Array(2048), curBuf = new Float32Array(2048);
+let nxBuf = new Float32Array(2048), nyBuf = new Float32Array(2048);
+let arcBuf = new Float32Array(2049);
+
+function growLoopBuffers(n) {
+  if (n <= lamBuf.length) return;
+  lamBuf = new Float32Array(n); curBuf = new Float32Array(n);
+  nxBuf = new Float32Array(n); nyBuf = new Float32Array(n);
+  arcBuf = new Float32Array(n + 1);
+}
+
+/** Outward normal, its agreement with the light, and the curvature, for a
+ *  whole loop — everything the sheen needs, measured over a fixed arc length
+ *  rather than a fixed number of vertices. */
+function loopLighting(loop) {
+  const n = loop.length / 2;
+  growLoopBuffers(n);
+
+  // Arc length along the loop, so a span can be asked for in pixels.
+  arcBuf[0] = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    arcBuf[i + 1] = arcBuf[i] + Math.hypot(loop[j * 2] - loop[i * 2],
+                                           loop[j * 2 + 1] - loop[i * 2 + 1]);
+  }
+  const total = arcBuf[n];
+  // A loop shorter than the measuring span is a bead: it has no large-scale
+  // shape to find, so the span becomes the whole of it.
+  const half = Math.min(NORMAL_LEN, total * 0.45) * 0.5;
+
+  /* Arc length at any index, including the ones off either end: the loop is
+   * closed, so walking past the last vertex is walking past the first. */
+  const arcAt = (k) => k < 0 ? arcBuf[k + n] - total
+                    : k > n ? arcBuf[k - n] + total
+                    : arcBuf[k];
+
+  const lx = light.x, ly = light.y;
+  // Two pointers, each monotone, so the whole loop costs one pass.
+  let lo = -n, hi = 0;
+  for (let i = 0; i < n; i++) {
+    const s = arcBuf[i];
+    while (arcAt(hi) - s < half && hi < i + n) hi++;
+    while (s - arcAt(lo) > half) lo++;
+    const a = ((lo % n) + n) % n, b = hi % n;
+    const tx = loop[b * 2] - loop[a * 2], ty = loop[b * 2 + 1] - loop[a * 2 + 1];
+    const m = Math.hypot(tx, ty) || 1;
+    // Interior on the left, so the outward normal is to the right of travel.
+    const nx = -ty / m, ny = tx / m;
+    nxBuf[i] = nx; nyBuf[i] = ny;
+    lamBuf[i] = nx * lx + ny * ly;
+    /* Curvature, as the shortfall of the chord against the arc it subtends.
+     * On a straight run the two are equal and this is zero; the tighter the
+     * turn, the more arc there is per unit chord. Normalised so that a
+     * half-circle of the measuring span reads as 1. */
+    const arc = Math.min(arcAt(hi) - arcAt(lo), half * 4);
+    curBuf[i] = arc > 1e-3 ? Math.min(1, Math.max(0, 1 - m / arc) * 3.4) : 0;
+  }
+  return n;
+}
+
+function drawSheen(g, loops) {
+  const gloss = Math.min(1.4, CONFIG.gloss);
+  const inset = sheenInset();
+  g.lineJoin = "round"; g.lineCap = "butt";
+  for (const loop of loops) {
+    const n = loop.length / 2;
+    if (n < 6) continue;
+    loopLighting(loop);
+    for (let t = 0; t < SHEEN.length; t++) {
+      const tier = SHEEN[t], up = tier.max === undefined;
+      /* A run is a stretch that is both in this tier and at the same
+       * brightness within it — brightness being quantised, because a stroke
+       * carries one alpha and the alternative is a separate stroke per
+       * vertex. Five steps is fine enough that the seams do not read. */
+      let run = 0, from = 0, step = -1;
+      for (let i = 0; i <= n; i++) {
+        let s = -1;
+        if (i < n && (up ? lamBuf[i] > tier.min : lamBuf[i] < tier.max)) {
+          const w = tier.curve + (1 - tier.curve) * curBuf[i];
+          s = Math.max(0, Math.min(SHEEN_STEPS, Math.round(w * SHEEN_STEPS)));
+        }
+        if (s === step && s >= 0) { run++; continue; }
+        if (run >= 3 && step > 0) {
+          const k = (step / SHEEN_STEPS) * gloss;
+          for (let L = 0; L < tier.layers.length; L++) {
+            const w = tier.layers[L][0];
+            /* Set in by half its own width, so the whole of the line lands
+             * inside the liquid. Centred on the contour instead, half of
+             * every stroke falls outside and is taken by the clip — which
+             * does not merely halve it, it leaves the survivor sitting on the
+             * clip's own antialiased edge at a fraction of its coverage, and
+             * the glint that should be white comes out a mid grey. */
+            const in2 = w * 0.5 + inset;
+            g.beginPath();
+            for (let q = 0; q < run; q++) {
+              const p = from + q;
+              const x = loop[p * 2] - nxBuf[p] * in2, y = loop[p * 2 + 1] - nyBuf[p] * in2;
+              if (q === 0) g.moveTo(x, y); else g.lineTo(x, y);
+            }
+            g.strokeStyle = `rgba(255,255,255,${(tier.layers[L][1] * k).toFixed(3)})`;
+            g.lineWidth = w;
+            g.stroke();
+          }
+        }
+        /* The next run starts one point back, so that two runs at different
+         * brightnesses meet rather than leaving a butt-capped gap between
+         * them. */
+        if (s >= 0) { from = run > 0 && i > 0 ? i - 1 : i; run = i - from + 1; step = s; }
+        else { run = 0; step = -1; }
+      }
+    }
+  }
+}
+
+/** Iron filings on the paper: short strokes lying along H, as long as there
+ *  is field to lie along. It is the oldest way of drawing a magnetic field
+ *  and it is still the clearest — and it is the only thing on the page that
+ *  shows where the magnets are, since a magnet behind the glass is not
+ *  visible and its effect on the liquid is often a screen away. */
+function drawFilings(g) {
+  if (CONFIG.filings <= 0 || !poles.length) return;
+  /* Referenced to the strongest pole rather than to an absolute field, so the
+   * hatch covers the same *shape* however strong the magnets happen to be at
+   * this instant. On an absolute threshold a magnet at full strength puts
+   * ticks in every corner of the screen and the wallpaper turns into a
+   * diagram; on this one it stays a patch that says where the magnet is.
+   *
+   * The patch has to be big to be worth having. Drawn tight and dark it is a
+   * small asterisk floating in white space, which reads as a smudge on the
+   * screen rather than as a field; drawn wide and very faint the arcs have
+   * room to curve and it reads as what it is. Faint enough that it is the
+   * last thing you notice, which is the right place for it. */
+  let ref = 0;
+  for (const p of poles) ref = Math.max(ref, Math.abs(p.strength));
+  if (ref < 1e-4) return;
+
+  /* How dark, against how strong the magnets actually are.
+   *
+   * The shape is drawn relative to the strongest pole, above; the *weight* has
+   * to be absolute, or it lies. Normalised only against itself, a magnet
+   * parked at a fifteenth of its working strength draws exactly the same hatch
+   * as one bearing down on the surface, and the page ends up with a fan of
+   * field lines across it while the liquid lies flat and does nothing — which
+   * is a picture of a magnet that is not there. Weighted, the hatch comes up
+   * as a magnet comes down and is gone while it is away, so it says when
+   * something is about to happen rather than merely where. */
+  const duty = Math.min(1, ref / ambientField());
+  const step = Math.max(22, U * 0.07);
+  const len = step * 0.38;
+  g.strokeStyle = rgba(INK, 1);
+  g.lineCap = "round";
+  g.lineWidth = 1;
+  g.beginPath();
+  let drawn = 0;
+  for (let y = step * 0.5; y < H; y += step) {
+    for (let x = step * 0.5; x < W; x += step) {
+      fieldAt(x, y, fld);
+      const h = fld.h;
+      // A cut-off, not a fade to nothing. Ticks continued out to where the
+      // field is negligible cover the whole page in grey hatch and turn the
+      // wallpaper into a diagram; ending them leaves a patch of texture that
+      // says where the magnets are and nothing else.
+      const a = (h / ref - 0.1) / 0.5;
+      if (a <= 0) continue;
+      const ux = fld.hx / h, uy = fld.hy / h;
+      // One stroke pass at one alpha; strength shows as length, and a short
+      // dark tick reads as a weak field as readily as a long pale one.
+      const l = len * Math.min(1, 0.35 + 0.65 * a);
+      g.moveTo(x - ux * l, y - uy * l);
+      g.lineTo(x + ux * l, y + uy * l);
+      drawn++;
+    }
+  }
+  if (drawn) {
+    g.globalAlpha = 0.055 * CONFIG.filings * duty;
+    g.stroke();
+    g.globalAlpha = 1;
+  }
+}
+
+/** A ring where a magnet was set down, so a tap is visibly acknowledged even
+ *  when the liquid is too far away to answer it. */
+function drawTapMarks(g) {
+  for (let i = ambientPoles; i < poles.length; i++) {
+    const p = poles[i];
+    const u = 1 - Math.min(1, p.life / p.born);
+    if (u > 0.55) continue;
+    const k = u / 0.55;
+    g.beginPath();
+    g.arc(p.x, p.y, U * (0.028 + 0.15 * k), 0, Math.PI * 2);
+    g.strokeStyle = rgba(INK, 0.2 * (1 - k));
+    g.lineWidth = 1.4;
+    g.stroke();
+  }
+}
+
+function tracePath(g, pts) {
+  g.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+  g.closePath();
+}
+
+let loopsCache = [];
+
+function render() {
+  updateLight();
+
+  ctx.fillStyle = CONFIG.paper;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  if (CONFIG.mode === "pouch") {
+    // A tile on the paper wants its own edge; full bleed does not.
+    const tile = new Path2D();
+    tracePath(tile, outline);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill(tile);
+    ctx.clip(tile);
+  }
+
+  drawFilings(ctx);
+
+  splat();
+  const loops = contours();
+  loopsCache = loops;
+
+  if (loops.length) {
+    if (CONFIG.shadow > 0) {
+      // The shadow, from the coverage image resampled down and back up. The
+      // half-cell shifts line the image's pixel centres up with the grid
+      // samples they were computed at.
+      paintCover();
+      blurCtx.clearRect(0, 0, blurCanvas.width, blurCanvas.height);
+      blurCtx.imageSmoothingEnabled = true;
+      blurCtx.drawImage(coverCanvas, 0, 0, blurCanvas.width, blurCanvas.height);
+      const gx = GOX - mcell * 0.5, gy = GOY - mcell * 0.5;
+      const gw = GW * mcell, gh = GH * mcell;
+      const off = U * 0.02;
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.globalAlpha = 0.17 * CONFIG.shadow;
+      ctx.drawImage(blurCanvas, gx - light.x * off * 1.7, gy - light.y * off * 1.7, gw, gh);
+      ctx.globalAlpha = 0.1 * CONFIG.shadow;
+      ctx.drawImage(coverCanvas, gx - light.x * off * 0.5, gy - light.y * off * 0.5, gw, gh);
+      ctx.restore();
+    }
+
+    const path = new Path2D();
+    for (const loop of loops) traceLoop(path, loop);
+
+    /* Not flat ink. A body this dark still has a lit side and a dark one,
+     * and a couple of levels of grey across the whole shape is the difference
+     * between a liquid and a hole cut in the page. */
+    const gr = ctx.createLinearGradient(
+      CX + light.x * U * 0.6, CY + light.y * U * 0.6,
+      CX - light.x * U * 0.6, CY - light.y * U * 0.6);
+    gr.addColorStop(0, `rgb(${INK.r + 15},${INK.g + 15},${INK.b + 17})`);
+    gr.addColorStop(1, `rgb(${Math.max(0, INK.r - 5)},${Math.max(0, INK.g - 5)},${Math.max(0, INK.b - 5)})`);
+    ctx.fillStyle = gr;
+    ctx.fill(path, "nonzero");
+
+    if (CONFIG.gloss > 0) {
+      ctx.save();
+      ctx.clip(path, "nonzero");
+      drawSheen(ctx, loops);
+      ctx.restore();
+    }
+  }
+
+  drawTapMarks(ctx);
+  ctx.restore();
+}
+
+/* -------------------------------------------------------------------- setup */
+
+function resize() {
+  const nextW = Math.floor(window.innerWidth);
+  const nextH = Math.floor(window.innerHeight);
+  /* A WebView can execute the document before its host view is attached. In
+   * that state both dimensions are zero, the fill area is zero, the drop
+   * spacing is zero, and the first step divides by it. Wait for a surface. */
+  if (nextW < 2 || nextH < 2) return false;
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = nextW; H = nextH; U = Math.min(W, H);
+  canvas.width = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  CX = W * 0.5; CY = H * 0.5;
+  if (CONFIG.mode === "full") {
+    RX = W * 0.5; RY = H * 0.5;
+    corner = num("corner", U * 0.1);
+  } else {
+    RX = RY = U * 0.5 * CONFIG.scale;
+    corner = num("corner", RX * 0.42);
+  }
+  buildOutline();
+  buildParticles();
+  buildField();
+  buildPoles();
+  return true;
+}
+
+/* -------------------------------------------------------------------- loop */
+
+let last = 0, raf = 0;
+
+/** One step of everything, however the clock arrived — the page's own
+ *  requestAnimationFrame, or a host calling tick(). */
+function advance(now) {
+  const dt = Math.min((now - last) / 1000 || 0.016, 0.05);
+  last = now;
+  const t0 = diagOn ? performance.now() : 0;
+  /* Draw only if something moved.
+   *
+   * The simulation is fixed at 60 Hz and a great many phones now refresh at
+   * 90 or 120, so on those every second or third frame arrives with the
+   * accumulator short of a step: nothing has changed and the canvas already
+   * holds the right picture. Drawing it again is a third of the frame's work
+   * spent reproducing the previous frame exactly, which on a wallpaper is
+   * battery and nothing else. */
+  if (step(dt) > 0) render();
+  if (diagOn) diagSample(now, performance.now() - t0);
+}
+
+/* Frame timing, reported to the console. Off unless a host turns it on:
+ * inside a wallpaper there is no devtools to attach, so the one number that
+ * matters — whether this holds a frame rate on real hardware — has to come
+ * out through the console and into logcat. */
+let diagOn = false, diagFrames = 0, diagJs = 0, diagSince = 0;
+
+function diagSample(now, js) {
+  diagFrames++;
+  diagJs += js;
+  if (now - diagSince < 2000) return;
+  console.log("ferrofluid fps=" + (diagFrames * 1000 / (now - diagSince)).toFixed(1) +
+              " js=" + (diagJs / diagFrames).toFixed(1) + "ms" +
+              " canvas=" + canvas.width + "x" + canvas.height +
+              " drops=" + N + " grid=" + GW + "x" + GH +
+              " loops=" + loopsCache.length + " poles=" + poles.length);
+  diagFrames = 0; diagJs = 0; diagSince = now;
+}
+
+function frame(now) {
+  raf = requestAnimationFrame(frame);
+  advance(now);
+}
+
+function start() {
+  if (!resize()) { requestAnimationFrame(start); return; }
+  seed();
+  /* Settle before the first frame is ever seen. A lattice dropped into the
+   * cell is not at rest, and without this the wallpaper opens on the liquid
+   * twitching itself into shape. */
+  for (let i = 0; i < 45; i++) {
+    stepPoles(simTime, FIXED_DT);
+    stepSim(FIXED_DT);
+    simTime += FIXED_DT;
+  }
+  /* One frame drawn synchronously, before anything is scheduled: the manifest
+   * icon is a picture of this canvas, and it is asked for on the line after
+   * start() returns. */
+  render();
+  last = performance.now();
+  if (!raf) raf = requestAnimationFrame(frame);
+}
+
+window.addEventListener("resize", () => { if (resize()) seed(); });
+
+// A live wallpaper is hidden whenever the launcher is not showing; stopping
+// the loop there is the difference between a wallpaper and a battery leak.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { cancelAnimationFrame(raf); raf = 0; }
+  else { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); }
+});
+
+/* ---------------------------------------------------------- pointer testing
+ *
+ * On a desktop there are no sensors, and two different things are worth
+ * exercising: dragging moves a magnet about, which is the interaction the
+ * piece is built on, and holding shift while dragging tilts gravity, which is
+ * the one the phone provides for free.
+ */
+let dragging = false, dragPole = null;
+
+function placePole(x, y, strength, seconds) {
+  /* Refuse a pole that is not somewhere.
+   *
+   * This is a public entry point — a host calls tap() — and a pole at NaN is
+   * not a pole that does nothing, it is a pole that makes the field NaN
+   * everywhere. Every comparison against it then fails, every magnetic force
+   * is skipped, and the wallpaper goes quietly inert for as long as the pole
+   * lives, with no error anywhere to say why. */
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(strength)) return null;
+
+  /* Deeper than the ambient pair, and stronger to match. The field of a pole
+   * falls off as the inverse square of the distance but its strength goes as
+   * the square of its standoff, so a broad magnet held further back reaches
+   * much further than a sharp one held close, at the cost of doing less where
+   * it is. A finger on the glass should be felt across the screen. */
+  const p = {
+    x, y, z: refU() * 0.26, strength, q: 0,
+    peak: strength, life: seconds, born: seconds,
+    phase: 0, period: 1, dip: false, ax: 1, ay: 0,
+  };
+  poles.push(p);
+  // Cap the transient poles: a fast tapper should not be able to build up a
+  // field the solver has never seen.
+  while (poles.length - ambientPoles > 4) poles.splice(ambientPoles, 1);
+  return p;
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  hint.classList.add("hide");
+  if (e.shiftKey) { dragging = "tilt"; return; }
+  dragging = "magnet";
+  dragPole = placePole(e.clientX, e.clientY, CONFIG.field * 1.6, 1e9);
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  if (dragging === "magnet") {
+    if (dragPole) { dragPole.x = e.clientX; dragPole.y = e.clientY; }
+    return;
+  }
+  const nx = (e.clientX - CX) / RX, ny = (e.clientY - CY) / RY;
+  const len = Math.hypot(nx, ny) || 1;
+  setGravityVector(nx / len, ny / len);
+});
+const endDrag = () => {
+  if (dragging === "magnet" && dragPole) {
+    // Let it fade rather than vanish: a magnet lifted off the glass weakens
+    // over the moment it takes to lift it.
+    dragPole.peak = dragPole.strength;
+    dragPole.life = 0.9; dragPole.born = 0.9;
+    dragPole = null;
+  }
+  if (dragging === "tilt") setGravityVector(0, 1);   // settle back to real down
+  dragging = false;
+};
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+
+/* ------------------------------------------------------- running on a phone
+ *
+ * Three things stand between a page in a browser tab and something that
+ * behaves like a wallpaper, and none of them are about the drawing.
+ */
+
+/* The screen must not dim while you are watching it. A wallpaper never does;
+ * a web page will, in about fifteen seconds. The lock is dropped whenever the
+ * page is hidden, so it has to be taken again on the way back. */
+let wakeLock = null;
+async function keepAwake() {
+  if (!navigator.wakeLock || document.visibilityState !== "visible") return;
+  try { wakeLock = await navigator.wakeLock.request("screen"); }
+  catch (e) { /* refused, or unsupported: there is no second way to ask */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") keepAwake();
+});
+
+/* Browser chrome has to go. Fullscreen needs a gesture to grant it, so it is
+ * taken on the first touch — and only on a touch, so that dragging a magnet
+ * on a desktop does not throw the window into fullscreen on the first click. */
+function goImmersive(e) {
+  if (e.pointerType && e.pointerType !== "touch") return;
+  keepAwake();
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+  }
+  window.removeEventListener("pointerdown", goImmersive);
+}
+window.addEventListener("pointerdown", goImmersive);
+
+/** A picture of the cell as it stands, clipped to its own boundary and
+ *  returned as a PNG data URL. This is what an icon renderer reads out once
+ *  it has driven the simulation to the state it wants. */
+function installIcon(size) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  g.imageSmoothingQuality = "high";
+  const side = Math.min(canvas.width, canvas.height);
+  const sx = (canvas.width - side) / 2, sy = (canvas.height - side) / 2;
+  const k = size / side;
+  g.beginPath();
+  for (let i = 0; i < outline.length; i++) {
+    const x = (outline[i].x * DPR - sx) * k, y = (outline[i].y * DPR - sy) * k;
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.closePath();
+  g.clip();
+  g.drawImage(canvas, sx, sy, side, side, 0, 0, size, size);
+  return c.toDataURL("image/png");
+}
+
+/* And it should be installable, because "add to home screen" is the closest a
+ * web page gets to being a wallpaper. The manifest is built here rather than
+ * shipped as a second file so this stays one self-contained page, and the
+ * icon is a picture of the running simulation rather than a drawing of it. */
+function installManifest() {
+  const theme = document.createElement("meta");
+  theme.name = "theme-color";
+  theme.content = CONFIG.paper;
+  document.head.appendChild(theme);
+
+  const manifest = {
+    name: "Ferrofluid",
+    short_name: "Ferrofluid",
+    display: "fullscreen",
+    orientation: "portrait",
+    background_color: CONFIG.paper,
+    theme_color: CONFIG.paper,
+    start_url: location.href.split("#")[0],
+    icons: [192, 512].map((s) => ({
+      src: installIcon(s), sizes: s + "x" + s, type: "image/png", purpose: "any",
+    })),
+  };
+  const link = document.createElement("link");
+  link.rel = "manifest";
+  link.href = URL.createObjectURL(
+    new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+  document.head.appendChild(link);
+}
+
+/* ------------------------------------------------- the native host, if any
+ *
+ * Inside an Android live wallpaper there is no browser to deliver
+ * devicemotion: the page is drawn into a wallpaper surface by a service that
+ * owns the sensors itself. The service feeds them in through here, in the
+ * units and the device frame the web event already uses — raw metres per
+ * second squared, +y up the screen — so both paths land on the same code and
+ * there is only one motion model to keep honest.
+ *
+ * This is the same table the liquid shaker exposes. `__shaker` is kept as an
+ * alias so that a host built against that page hosts this one unchanged.
+ */
+let hostOffset = null;
+
+const HOST = {
+  /** Accelerometer, straight off android.hardware.Sensor.TYPE_ACCELEROMETER.
+   *  `spin` is rotation about the viewing axis in degrees per second, which
+   *  is the gyroscope's z component converted from radians. */
+  motion(x, y, z, spin) {
+    onMotion({
+      accelerationIncludingGravity: { x, y, z },
+      rotationRate: spin === undefined ? null : { alpha: spin },
+    });
+  },
+
+  /* Home-screen page swipes. A wallpaper is wider than the screen and slides
+   * under the icons; a cell of liquid slid sideways leaves its contents
+   * behind for a moment. So the swipe enters as the velocity the liquid does
+   * not have yet, and the slosh that follows is the solver doing what it
+   * already does rather than an animation laid over the top. */
+  offset(t) {
+    if (hostOffset === null) { hostOffset = t; return; }
+    /* Clamped, because the launcher reports a jump between distant pages as
+     * one step and a vessel does not get moved a metre instantaneously. */
+    const d = Math.max(-0.3, Math.min(0.3, t - hostOffset));
+    hostOffset = t;
+    if (!d) return;
+    const k = d * W * 2.2;
+    for (let i = 0; i < N; i++) vx[i] -= k;
+  },
+
+  /* A tap on the glass sets a magnet down under the finger.
+   *
+   * It is the same kind of pole the ambient pair are — there is no separate
+   * "tap effect" anywhere in the file — so what happens next is simply what
+   * this liquid does about a strong, close, briefly held magnet, which is to
+   * reach for it and stand up in spikes under it. */
+  tap(nx, ny) {
+    placePole(nx * W, ny * H, CONFIG.field * 1.8, 2.4);
+  },
+
+  /** The service stops the loop when the wallpaper is not on screen. */
+  pause() { cancelAnimationFrame(raf); raf = 0; },
+  resume() { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); },
+
+  /* Hand the clock to the host. Drawn into a wallpaper surface by hand, the
+   * page is in a WebView that is not attached to a window, and an unattached
+   * WebView has no vsync to hang requestAnimationFrame off — so the loop
+   * either throttles hard or never runs. The host that is already waking once
+   * per frame to draw can step the simulation itself instead. */
+  drive() { cancelAnimationFrame(raf); raf = 0; last = performance.now(); },
+  tick() { advance(performance.now()); },
+
+  /** Frame timing to the console, for a host with no other way to see it. */
+  diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; diagJs = 0; },
+
+  /** A picture of the cell as it stands right now, as a PNG data URL. */
+  icon(size) { return installIcon(size); },
+};
+
+window.__wallpaper = HOST;
+window.__shaker = HOST;
+
+start();
+installManifest();
+</script>
+</body>
+</html>
