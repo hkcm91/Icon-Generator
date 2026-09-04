@@ -122,31 +122,31 @@ function seed() {
   }
 }
 
-/* A few air bubbles. They ride up whichever way is up, wobbling a little,
- * and are born again at the floor when they leave the top. */
+/* A few air bubbles caught in the wax. Each belongs to a blob and drifts
+ * slowly about inside it, riding wherever the blob goes. */
 const bubbles = [];
 function seedBubbles() {
   bubbles.length = 0;
   for (let i = 0; i < 6; i++) {
     bubbles.push({
-      x: (hash(i, 11) * 2 - 1) * 0.8, y: hash(i, 12) * Y,
-      r: 0.022 + 0.03 * hash(i, 13), phase: hash(i, 14) * Math.PI * 2,
-      speed: 0.10 + 0.10 * hash(i, 15),
+      host: i % CONFIG.blobs,
+      ang: hash(i, 11) * Math.PI * 2, dist: 0.25 + 0.4 * hash(i, 12),
+      r: 0.018 + 0.028 * hash(i, 13), phase: hash(i, 14) * Math.PI * 2,
+      spin: (0.08 + 0.12 * hash(i, 15)) * (hash(i, 17) > 0.5 ? 1 : -1),
+      x: 0, y: 0,
     });
   }
 }
 function stepBubbles(dt) {
   const t = now * 0.001;
   for (const b of bubbles) {
-    const wob = Math.sin(t * 1.7 + b.phase) * 0.06;
-    b.x += (-gDir.x * b.speed + gDir.y * wob + flow.x * 0.6) * dt;
-    b.y += (-gDir.y * b.speed - gDir.x * wob + flow.y * 0.6) * dt;
-    if (b.y > Y + 0.1 || b.y < -0.2 || Math.abs(b.x) > 1.1) {
-      // Back in at the floor, wherever the floor now is.
-      b.x = (hash(Math.floor(t * 13 + b.phase * 7), 16) * 2 - 1) * 0.8;
-      b.y = -0.05;
-      if (gDir.y > 0.5) b.y = Y + 0.05;
-    }
+    const h = blobs[b.host];
+    if (!h) continue;
+    b.ang += b.spin * dt;
+    // Air in wax rises a little toward the top of its blob.
+    const d = b.dist + 0.12 * Math.sin(t * 0.4 + b.phase);
+    b.x = h.x + Math.cos(b.ang) * h.r * d * 0.8;
+    b.y = h.y + Math.sin(b.ang) * h.r * d * 0.6 + h.r * 0.15;
   }
 }
 
@@ -447,27 +447,29 @@ vec3 backdrop(vec2 p) {
   return c;
 }
 
-/* A few air bubbles riding up through the liquid: a thin bright ring, a
- * bit of the ground magnified in the middle, a point of light on the top. */
-vec3 bubbles(vec2 p, vec3 under) {
+/* Air caught in the wax: a small clear pocket, darker in the middle where
+ * it shows the wax behind it, a bright ring, a point of light on top. Only
+ * where there is wax to be caught in. */
+vec3 bubbles(vec2 p, vec3 under, float wax) {
   vec3 c = under;
+  if (wax <= 0.0) return c;
   for (int i = 0; i < NB; i++) {
     vec4 b = uBub[i];
     if (b.z <= 0.0) continue;
     vec2 d = p - b.xy;
     float dist = length(d);
-    if (dist > b.z * 1.4) continue;
+    if (dist > b.z * 1.3) continue;
     float px = 2.0 / uRes.x;
-    float ring = 1.0 - smoothstep(0.0, b.z * 0.35 + px * 2.0, abs(dist - b.z));
-    float inside = 1.0 - smoothstep(b.z * 0.7, b.z, dist);
-    vec3 lens = backdrop(b.xy + d * 0.5) * 1.15;
-    c = mix(c, lens, inside * 0.7);
-    c += vec3(0.85, 0.8, 0.95) * ring * 0.55;
-    vec2 hl = d - vec2(-0.32, 0.36) * b.z;
-    c += vec3(1.0) * (1.0 - smoothstep(0.0, b.z * 0.28, length(hl))) * 0.8;
+    float ring = 1.0 - smoothstep(0.0, b.z * 0.3 + px * 2.0, abs(dist - b.z));
+    float inside = 1.0 - smoothstep(b.z * 0.55, b.z, dist);
+    c = mix(c, under * 0.7 + vec3(0.03, 0.015, 0.05), inside * 0.6 * wax);
+    c += mix(vec3(1.0, 0.95, 1.0), under, 0.4) * ring * 0.35 * wax;
+    vec2 hl = d - vec2(-0.3, 0.38) * b.z;
+    c += vec3(1.0) * (1.0 - smoothstep(0.0, b.z * 0.25, length(hl))) * 0.5 * wax;
   }
   return c;
 }
+
 
 /* One layer of wax over whatever is behind it. Glass: what you see is
  * mostly the thing behind, bent by the surface and tinted by the path
@@ -517,6 +519,16 @@ void surface(float f, vec2 g, out float edge, out float thick, out vec3 n) {
   thick = z;
 }
 
+/* The back layer over the ground at q: its coverage and colour. */
+vec3 backLayer(vec2 q, out float eB) {
+  float fB; vec2 gB; float tB; vec3 nB;
+  field(q, 0.0, fB, gB);
+  surface(fB, gB, eB, tB, nB);
+  vec2 qq = q - nB.xy * 0.28 * tB * eB;
+  vec3 ground = backdrop(qq);
+  return eB > 0.0 ? mix(ground, shade(q, nB, tB, ground), eB) : ground;
+}
+
 void main() {
   vec2 uv = gl_FragCoord.xy / uRes;
   vec2 p = vec2((uv.x * 2.0 - 1.0) + uOffset * 0.25, uv.y * uY);
@@ -526,33 +538,44 @@ void main() {
   float fF; vec2 gF; float eF, tF; vec3 nF;
   field(p, 1.0, fF, gF);
   surface(fF, gF, eF, tF, nF);
-  vec2 q = p - nF.xy * 0.28 * tF * eF;
 
-  // Back layer, seen through the front where there is a front.
-  float fB; vec2 gB; float eB, tB; vec3 nB;
-  field(q, 0.0, fB, gB);
-  surface(fB, gB, eB, tB, nB);
-  vec2 qq = q - nB.xy * 0.28 * tB * eB;
-  vec3 ground = backdrop(qq);
-  vec3 behind = eB > 0.0 ? mix(ground, shade(q, nB, tB, ground), eB) : ground;
+  // What is behind the front. Seen through wax it is warped hard by the
+  // surface and blurred by the body: the thicker the wax, the more of
+  // both. That is the difference between a colour change and something
+  // you are seeing through.
+  float eB;
+  vec3 behind;
+  if (eF > 0.0) {
+    vec2 q = p - nF.xy * 0.85 * tF;
+    float rad = (0.05 + 0.12 * tF) * eF;
+    float rot = hash21(gl_FragCoord.xy) * 6.2832;
+    behind = vec3(0.0);
+    float cover = 0.0;
+    for (int k = 0; k < 6; k++) {
+      float a = rot + float(k) * 1.0472;
+      float rr = (k < 3) ? rad : rad * 0.5;
+      float ek;
+      behind += backLayer(q + vec2(cos(a), sin(a)) * rr, ek);
+      cover += ek;
+    }
+    behind /= 6.0;
+    eB = cover / 6.0;
+  } else {
+    behind = backLayer(p, eB);
+  }
+  float fB = eB;   // for the halo below: coverage stands in for the field
 
-  // Where the front crosses a back blob its edge is a hard line over a
-  // bright ground while the outer silhouette is soft against the dark, and
-  // the two read as different focus. Over wax, blend the front in across a
-  // wider band of the field, so the crossing has the same softness as
-  // the rest of the rim.
-  float eFs = mix(eF, smoothstep(0.7, 1.3, fF), eB);
-  vec3 col = eFs > 0.0 ? mix(behind, shade(p, nF, tF, behind), eFs) : behind;
+  vec3 col = eF > 0.0 ? mix(behind, shade(p, nF, tF, behind), eF) : behind;
 
   // A soft halo just outside every blob, where the field is nearly there:
   // the light the wax throws into the haze around it.
   float v = clamp(p.y / uY, 0.0, 1.0);
   vec3 tint = v < 0.5 ? mix(uAccent, uColour, smoothstep(0.0, 0.5, v))
                       : mix(uColour, uCrest, smoothstep(0.5, 1.0, v));
-  float halo = smoothstep(0.45, 1.0, max(fF, fB)) * (1.0 - max(eF, eB));
+  float halo = smoothstep(0.45, 1.0, fF) * (1.0 - eF) * (1.0 - eB);
   col += tint * halo * 0.16;
 
-  col = bubbles(p, col);
+  col = bubbles(p, col, max(eF, eB));
 
   // Two lit blobs over each other add up past white; roll the top off.
   col = col / (1.0 + 0.10 * col);
