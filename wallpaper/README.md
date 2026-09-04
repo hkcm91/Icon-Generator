@@ -8,9 +8,33 @@ This is the half that reacts. The [Blender pipeline](../blender) bakes the
 hero loop at full render quality, but a baked loop plays back identically no
 matter how hard you shake the phone — the two are complementary.
 
-## The lava lamp, too
+## Sibling pages
 
-`lava.html` is the second page in this folder: the [Blender lava lamp](../blender/LAVA_LAMP.md)
+[`bubble-wrap.html`](./BUBBLE-WRAP.md) is the second interactive wallpaper in
+the line: a full sheet of bubble wrap that pops under a thumb. It shares this
+page's sensor model, its `ramp` and `glass` parameters and its `window.__shaker`
+host interface verbatim, so a colourway is the same URL parameter in both and
+the `WallpaperService` in `../android` can host either without knowing which
+one it has.
+
+What it adds is the verb this page does not have. Everything here is a gesture
+you perform on the whole device — tilt it, shake it — and the screen answers as
+one. Bubble wrap is *press*: one finger at a time, at a place you choose. See
+[BUBBLE-WRAP.md](./BUBBLE-WRAP.md).
+
+[`oil-water.html`](./OIL-WATER.md) is the third: a sealed cell holding several
+round blobs of oil in water, which rise, deform when the phone is shaken or
+turned, and merge into fewer, larger ones. Turning the phone over is the verb
+that matters — it leaves the oil underneath the water, which fingers and
+pinches into fresh drops. It is the closest of the three to this page, having
+taken this file's velocity solver and shake model nearly unchanged, but not as
+close as the plan claimed: this page's second phase is a dye, which marbles,
+and oil and water is a phase field, which does not mix. That is a term in the
+equation of motion, not a constant. It currently ships monochrome on purpose,
+so that what is being judged is the shape of the boundary; there is a
+34-second clip at [`docs/video/oil-water.mp4`](../docs/video/oil-water.mp4).
+
+`lava.html` is the fourth: the [Blender lava lamp](../blender/LAVA_LAMP.md)
 made to answer the phone. Same conventions, same `window.__shaker` interface,
 so the Android host below runs either. Tilt the phone and the wax rises
 toward whichever way is up while the heater stays at the bottom of the

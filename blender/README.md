@@ -12,6 +12,13 @@ flags, so a change is a flag rather than a trip through the UI.
 The interactive counterpart lives in [`../wallpaper`](../wallpaper). A baked
 loop cannot react to being shaken; that one can. Use both.
 
+That folder now holds three pages: the shaker's,
+[`bubble-wrap.html`](../wallpaper/BUBBLE-WRAP.md), which is the same line
+answering a press rather than a shake, and
+[`oil-water.html`](../wallpaper/OIL-WATER.md), which answers a stir. Neither
+has a baked counterpart here, for the same reason: every frame of both is a
+response to where a finger was.
+
 ## Sibling scenes
 
 A second wallpaper is built from this one's skeleton:

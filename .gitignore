@@ -12,5 +12,8 @@ __pycache__/
 *.pyc
 renders/
 cache/
+# Blender output, which is large and regenerable. Short documentation clips
+# under docs/video/ are neither, so they are kept.
 *.mp4
+!docs/video/*.mp4
 wallpaper/icons/

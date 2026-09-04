@@ -1,0 +1,1703 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bubble Wrap</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0d3f8c; overflow: hidden;
+    overscroll-behavior: none; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #tap {
+    position: fixed; inset: auto 0 8% 0; text-align: center;
+    font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: rgba(237,235,230,.62); pointer-events: none; transition: opacity .5s;
+  }
+  #tap.hide { opacity: 0; }
+  #enable {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    padding: 14px 22px; border: 0; border-radius: 999px;
+    background: #2b8cf0; color: #edebe6; font: 600 16px system-ui, sans-serif;
+    box-shadow: 0 6px 20px rgba(43,140,240,.4); display: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="tap">pop me</div>
+<button id="enable">Enable motion</button>
+<script>
+"use strict";
+
+/* Bubble wrap — real-time interactive wallpaper.
+ *
+ * Second entry in the sealed-container line, after the liquid shaker in
+ * ./index.html. The shaker only knows verbs you perform on the whole device:
+ * tilt it, shake it. This one adds the verb the line was missing — press,
+ * one finger at a time, at a place you choose — and it is the press that has
+ * to be right, because a pop that does not feel earned is a button.
+ *
+ * So the pop is not a state flag flipped on touchdown. It is the end of a
+ * short causal chain that runs in full for every bubble on the sheet:
+ *
+ *   - each dome is a shallow elastic shell with a *snap-through* energy
+ *     landscape — stiff at first, peaking, then softening into an unstable
+ *     branch. That peak is the resistance you feel under a thumb.
+ *   - the air inside is sealed and compresses isothermally, so pressure
+ *     climbs as 1/V. Pushing past the shell's limit point dumps the apex
+ *     inward in a few milliseconds, and *that* is what spikes the pressure.
+ *   - the film fails when the pressure crosses a threshold that is different
+ *     for every bubble on the sheet. That variation is the whole feel of the
+ *     material: some go instantly, some need leaning on.
+ *
+ *   The pop is therefore a consequence of the buckling rather than a
+ *   coincidence of it, which is also the true story — bubble wrap bursts
+ *   because it snaps, not the other way round.
+ *
+ *   - the films are one continuous sheet, so a membrane tension field lives
+ *     on the lattice and obeys a damped wave equation. Pressing tautens the
+ *     neighbourhood; a burst fires an impulse into it that rides outward,
+ *     tipping any bubble already near its own threshold. Cascades are not
+ *     scripted.
+ *
+ * Tilt sweeps the key light across the sheet, which is what real wrap does
+ * under a lamp and the cheapest honest use of the accelerometer here. Shake
+ * pulls a fresh sheet: a refill front crosses the screen in the direction of
+ * the shake and the domes it passes re-inflate with an overshoot they settle
+ * out of on their own, because the same shell law that lets them buckle
+ * inward is restoring when they are over-inflated.
+ *
+ * Everything runs on a fixed timestep — the shell is stiff enough and the
+ * tension wave close enough to its CFL limit that a variable one is not an
+ * approximation, it is a different simulation on every device.
+ */
+
+const params = new URLSearchParams(location.search);
+const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isFinite(v) ? v : d; };
+const flag = (k, d) => { const v = params.get(k); return v === null ? d : !(v === "0" || v === "false"); };
+
+const CONFIG = {
+  /* "full" — the screen itself is the sheet, wrap edge to edge. This is the
+   * wallpaper. "pouch" — a squircle patch of wrap floating on a backdrop,
+   * which is the product-shot framing and what the icon renderer wants. */
+  mode: params.get("mode") === "pouch" ? "pouch" : "full",
+  squircleN: num("n", 4),
+  scale: num("scale", 0.78),        // pouch mode only: size vs the short edge
+
+  /* How many bubbles across. Sized in bubbles rather than pixels so the sheet
+   * is the same *material* on a phone and on a desktop instead of the same
+   * picture scaled: at a fixed pitch in px a laptop gets fine packing foam
+   * and a handset gets beach balls. Nine across is small consumer wrap held
+   * at arm's length, which is the pitch a thumb is built for. */
+  cols: Math.max(3, num("cols", 9)),
+  dome: num("dome", 0.62),          // dome height as a fraction of its radius
+
+  /* The backing the wrap is laid over, read along the gravity axis. Shared
+   * verbatim with the shaker so a colourway is the same URL parameter in
+   * both, and the line reads as a family rather than two products. */
+  ramp: (params.get("ramp") || "#0a5fd4,#1a86f0,#2aa8ee,#3ec4e9").split(","),
+  /* Polyethylene. Not white — the film is faintly cool and faintly milky,
+   * and pure white is both wrong and against the house rules. */
+  film: params.get("film") || "#eaf3f8",
+
+  /* Glass rather than paint, exactly as in the shaker: at 0 the backing is
+   * opaque and the sheet is its own background, which is what a wallpaper
+   * wants. At 1 the backing drops away and only the film is drawn, so an
+   * icon can sit on the home screen with the user's own wallpaper showing
+   * through the wrap. The domes stay opaque either way — they are objects. */
+  glass: Math.max(0, Math.min(1, num("glass", 0))),
+
+  /* Seconds before a popped bubble quietly comes back. A wallpaper cannot
+   * run out of itself, and popping the last bubble on a sheet that never
+   * refills turns the thing you bought into a picture of the thing you
+   * bought. Shaking refills the whole sheet at once; this is the slow floor
+   * under that. 0 leaves them popped for good. */
+  refill: Math.max(0, num("refill", 40)),
+
+  sound: flag("sound", true),
+  haptics: flag("haptics", true),
+  seed: num("seed", 20260831) >>> 0,
+};
+
+/** #rgb or #rrggbb to channel bytes. */
+function parseHex(s) {
+  const h = String(s).trim().replace("#", "");
+  const v = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16);
+  return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+}
+const rgba = (c, a) => "rgba(" + c.r + "," + c.g + "," + c.b + "," + a + ")";
+
+const FILM = parseHex(CONFIG.film);
+const RAMP = CONFIG.ramp.map(parseHex);
+
+/* Deterministic per-sheet randomness. Every bubble's burst threshold, size
+ * jitter and crease pattern comes from here, so ?seed= names a sheet and the
+ * same seed renders the same wrap on every device — which is what makes a
+ * product shot reproducible. */
+function mulberry32(a) {
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* -------------------------------------------------------------- the canvas */
+
+const canvas = document.getElementById("c");
+// Opaque unless the wrap is being drawn as clear film over whatever is
+// behind it; the compositor skips a whole blend when it knows there is
+// nothing back there, and a wallpaper is the case where there is not.
+const ctx = canvas.getContext("2d", { alpha: CONFIG.glass > 0 });
+const hint = document.getElementById("tap");
+const enableBtn = document.getElementById("enable");
+
+let W = 0, H = 0, DPR = 1;
+let CX = 0, CY = 0, RX = 0, RY = 0;   // sheet centre and half-extents
+let corner = 0;
+
+/* ------------------------------------------------------------- the lattice
+ *
+ * Real wrap is an offset lattice, not a square grid: the embossing roller
+ * packs the domes hexagonally because that is how you get the most air per
+ * metre of film. It also happens to be what stops the sheet reading as
+ * graph paper, which a square grid on a phone screen unavoidably does.
+ */
+
+let COLS = 0, ROWS = 0, n = 0;
+let pitch = 0, rowStep = 0, originX = 0, originY = 0;
+let domeR = 0, domeH = 0;
+
+let bx, by;              // lattice position, CSS px
+let bu, bv;              // apex indentation in units of the rest height, and its rate
+let bstate;              // 0 intact, 1 popped
+let bburst;              // gauge pressure this bubble's seal gives way at
+let bsize;               // per-bubble radius jitter
+let bphase;              // idle-breath phase
+let bcrease;             // which popped-film variant
+let btone;               // per-bubble film thickness, as a contrast scale
+let bpopT;               // seconds since it went
+let brefill;             // seconds until it quietly comes back, or Infinity
+let barm;                // seconds of burst immunity after a refill
+let nbr;                 // six neighbour indices per bubble, -1 for none
+
+let ten, tenv;           // membrane tension on the lattice, and its rate
+
+function buildLattice() {
+  pitch = (CONFIG.mode === "full" ? W : RX * 2) / CONFIG.cols;
+  rowStep = pitch * Math.sqrt(3) / 2;
+  domeR = pitch * 0.42;             // leaving 0.16 pitch of welded land between
+  domeH = domeR * CONFIG.dome;
+
+  /* A row and a column of overhang on every side. The wrap does not stop at
+   * the bezel — it is a sheet the screen is a window onto, and a half dome
+   * clipped by the edge is the thing that says so. */
+  const spanX = CONFIG.mode === "full" ? W : RX * 2;
+  const spanY = CONFIG.mode === "full" ? H : RY * 2;
+  COLS = Math.ceil(spanX / pitch) + 2;
+  ROWS = Math.ceil(spanY / rowStep) + 2;
+  originX = (CONFIG.mode === "full" ? 0 : CX - RX) - pitch;
+  originY = (CONFIG.mode === "full" ? 0 : CY - RY) - rowStep;
+  n = COLS * ROWS;
+
+  bx = new Float32Array(n); by = new Float32Array(n);
+  bu = new Float32Array(n); bv = new Float32Array(n);
+  bstate = new Uint8Array(n);
+  bburst = new Float32Array(n);
+  bsize = new Float32Array(n);
+  bphase = new Float32Array(n);
+  bcrease = new Uint8Array(n);
+  btone = new Float32Array(n);
+  bpopT = new Float32Array(n);
+  brefill = new Float32Array(n);
+  barm = new Float32Array(n);
+  nbr = new Int32Array(n * 6);
+  ten = new Float32Array(n); tenv = new Float32Array(n);
+
+  const rnd = mulberry32(CONFIG.seed);
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const i = r * COLS + c;
+      bx[i] = originX + c * pitch + (r & 1 ? pitch * 0.5 : 0);
+      by[i] = originY + r * rowStep;
+      /* The single most important number on the sheet. Give every dome the
+       * same burst pressure and the wrap becomes a keyboard: every press
+       * pops, at the same depth, with the same sound. Real film varies in
+       * thickness and in how well each seal took, so some go under a
+       * fingernail and some want a thumb leaned on them, and hunting for
+       * the stubborn ones is most of why anyone picks the stuff up. */
+      bburst[i] = BURST_BASE * (0.74 + rnd() * 0.78);
+      bsize[i] = 0.94 + rnd() * 0.12;
+      bphase[i] = rnd() * Math.PI * 2;
+      bcrease[i] = (rnd() * POP_VARIANTS) | 0;
+      btone[i] = 0.88 + rnd() * 0.12;
+      brefill[i] = Infinity;
+    }
+  }
+
+  /* Odd-r offset coordinates: which way a row's neighbours lean depends on
+   * whether that row is the shifted one. */
+  for (let r = 0; r < ROWS; r++) {
+    const odd = r & 1;
+    for (let c = 0; c < COLS; c++) {
+      const i = r * COLS + c;
+      const cand = odd
+        ? [[r, c - 1], [r, c + 1], [r - 1, c], [r - 1, c + 1], [r + 1, c], [r + 1, c + 1]]
+        : [[r, c - 1], [r, c + 1], [r - 1, c - 1], [r - 1, c], [r + 1, c - 1], [r + 1, c]];
+      for (let k = 0; k < 6; k++) {
+        const rr = cand[k][0], cc = cand[k][1];
+        nbr[i * 6 + k] = (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) ? -1 : rr * COLS + cc;
+      }
+    }
+  }
+}
+
+/* Superellipse, for the pouch framing. Same exponent convention as the
+ * shaker so `?n=` means the same thing in both. */
+const sgnPow = (v, p) => Math.sign(v) * Math.pow(Math.abs(v), p);
+
+function squirclePath(g, cx, cy, rx, ry, N, steps) {
+  g.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const t = (i / steps) * Math.PI * 2;
+    const x = cx + rx * sgnPow(Math.cos(t), 2 / N);
+    const y = cy + ry * sgnPow(Math.sin(t), 2 / N);
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.closePath();
+}
+
+function resize() {
+  const nextW = Math.floor(window.innerWidth);
+  const nextH = Math.floor(window.innerHeight);
+  /* A WebView can run the document before its host view is attached, and in
+   * that state both dimensions read zero. Building a lattice then divides by
+   * a zero pitch and poisons every position with NaN for the life of the
+   * page, so wait for a real surface instead. */
+  if (nextW < 2 || nextH < 2) return false;
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = nextW; H = nextH;
+  canvas.width = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  CX = W * 0.5; CY = H * 0.5;
+  if (CONFIG.mode === "full") {
+    RX = W * 0.5; RY = H * 0.5;
+    corner = num("corner", Math.min(W, H) * 0.12);
+  } else {
+    RX = RY = Math.min(W, H) * 0.5 * CONFIG.scale;
+    corner = 0;
+  }
+  buildLattice();
+  buildBacking();     // the film grain, before the layer that tiles it
+  buildSprites();     // which bakes the layers on its way out
+  return true;
+}
+
+/* --------------------------------------------------------------- the dome
+ *
+ * One degree of freedom per bubble: u, how far the apex has travelled
+ * inward, in units of the dome's own rest height. u = 0 is the moulded
+ * shape, u = 1 is flat, u = 2 is fully inverted.
+ *
+ *   u'' = press - SHELL * u(1-u)(2-u) - GAS * pg(u) - DAMP * u'
+ *
+ * The shell term is a shallow arch. Its potential has minima at u = 0 and
+ * u = 2 with a barrier at u = 1, so the cubic is positive (resisting) up to
+ * the flat state and negative (helping) beyond it — which is snap-through,
+ * and is why the resistance under a thumb rises, peaks and then abruptly
+ * gives. The peak is at u = 0.42, not at the flat state, and everything
+ * about the feel follows from that.
+ *
+ * The gas term is the sealed air. Isothermal, so pressure goes as 1/V, and
+ * the cap's volume falls roughly linearly with the apex, floored at the
+ * residual the film cannot squeeze out of the rim. It is the term that
+ * diverges, and it is the one that actually bursts the bubble: the shell
+ * gives way first, the apex dumps inward in a couple of frames, and the
+ * pressure spike that dump produces is what fails the seal. So the pop is
+ * downstream of the buckling rather than beside it.
+ *
+ * The same cubic is restoring on the other side of zero, which is what
+ * makes a refilled bubble bounce for free rather than needing an animation:
+ * over-inflate it and the shell pulls it back while the rarefied air inside
+ * pulls with it.
+ */
+const SHELL = 110;        // 1/s^2, arch stiffness
+const GAS = 9;            // 1/s^2 per unit of gauge pressure
+const DAMP = 13;          // 1/s
+const RESID = 0.055;      // volume fraction the rim keeps at full collapse
+const FINGER = 260;       // 1/s^2 at the centre of a contact patch
+const BURST_BASE = 1.62;  // gauge pressure at the median seal ~ u = 0.62
+const TENSION_WEAKENS = 0.34;  // how much a taut film lowers the threshold
+
+const U_MIN = -0.30, U_MAX = 1.0;
+
+/** Gauge pressure of the trapped air at indentation u, in atmospheres. */
+function gaugeP(u) {
+  return 1 / Math.max(RESID, 1 - u) - 1;
+}
+
+/* ------------------------------------------------------ membrane tension
+ *
+ * The domes are not separate objects: they are embossed into one film that
+ * is welded to one backing, and pulling on it anywhere pulls on it
+ * everywhere. A scalar tension field on the lattice, obeying a damped wave
+ * equation, is the cheapest thing that behaves like that — pressing sources
+ * it, a burst fires an impulse into its *rate* (so the release travels as a
+ * bipolar ripple rather than a spreading stain), and it decays back to slack.
+ *
+ * A taut film bursts at a lower pressure, so a ripple crossing a bubble that
+ * was already close to going takes it with it. Cascades are the wave
+ * equation and the threshold spread meeting; nothing here schedules them.
+ */
+const TEN_C2 = 900;       // 1/s^2; wave speed ~30 lattice cells per second
+const TEN_RESTORE = 30;   // 1/s^2, pull back to slack
+const TEN_DAMP = 5;       // 1/s
+const TEN_PRESS = 2.4;    // sourced by how hard a dome is being held in
+const TEN_POP = 26;       // rate impulse a burst fires into its own cell
+
+/* ------------------------------------------------------------- the sensors
+ *
+ * Lifted wholesale from the shaker, deliberately: the two pages have to
+ * agree about which way is down or the line does not read as one product.
+ * Gravity is the slow component of the accelerometer and hand motion is the
+ * residual, which is why shake detection here is a measured quantity rather
+ * than a jerk heuristic.
+ */
+const GRAVITY_DIRECTION_FLOOR = 0.24;
+const ACCEL_DEAD_ZONE = 0.045;
+const ACCEL_LIMIT = 2.6;
+
+const accel = { x: 0, y: 0, z: 0 };
+const gravRaw = { x: 0, y: 1, z: 0 };
+const grav = { x: 0, y: 1 };
+const gDir = { x: 0, y: 1 };
+let gMag = 1;
+let haveAccelGravity = false;
+
+function filterAcceleration(x, y, z) {
+  const m = Math.hypot(x, y, z);
+  let tx = 0, ty = 0, tz = 0;
+  if (m > ACCEL_DEAD_ZONE) {
+    const kept = Math.min(ACCEL_LIMIT, m - ACCEL_DEAD_ZONE);
+    tx = x / m * kept; ty = y / m * kept; tz = z / m * kept;
+  }
+  const k = Math.hypot(tx, ty, tz) > Math.hypot(accel.x, accel.y, accel.z) ? 0.14 : 0.28;
+  accel.x += (tx - accel.x) * k;
+  accel.y += (ty - accel.y) * k;
+  accel.z += (tz - accel.z) * k;
+  if (Math.hypot(accel.x, accel.y, accel.z) < 0.003) { accel.x = 0; accel.y = 0; accel.z = 0; }
+}
+
+function setGravityVector(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  grav.x = x; grav.y = y;
+  gMag = Math.min(1, Math.hypot(x, y));
+  // Flat on a table there is no meaningful in-plane direction; keep the last
+  // good one rather than letting the light chase sensor noise around.
+  if (gMag > GRAVITY_DIRECTION_FLOOR) { gDir.x = x / gMag; gDir.y = y / gMag; }
+}
+
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) return;
+  const first = !haveAccelGravity;
+  haveAccelGravity = true;
+  // Device +Y runs up the screen while canvas +y runs down, hence the sign
+  // flip on x only. Units of g.
+  const sx = -a.x / 9.81, sy = a.y / 9.81;
+  const sz = Number.isFinite(a.z) ? a.z / 9.81 : 0;
+  if (first) {
+    gravRaw.x = sx; gravRaw.y = sy; gravRaw.z = sz;
+    setGravityVector(sx, sy);
+    accel.x = 0; accel.y = 0; accel.z = 0;
+  } else {
+    const k = 0.025;
+    gravRaw.x += (sx - gravRaw.x) * k;
+    gravRaw.y += (sy - gravRaw.y) * k;
+    gravRaw.z += (sz - gravRaw.z) * k;
+    setGravityVector(gravRaw.x, gravRaw.y);
+    filterAcceleration(sx - gravRaw.x, sy - gravRaw.y, sz - gravRaw.z);
+  }
+}
+
+function onOrientation(e) {
+  if (haveAccelGravity) return;
+  if (e.beta === null && e.gamma === null) return;
+  const b = (e.beta || 0) * Math.PI / 180;
+  const gm = (e.gamma || 0) * Math.PI / 180;
+  setGravityVector(-Math.cos(b) * Math.sin(gm), Math.sin(b));
+}
+
+function listenMotion() {
+  window.addEventListener("deviceorientation", onOrientation, true);
+  window.addEventListener("devicemotion", onMotion, true);
+}
+
+// iOS 13+ gates the sensors behind a user gesture; Android and WebView
+// wallpapers do not, so only surface the button when it is actually needed.
+const needsPermission =
+  typeof DeviceMotionEvent !== "undefined" &&
+  typeof DeviceMotionEvent.requestPermission === "function";
+
+if (needsPermission) {
+  enableBtn.style.display = "block";
+  enableBtn.addEventListener("click", async () => {
+    try {
+      await DeviceMotionEvent.requestPermission();
+      if (typeof DeviceOrientationEvent?.requestPermission === "function") {
+        await DeviceOrientationEvent.requestPermission();
+      }
+    } catch (_) { /* denied — the sheet is still poppable, the light just parks */ }
+    enableBtn.style.display = "none";
+    listenMotion();
+  });
+} else {
+  listenMotion();
+}
+
+/* --------------------------------------------------------------- the press
+ *
+ * Force control, not displacement control. The obvious implementation moves
+ * the apex to wherever the finger is, and it throws away the entire point:
+ * a displacement-driven dome cannot snap, because snapping is the apex
+ * running away from the load once the shell softens. A finger is very much
+ * stiffer than 30 microns of polyethylene, but it is a *load* on it, and the
+ * runaway between the limit point and the burst is the sensation the whole
+ * sheet is built to deliver.
+ *
+ * The patch has a radius rather than being a point, because a fingertip is
+ * about one bubble across and clips the ring around it. That is why running
+ * a thumb across the sheet pops a track and not a line of one.
+ */
+const pointers = new Map();
+
+/* Contact radius in pitches, and how much of it is under near-uniform load.
+ *
+ * Both numbers were wrong on the first pass and the sheet was unusable for
+ * it. A patch of 0.62 pitches with a smoothstep peaking at its centre is
+ * *smaller than the lattice circumradius*, so a press landing between three
+ * bubbles reached every one of them only at the very edge of its falloff and
+ * dented all three by six per cent. Measured: a finger held for a third of a
+ * second on the worst spot on the sheet got the nearest dome 5.8% of the way
+ * in, against the 42% it has to pass to buckle at all. Taps did nothing, at
+ * random, and "at random" is the part that made it feel broken rather than
+ * hard.
+ *
+ * Neither half of that was physical. Contact pressure under a fingertip on a
+ * compliant sheet is close to uniform across the patch and falls off at the
+ * rim; it is not a spike at a point. And the finger people actually use on
+ * bubble wrap is a thumb, which is nearly twice the pitch of small wrap
+ * across — so it always covers a dome centre, and it always leans on the
+ * ring of neighbours as well, which is where the occasional double pop
+ * comes from. */
+const PATCH = 0.90;
+const PATCH_FLAT = 0.45;
+const PRESS_RAMP = 0.035;  // seconds to full load, so a fast flick under-loads
+
+/** Uniform under the pad of the thumb, easing off across the rim. */
+function patchWeight(d, patch) {
+  const flat = patch * PATCH_FLAT;
+  if (d <= flat) return 1;
+  const s = 1 - (d - flat) / (patch - flat);
+  return s * s * (3 - 2 * s);
+}
+
+function pointerXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+let tiltDrag = null;       // desktop: shift-drag stands in for tilting the phone
+
+canvas.addEventListener("pointerdown", (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  hint.classList.add("hide");
+  wakeAudio();
+  if (e.shiftKey && e.pointerType !== "touch") {
+    tiltDrag = pointerXY(e);
+    return;
+  }
+  const p = pointerXY(e);
+  // `pressure` is 0.5 on hardware with no force sensor, and that is the
+  // value a normal press should mean, so it scales around 0.5 rather than
+  // being taken as an absolute.
+  pointers.set(e.pointerId, { x: p.x, y: p.y, t: 0, force: 0.55 + (e.pressure || 0.5) });
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (tiltDrag) {
+    const p = pointerXY(e);
+    setGravityVector(
+      Math.max(-1, Math.min(1, grav.x + (p.x - tiltDrag.x) / (W * 0.5))),
+      Math.max(-1, Math.min(1, grav.y + (p.y - tiltDrag.y) / (H * 0.5))));
+    tiltDrag = p;
+    return;
+  }
+  const q = pointers.get(e.pointerId);
+  if (!q) return;
+  const p = pointerXY(e);
+  q.x = p.x; q.y = p.y;
+  if (e.pressure) q.force = 0.55 + e.pressure;
+});
+
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  tiltDrag = null;
+}
+canvas.addEventListener("pointerup", endPointer);
+canvas.addEventListener("pointercancel", endPointer);
+canvas.addEventListener("pointerleave", endPointer);
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+window.addEventListener("keydown", (e) => {
+  const k = 0.16;
+  if (e.key === "ArrowLeft") setGravityVector(grav.x - k, grav.y);
+  else if (e.key === "ArrowRight") setGravityVector(grav.x + k, grav.y);
+  else if (e.key === "ArrowUp") setGravityVector(grav.x, grav.y - k);
+  else if (e.key === "ArrowDown") setGravityVector(grav.x, grav.y + k);
+  else if (e.key === " " || e.key.toLowerCase() === "r") { wakeAudio(); freshSheet(-gDir.x, -gDir.y); }
+  else return;
+  e.preventDefault();
+});
+
+/* ------------------------------------------------------------ fresh sheet
+ *
+ * A wallpaper you can exhaust is a wallpaper with an ending. Popping the
+ * last bubble should not be the end of the product, and re-inflating them
+ * all on a timer where you can watch is worse — it reads as the thing
+ * undoing your work.
+ *
+ * So the refill is a gesture with a direction: shake the phone and a front
+ * crosses the sheet the way you shook it, re-inflating everything it passes.
+ * The domes come back over-inflated and settle out through the same shell
+ * law that lets them buckle, so the wave of bounce behind the front is the
+ * physics rather than an easing curve, and the front drags a tension pulse
+ * with it because a sheet being pulled taut is what that is.
+ */
+let refillFront = Infinity;   // distance travelled by the front, px
+let refillDX = 0, refillDY = 1;
+let refillOrigin = 0;
+const REFILL_SPEED = 2.2;     // screen-diagonals per second
+const SHAKE_TRIGGER = 0.85;   // g of hand motion
+let shakeCooldown = 0;
+
+function freshSheet(dx, dy) {
+  const m = Math.hypot(dx, dy) || 1;
+  refillDX = dx / m; refillDY = dy / m;
+  /* Start the front off the far corner so nothing pops into existence
+   * already behind it: project every corner and take the smallest. */
+  let lo = Infinity;
+  for (const [px, py] of [[0, 0], [W, 0], [0, H], [W, H]]) {
+    lo = Math.min(lo, px * refillDX + py * refillDY);
+  }
+  refillOrigin = lo - pitch * 2;
+  refillFront = 0;
+  shakeCooldown = 1.1;
+}
+
+function reinflate(i) {
+  bstate[i] = 0;
+  bpopT[i] = 0;
+  brefill[i] = Infinity;
+  // Over-inflated, and left to sort itself out. The shell is restoring on
+  // this side of zero and the rarefied air pulls with it, so what you see is
+  // a damped bounce nobody wrote.
+  bu[i] = -0.26;
+  bv[i] = 0;
+  barm[i] = 0.30;
+  tenv[i] += TEN_POP * 0.35;
+}
+
+function stepRefill(dt) {
+  if (!Number.isFinite(refillFront)) return;
+  const span = Math.hypot(W, H);
+  const prev = refillFront;
+  refillFront += REFILL_SPEED * span * dt;
+  if (prev > span * 1.4) { refillFront = Infinity; return; }
+  const lo = refillOrigin + prev, hi = refillOrigin + refillFront;
+  for (let i = 0; i < n; i++) {
+    if (!bstate[i]) continue;
+    const s = bx[i] * refillDX + by[i] * refillDY;
+    if (s >= lo && s < hi) reinflate(i);
+  }
+}
+
+/* ------------------------------------------------------------------ a pop */
+
+const puffs = [];              // the air getting out, drawn for a fifth of a second
+let popsThisStep = 0;
+
+function burst(i) {
+  bstate[i] = 1;
+  bpopT[i] = 0;
+  const p = gaugeP(bu[i]);
+  bv[i] = 0;
+  brefill[i] = CONFIG.refill > 0
+    ? CONFIG.refill * (0.6 + Math.random() * 0.8)
+    : Infinity;
+  tenv[i] += TEN_POP;
+  puffs.push({ x: bx[i], y: by[i], r: domeR * bsize[i], t: 0 });
+  popsThisStep++;
+  popSound(bx[i], domeR * bsize[i], p);
+  buzz();
+}
+
+/* ----------------------------------------------------------------- a step */
+
+function fixedStep(dt, t) {
+  // --- what the fingers are doing to the sheet
+  const patch = pitch * PATCH;
+  for (const q of pointers.values()) {
+    q.t += dt;
+    const load = FINGER * q.force * Math.min(1, q.t / PRESS_RAMP);
+    /* Straight to the rows and columns under the finger. The lattice is
+     * regular, so a spatial index for this would be a hash table wrapping
+     * arithmetic that is already there. */
+    const r0 = Math.max(0, Math.floor((q.y - patch - originY) / rowStep));
+    const r1 = Math.min(ROWS - 1, Math.ceil((q.y + patch - originY) / rowStep));
+    for (let r = r0; r <= r1; r++) {
+      const off = (r & 1) ? pitch * 0.5 : 0;
+      const c0 = Math.max(0, Math.floor((q.x - patch - originX - off) / pitch));
+      const c1 = Math.min(COLS - 1, Math.ceil((q.x + patch - originX - off) / pitch));
+      for (let c = c0; c <= c1; c++) {
+        const i = r * COLS + c;
+        if (bstate[i]) continue;
+        const d = Math.hypot(bx[i] - q.x, by[i] - q.y);
+        if (d > patch) continue;
+        const w = patchWeight(d, patch);
+        bv[i] += load * w * dt;
+        ten[i] += TEN_PRESS * w * Math.max(0, bu[i]) * dt;
+      }
+    }
+  }
+
+  // --- the domes
+  for (let i = 0; i < n; i++) {
+    if (bstate[i]) { bpopT[i] += dt; continue; }
+    if (barm[i] > 0) barm[i] -= dt;
+    const u = bu[i];
+    const shell = SHELL * u * (1 - u) * (2 - u);
+    const pg = gaugeP(u);
+    bv[i] += (-shell - GAS * pg - DAMP * bv[i]) * dt;
+    let nu = u + bv[i] * dt;
+    if (nu < U_MIN) { nu = U_MIN; bv[i] = 0; }
+    bu[i] = nu;
+
+    /* The seal fails on pressure, and a film already stretched by what its
+     * neighbours are doing fails sooner. This is the only coupling that
+     * needs to exist for cascades: the ripple off one burst arrives as
+     * positive tension and takes the bubbles that were nearly there. */
+    if (barm[i] <= 0) {
+      const weak = 1 - TENSION_WEAKENS * Math.max(0, Math.min(1, ten[i]));
+      if (gaugeP(bu[i]) > bburst[i] * weak) burst(i);
+    }
+  }
+
+  // --- the film between them
+  for (let i = 0; i < n; i++) {
+    let lap = 0, deg = 0;
+    for (let k = 0; k < 6; k++) {
+      const j = nbr[i * 6 + k];
+      if (j < 0) continue;
+      lap += ten[j]; deg++;
+    }
+    lap -= deg * ten[i];
+    tenv[i] += (TEN_C2 * lap / 6 - TEN_RESTORE * ten[i] - TEN_DAMP * tenv[i]) * dt;
+  }
+  for (let i = 0; i < n; i++) ten[i] += tenv[i] * dt;
+
+  // --- the phone
+  stepRefill(dt);
+  if (shakeCooldown > 0) shakeCooldown -= dt;
+  const shake = Math.hypot(accel.x, accel.y, accel.z);
+  if (shake > SHAKE_TRIGGER && shakeCooldown <= 0 && Number.isFinite(refillFront) === false) {
+    freshSheet(accel.x, accel.y);
+  }
+
+  // --- the slow floor under the gesture
+  if (CONFIG.refill > 0) {
+    for (let i = 0; i < n; i++) {
+      if (!bstate[i] || !Number.isFinite(brefill[i])) continue;
+      brefill[i] -= dt;
+      if (brefill[i] <= 0) reinflate(i);
+    }
+  }
+
+  for (let k = puffs.length - 1; k >= 0; k--) {
+    puffs[k].t += dt;
+    if (puffs[k].t > 0.22) puffs.splice(k, 1);
+  }
+}
+
+const FIXED_DT = 1 / 120;
+let accumulator = 0, simTime = 0;
+
+/* A fixed step is not tidiness here. The shell is stiff (its natural period
+ * is about 0.4s but the burst happens inside a tenth of that) and the
+ * tension wave sits within a factor of five of its CFL limit, so a variable
+ * step means a different simulation on every device — and, on a slow frame,
+ * a sheet that pops itself. */
+function step(dt) {
+  accumulator += dt;
+  let ticks = 0;
+  while (accumulator >= FIXED_DT && ticks < 8) {
+    simTime += FIXED_DT;
+    fixedStep(FIXED_DT, simTime);
+    accumulator -= FIXED_DT;
+    ticks++;
+  }
+  if (ticks === 8) accumulator = 0;   // gave up catching up; do not spiral
+  return simTime;
+}
+
+/* --------------------------------------------------------------- sprites
+ *
+ * A dome is a circle, and a circle lit from any direction is the same
+ * picture rotated. So the shading is painted once, at a canonical light
+ * lying along +x, and turning the phone rotates the table rather than
+ * repainting it — sixteen blits when the light moves far enough to notice,
+ * against a few hundred gradients a frame if the shading were live.
+ *
+ * The compression is what the table indexes, because that genuinely changes
+ * the picture: the specular slides toward the centre and broadens as the
+ * dome flattens, the rim contrast falls away with the loft, and past a
+ * quarter of the way in a dimple opens at the apex with its terminator the
+ * other way round, which is what a concave surface does and what tells you
+ * a finger is winning.
+ */
+const TAU = Math.PI * 2;
+const STEPS = 16;          // compression frames, U_MIN .. U_MAX
+const SHADOW_STEPS = 6;
+const POP_VARIANTS = 5;
+
+let SPR = 0;               // sprite side, CSS px
+let domeCanon = [], domeSpr = [];
+let shadCanon = [], shadSpr = [];
+let sealCanon = null, sealSpr = null;
+let popCanon = [], sheenCanon = null, sheenSpr = null;
+
+let lightAngle = -2.0, bakedAngle = Infinity, bakeCooldown = 0;
+
+function sprite(sizeCss, paint) {
+  const c = document.createElement("canvas");
+  c.width = c.height = Math.max(1, Math.ceil(sizeCss * DPR));
+  const g = c.getContext("2d");
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  paint(g, sizeCss);
+  return c;
+}
+
+/* Scratch buffer for the half-rings below. One, reused, because these are
+ * only painted when the sprite table is built. */
+let scratch = null, scratchCtx = null;
+
+function scratchFor(sizeCss) {
+  const px = Math.max(1, Math.ceil(sizeCss * DPR));
+  if (!scratch) { scratch = document.createElement("canvas"); scratchCtx = scratch.getContext("2d"); }
+  if (scratch.width !== px) { scratch.width = scratch.height = px; }
+  scratchCtx.setTransform(1, 0, 0, 1, 0, 0);
+  scratchCtx.clearRect(0, 0, px, px);
+  scratchCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  return scratchCtx;
+}
+
+/** An annulus of colour peaking at `peak` of the radius and falling off both
+ *  ways — a soft ring without a stroke's cut edges.
+ *
+ *  `half` restricts it to the light side (> 0) or the far side (< 0), and the
+ *  restriction is a gradient rather than a clip: cutting the ring in half
+ *  with a straight edge leaves a seam at each pole where the bright rim and
+ *  the dark one meet, and on a circle that is the most visible place a seam
+ *  could possibly be. So it is painted whole into a scratch buffer and then
+ *  faded out across the sheet with destination-in, which costs one more blit
+ *  at bake time and nothing at all per frame. */
+function ring(g, cx, cy, r, peak, width, colour, alpha, half) {
+  if (alpha <= 0.002) return;
+  const t = half ? scratchFor(cx * 2) : g;
+  const gr = t.createRadialGradient(cx, cy, 0, cx, cy, r);
+  const lo = Math.max(0, peak - width), hi = Math.min(1, peak + width);
+  gr.addColorStop(0, "rgba(255,255,255,0)");
+  if (lo > 0) gr.addColorStop(lo, "rgba(255,255,255,0)");
+  gr.addColorStop(peak, rgba(colour, alpha));
+  if (hi < 1) gr.addColorStop(hi, "rgba(255,255,255,0)");
+  gr.addColorStop(1, "rgba(255,255,255,0)");
+  t.fillStyle = gr;
+  t.beginPath(); t.arc(cx, cy, r, 0, TAU); t.fill();
+  if (!half) return;
+
+  const mask = t.createLinearGradient(cx - r, cy, cx + r, cy);
+  const near = half > 0 ? 1 : 0;
+  mask.addColorStop(0, "rgba(0,0,0," + (1 - near) + ")");
+  mask.addColorStop(0.5, "rgba(0,0,0,0.38)");
+  mask.addColorStop(1, "rgba(0,0,0," + near + ")");
+  t.globalCompositeOperation = "destination-in";
+  t.fillStyle = mask;
+  t.fillRect(cx - r, cy - r, r * 2, r * 2);
+  t.globalCompositeOperation = "source-over";
+
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.drawImage(scratch, 0, 0);
+  g.restore();
+}
+
+const WHITE = { r: 255, g: 255, b: 255 };
+const DEEP = { r: 8, g: 16, b: 34 };   // never #000000: house rules, and it is
+                                       // also what a shadow on tinted film is
+
+function paintDome(g, S, u) {
+  const cx = S / 2, cy = S / 2;
+  const lf = 1 - u;                      // loft: 1 at rest, 0 flat, >1 puffed
+  const rr = domeR * (1 + 0.055 * u);    // the rim bulges as the apex goes in
+  const loft = Math.max(0, Math.min(1.3, lf));
+  const hx = cx + Math.min(0.44, 0.40 * Math.max(0, lf)) * rr;
+  const hy = cy - Math.min(0.20, 0.17 * Math.max(0, lf)) * rr;
+
+  /* A dome is not a bump. It is a lens full of air sitting on a coloured
+   * backing, and almost everything you see through it is that backing —
+   * so the body has to stay out of the way. Painting it as a shaded solid,
+   * which is the obvious reading of "draw a hemisphere", produced a sheet
+   * of moulded rubber matting: every dome a grey lump, the colour of the
+   * wrap coming only from the gaps between them.
+   *
+   * What is actually there is four thin things over an unchanged backing —
+   * a milky lift from the film's own haze, a bright arc where the rim faces
+   * the lamp, a dark hairline all the way round that draws the silhouette,
+   * and the caustic the dome throws onto the far side of itself by piping
+   * light through its wall. The last one is the whole trick: it is the
+   * brightest thing on the dark side of the bubble, which is impossible for
+   * a solid and is the reason a clear one reads as clear. */
+  const haze = g.createRadialGradient(cx, cy, 0, cx, cy, rr);
+  haze.addColorStop(0, rgba(FILM, 0.05));
+  haze.addColorStop(0.7, rgba(FILM, 0.07));
+  haze.addColorStop(1, rgba(FILM, 0.02));
+  g.fillStyle = haze;
+  g.beginPath(); g.arc(cx, cy, rr, 0, TAU); g.fill();
+
+  // The wall, catching the lamp across the whole face it presents to it.
+  const lit = g.createRadialGradient(hx, hy, 0, hx, hy, rr * 0.95);
+  lit.addColorStop(0, rgba(WHITE, 0.22 * loft));
+  lit.addColorStop(0.55, rgba(WHITE, 0.07 * loft));
+  lit.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = lit;
+  g.beginPath(); g.arc(cx, cy, rr, 0, TAU); g.fill();
+
+  ring(g, cx, cy, rr, 0.955, 0.065, WHITE, 0.62 * loft, 1);   // lit rim
+  ring(g, cx, cy, rr, 0.90, 0.20, DEEP, 0.13 * loft, -1);     // shaded flank
+  ring(g, cx, cy, rr, 0.72, 0.16, FILM, 0.40 * loft, -1);     // the caustic
+  ring(g, cx, cy, rr, 0.985, 0.03, DEEP, 0.22);               // the silhouette
+
+  /* Specular. Small and hard, over a broad soft one — a lamp reflected in
+   * polyethylene is a glint with a halo, and drawing only the halo is what
+   * makes plastic look like clay. Both broaden and dim as the surface they
+   * sit on flattens out. */
+  const sr = rr * (0.30 - 0.10 * u);
+  if (sr > 0.5) {
+    g.save();
+    g.translate(hx, hy); g.rotate(-0.42); g.scale(1, 0.62);
+    const halo = g.createRadialGradient(0, 0, 0, 0, 0, sr);
+    halo.addColorStop(0, rgba(WHITE, 0.34 * Math.min(1, loft)));
+    halo.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = halo;
+    g.beginPath(); g.arc(0, 0, sr, 0, TAU); g.fill();
+    const core = g.createRadialGradient(0, 0, 0, 0, 0, sr * 0.34);
+    core.addColorStop(0, rgba(WHITE, 0.95 * Math.min(1, loft)));
+    core.addColorStop(0.6, rgba(WHITE, 0.55 * Math.min(1, loft)));
+    core.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = core;
+    g.beginPath(); g.arc(0, 0, sr * 0.34, 0, TAU); g.fill();
+    g.restore();
+  }
+
+  /* The dimple. Past a quarter of the way in the apex is genuinely concave,
+   * and a concave surface has its terminator the other way round — bright
+   * where the dome was dark. It is the only cue in a dead-on orthographic
+   * view that the finger is going in rather than the bubble getting smaller,
+   * and without it a press reads as a shrink. */
+  if (u > 0.25) {
+    const k = Math.min(1, (u - 0.25) / 0.75);
+    const rd = rr * (0.18 + 0.54 * k);
+    g.save();
+    g.beginPath(); g.arc(cx, cy, rd, 0, TAU); g.clip();
+    const dg = g.createLinearGradient(cx - rd, cy, cx + rd, cy);
+    dg.addColorStop(0, rgba(WHITE, 0.34 * k));
+    dg.addColorStop(0.5, rgba(DEEP, 0.05 * k));
+    dg.addColorStop(1, rgba(DEEP, 0.24 * k));
+    g.fillStyle = dg;
+    g.fillRect(cx - rd, cy - rd, rd * 2, rd * 2);
+    g.restore();
+    // The fold at the edge of the dimple, and the counter-highlight in it.
+    ring(g, cx, cy, rd * 1.18, 0.86, 0.16, DEEP, 0.20 * k);
+    const cs = rd * 0.26;
+    const cg = g.createRadialGradient(cx - rd * 0.44, cy - rd * 0.08, 0,
+                                      cx - rd * 0.44, cy - rd * 0.08, cs);
+    cg.addColorStop(0, rgba(WHITE, 0.70 * k));
+    cg.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = cg;
+    g.beginPath(); g.arc(cx - rd * 0.44, cy - rd * 0.08, cs, 0, TAU); g.fill();
+  }
+}
+
+function paintShadow(g, S, u) {
+  const cx = S / 2, cy = S / 2;
+  const lf = Math.max(0, 1 - u);
+  const ox = -domeR * (0.08 + 0.13 * lf);
+  const rad = domeR * (0.98 + 0.08 * lf);
+  const a = 0.17 * (0.34 + 0.66 * lf);
+  const gr = g.createRadialGradient(cx + ox, cy, rad * 0.45, cx + ox, cy, rad * 1.24);
+  gr.addColorStop(0, rgba(DEEP, a));
+  gr.addColorStop(1, "rgba(8,16,34,0)");
+  g.fillStyle = gr;
+  g.fillRect(0, 0, S, S);
+}
+
+/* The welded land around each dome. It is embossed into the sheet, so it
+ * survives the bubble it belongs to — a popped cell still has its ring, and
+ * that is what keeps a spent patch of wrap looking like wrap. */
+function paintSeal(g, S) {
+  const cx = S / 2, cy = S / 2, r = domeR * 1.14;
+  ring(g, cx, cy, r, 0.92, 0.045, WHITE, 0.08, 1);
+  ring(g, cx, cy, r, 0.92, 0.045, DEEP, 0.06, -1);
+}
+
+/* A spent bubble: two thicknesses of film lying on the backing, creased
+ * where it folded on the way down and split where the air left. Painted
+ * light-neutral and never rotated, because the creases belong to the sheet
+ * and not to the lamp — turning the phone must not spin them. The shading
+ * that does belong to the lamp is the separate sheen sprite below. */
+function paintPopped(g, S, variant) {
+  const cx = S / 2, cy = S / 2;
+  const rnd = mulberry32(CONFIG.seed ^ (variant * 0x9E3779B9));
+  const r = domeR * (0.78 + rnd() * 0.10);
+
+  /* Contact shadow, and it is the darkest thing on a spent cell: two
+   * thicknesses of film lying flat where there used to be a lens, so the
+   * backing under it is genuinely dimmer. A popped bubble that is the same
+   * brightness as the sheet does not read as popped, it reads as missing. */
+  const ao = g.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 1.20);
+  ao.addColorStop(0, rgba(DEEP, 0.26));
+  ao.addColorStop(0.75, rgba(DEEP, 0.15));
+  ao.addColorStop(1, "rgba(8,16,34,0)");
+  g.fillStyle = ao;
+  g.beginPath(); g.arc(cx, cy, r * 1.20, 0, TAU); g.fill();
+
+  // The puckered outline. Not a circle — collapsed film gathers.
+  const V = 13, pts = [];
+  for (let i = 0; i < V; i++) {
+    const t = (i / V) * TAU;
+    const rad = r * (0.84 + rnd() * 0.28);
+    pts.push([cx + Math.cos(t) * rad, cy + Math.sin(t) * rad]);
+  }
+  g.beginPath();
+  g.moveTo((pts[V - 1][0] + pts[0][0]) / 2, (pts[V - 1][1] + pts[0][1]) / 2);
+  for (let i = 0; i < V; i++) {
+    const q = pts[i], w = pts[(i + 1) % V];
+    g.quadraticCurveTo(q[0], q[1], (q[0] + w[0]) / 2, (q[1] + w[1]) / 2);
+  }
+  g.closePath();
+  g.fillStyle = rgba(FILM, 0.13);
+  g.fill();
+  g.save(); g.clip();
+
+  /* The folds.
+   *
+   * The first pass drew five or six of these as full chords through the
+   * centre of the disc, which is a snowflake: every crease crossing every
+   * other at one point, radially symmetric, and reading at a glance as a
+   * drawn asterisk rather than as film. Film does not fold that way. It
+   * buckles into two or three long creases that run *past* each other, each
+   * with its own centre of curvature, none of them through the middle —
+   * so these are chords with an offset base point and a bias, and there are
+   * two or three of them. */
+  const folds = 2 + ((rnd() * 2.4) | 0);
+  const bias = rnd() * TAU;
+  for (let i = 0; i < folds; i++) {
+    const t = bias + (i / folds) * Math.PI + (rnd() - 0.5) * 0.9;
+    // Offset from the centre, so the creases run alongside rather than
+    // through one another.
+    const ox = (rnd() - 0.5) * r * 1.1, oy = (rnd() - 0.5) * r * 1.1;
+    const nx = Math.cos(t), ny = Math.sin(t);
+    const x0 = cx + ox + nx * r * 1.4, y0 = cy + oy + ny * r * 1.4;
+    const x1 = cx + ox - nx * r * 1.4, y1 = cy + oy - ny * r * 1.4;
+    // Bowed, because a fold in a sheet under its own tension is an arc.
+    const bow = (rnd() - 0.5) * r * 0.8;
+    const mx = cx + ox - ny * bow, my = cy + oy + nx * bow;
+    g.lineWidth = Math.max(0.6, r * 0.038);
+    g.lineCap = "round";
+    for (const [dx, dy, col, al] of [[0.9, 0.9, DEEP, 0.19], [-0.6, -0.6, WHITE, 0.21]]) {
+      g.strokeStyle = rgba(col, al);
+      g.beginPath();
+      g.moveTo(x0 + dx, y0 + dy);
+      g.quadraticCurveTo(mx + dx, my + dy, x1 + dx, y1 + dy);
+      g.stroke();
+    }
+  }
+  // Where the seal actually let go: short, off-centre, and at the rim, which
+  // is where the weld is and therefore where it fails.
+  const sa = bias + rnd() * 1.2;
+  g.strokeStyle = rgba(DEEP, 0.24);
+  g.lineWidth = Math.max(0.8, r * 0.062);
+  g.beginPath();
+  g.moveTo(cx + Math.cos(sa) * r * 0.42, cy + Math.sin(sa) * r * 0.42);
+  g.quadraticCurveTo(cx + Math.cos(sa + 0.4) * r * 0.8, cy + Math.sin(sa + 0.4) * r * 0.8,
+                     cx + Math.cos(sa + 0.1) * r * 1.02, cy + Math.sin(sa + 0.1) * r * 1.02);
+  g.stroke();
+  g.restore();
+}
+
+/** The lamp's half of a spent bubble, kept separate so it can turn without
+ *  taking the creases with it. */
+function paintSheen(g, S) {
+  const cx = S / 2, cy = S / 2, r = domeR * 0.92;
+  ring(g, cx, cy, r, 0.70, 0.30, WHITE, 0.13, 1);
+  ring(g, cx, cy, r, 0.78, 0.24, DEEP, 0.09, -1);
+}
+
+/* Rotation writes into a canvas that already exists. Allocating a fresh one
+ * per sprite per rebake means two dozen canvases created and two dozen
+ * dropped every ninety milliseconds for as long as the phone is moving,
+ * which is a garbage collector pause in the middle of a gesture. */
+function rotateInto(dst, src, angle) {
+  if (dst.width !== src.width) { dst.width = src.width; dst.height = src.height; }
+  const g = dst.getContext("2d");
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, dst.width, dst.height);
+  g.translate(dst.width / 2, dst.height / 2);
+  g.rotate(angle);
+  g.drawImage(src, -dst.width / 2, -dst.height / 2);
+  return dst;
+}
+
+const blank = () => document.createElement("canvas");
+
+function buildSprites() {
+  SPR = pitch * 1.5;
+  domeCanon = []; shadCanon = []; popCanon = [];
+  for (let k = 0; k < STEPS; k++) {
+    const u = U_MIN + (U_MAX - U_MIN) * (k / (STEPS - 1));
+    domeCanon.push(sprite(SPR, (g, S) => paintDome(g, S, u)));
+  }
+  for (let k = 0; k < SHADOW_STEPS; k++) {
+    const u = U_MIN + (U_MAX - U_MIN) * (k / (SHADOW_STEPS - 1));
+    shadCanon.push(sprite(SPR, (g, S) => paintShadow(g, S, u)));
+  }
+  sealCanon = sprite(SPR, paintSeal);
+  sheenCanon = sprite(SPR, paintSheen);
+  for (let v = 0; v < POP_VARIANTS; v++) {
+    popCanon.push(sprite(SPR, (g, S) => paintPopped(g, S, v)));
+  }
+  domeSpr = domeCanon.map(blank);
+  shadSpr = shadCanon.map(blank);
+  sealSpr = blank();
+  sheenSpr = blank();
+  bakedAngle = Infinity;
+  bakeLight(true);
+}
+
+/** Turn the table to the current lamp. Cheap enough to do on a threshold
+ *  rather than a schedule, and rate-limited so a phone being waved about
+ *  cannot spend its whole frame budget here. */
+function bakeLight(force) {
+  if (!force) {
+    if (bakeCooldown > 0) return;
+    let d = lightAngle - bakedAngle;
+    while (d > Math.PI) d -= TAU;
+    while (d < -Math.PI) d += TAU;
+    if (Math.abs(d) < 0.06) return;
+  }
+  bakedAngle = lightAngle;
+  bakeCooldown = 0.09;
+  for (let k = 0; k < domeCanon.length; k++) rotateInto(domeSpr[k], domeCanon[k], lightAngle);
+  for (let k = 0; k < shadCanon.length; k++) rotateInto(shadSpr[k], shadCanon[k], lightAngle);
+  rotateInto(sealSpr, sealCanon, lightAngle);
+  rotateInto(sheenSpr, sheenCanon, lightAngle);
+  buildLayers();
+}
+
+/* ------------------------------------------------------------- the backing
+ *
+ * What the wrap is laid over. Read along the gravity axis from the same
+ * `ramp` the shaker uses, so a colourway is one URL parameter across the
+ * whole line, and given a slow parallax against the sheet — the wrap floats
+ * a millimetre or two off whatever it is protecting, and that gap is most
+ * of why a sheet of it does not look like a printed pattern.
+ */
+let filmTile = null;
+
+function buildBacking() {
+  if (filmTile) return;
+  /* One tile of extruded-film grain, built once and tiled. Polyethylene
+   * comes off a roller, so its texture is directional — streaks along the
+   * web, not isotropic noise, and isotropic noise is exactly what makes
+   * plastic read as paper. */
+  const T = 128;
+  const c = document.createElement("canvas");
+  c.width = c.height = T;
+  const g = c.getContext("2d");
+  const img = g.createImageData(T, T);
+  const rnd = mulberry32(0x5EED);
+  const row = new Float32Array(T);
+  for (let x = 0; x < T; x++) row[x] = rnd();
+  for (let y = 0; y < T; y++) {
+    for (let x = 0; x < T; x++) {
+      // Correlated down the column, fresh across it: a streak.
+      const v = row[x] * 0.72 + rnd() * 0.28;
+      const k = (y * T + x) * 4;
+      const s = (v - 0.5) * 26;
+      img.data[k] = img.data[k + 1] = img.data[k + 2] = 128 + s;
+      img.data[k + 3] = 26;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  filmTile = ctx.createPattern(c, "repeat");
+}
+
+/* ---------------------------------------------------------------- drawing */
+
+const POP_ANIM = 0.14;
+let sheetShift = 0;         // home-screen scroll, px
+
+function paintBacking(g) {
+  if (CONFIG.glass < 1) paintBackingRamp(g);
+  /* The welded land around every cell, whether or not its bubble is still
+   * there — the embossing outlives the air, and a spent patch of wrap that
+   * has lost its rings stops looking like wrap.
+   *
+   * It lives here rather than in the frame because it is static: two hundred
+   * and seventy-five blits a frame of a sprite that changes only when the
+   * lamp moves is the single most expensive thing this page was doing, and
+   * all of it was redrawing the same picture. */
+  for (let i = 0; i < n; i++) {
+    const sz = SPR * bsize[i];
+    g.drawImage(sealSpr, bx[i] - sz / 2, by[i] - sz / 2, sz, sz);
+  }
+}
+
+function paintBackingRamp(g) {
+  const a = 1 - CONFIG.glass;
+  // Parallax: the backing sits behind the sheet, so it lags it as the phone
+  // tilts. Small — a couple of millimetres of real gap.
+  const px = -gDir.x * pitch * 0.16, py = -gDir.y * pitch * 0.16;
+  const L = Math.hypot(W, H) * 0.62;
+  const gx = g.createLinearGradient(CX - gDir.x * L + px, CY - gDir.y * L + py,
+                                    CX + gDir.x * L + px, CY + gDir.y * L + py);
+  for (let i = 0; i < RAMP.length; i++) {
+    gx.addColorStop(RAMP.length === 1 ? 0 : i / (RAMP.length - 1), rgba(RAMP[i], a));
+  }
+  g.fillStyle = gx;
+  g.fillRect(-BACK_PAD, 0, W + BACK_PAD * 2, H);
+}
+
+function drawSheet(t) {
+  const S = SPR;
+  const dx = sheetShift;
+
+  /* The tension field, made visible: taut film catches more light. Without
+   * this the wave equation would be doing its work where nobody can see it,
+   * and the ripple off a pop is the only cue that the sheet is one object.
+   *
+   * Measured, a burst peaks the field at 0.99 in its own cell, which is the
+   * cap — so its immediate neighbours have their burst pressure cut by the
+   * full 34%. That sounds like a chain reaction and is not one, because the
+   * ripple is gone in about a fifth of a second and only the ring next door
+   * ever sees the peak: 23 presses down a thumb-run produce 19 pops, and a
+   * single burst in the middle of an untouched sheet takes nobody with it.
+   * What it does do is finish off the bubbles the same thumb was already
+   * leaning on, which is exactly the thing real wrap does and the thing a
+   * grid of independent buttons cannot. A sheet that unzipped itself from
+   * one press would be a firework rather than a fidget. */
+  for (let i = 0; i < n; i++) {
+    const v = ten[i];
+    if (v > 0.05) {
+      ctx.fillStyle = rgba(WHITE, Math.min(0.16, v * 0.13));
+    } else if (v < -0.05) {
+      ctx.fillStyle = rgba(DEEP, Math.min(0.14, -v * 0.11));
+    } else continue;
+    ctx.beginPath();
+    ctx.arc(bx[i] + dx, by[i], pitch * 0.5, 0, TAU);
+    ctx.fill();
+  }
+
+  // Shadows first, all of them, so a dome's shadow can never land on top of
+  // its neighbour.
+  for (let i = 0; i < n; i++) {
+    if (bstate[i] && bpopT[i] > POP_ANIM) continue;
+    const u = bstate[i] ? U_MAX : bu[i];
+    const k = Math.max(0, Math.min(SHADOW_STEPS - 1,
+      Math.round((u - U_MIN) / (U_MAX - U_MIN) * (SHADOW_STEPS - 1))));
+    const s = S * bsize[i];
+    ctx.drawImage(shadSpr[k], bx[i] + dx - s / 2, by[i] - s / 2, s, s);
+  }
+
+  for (let i = 0; i < n; i++) {
+    const s0 = S * bsize[i];
+    const x = bx[i] + dx, y = by[i];
+    if (bstate[i]) {
+      const a = Math.min(1, bpopT[i] / POP_ANIM);
+      // The film flings outward as it lets go, then gathers.
+      const fling = 1 + 0.17 * Math.sin(Math.PI * a);
+      if (a < 1) {
+        ctx.globalAlpha = 1 - a;
+        const s = s0 * fling;
+        ctx.drawImage(domeSpr[STEPS - 1], x - s / 2, y - s / 2, s, s);
+        ctx.globalAlpha = a;
+      }
+      ctx.drawImage(popCanon[bcrease[i]], x - s0 / 2, y - s0 / 2, s0, s0);
+      ctx.drawImage(sheenSpr, x - s0 / 2, y - s0 / 2, s0, s0);
+      ctx.globalAlpha = 1;
+    } else {
+      // Visual only, and deliberately below the threshold of noticing: the
+      // sheet is not inert, but a wallpaper that animates at you is a
+      // wallpaper you turn off.
+      const u = bu[i] + 0.012 * Math.sin(t * 0.9 + bphase[i]);
+      const k = Math.max(0, Math.min(STEPS - 1,
+        Math.round((u - U_MIN) / (U_MAX - U_MIN) * (STEPS - 1))));
+      // A taut cell is pulled fractionally tighter and wider.
+      const s = s0 * (1 + 0.030 * Math.max(-1, Math.min(1, ten[i])));
+      ctx.globalAlpha = btone[i];
+      ctx.drawImage(domeSpr[k], x - s / 2, y - s / 2, s, s);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // The air getting out. Short, and the only thing on the sheet that is
+  // purely an effect — but it is the effect that says the pop was pressure.
+  for (const p of puffs) {
+    const a = p.t / 0.22;
+    ctx.strokeStyle = rgba(FILM, 0.32 * (1 - a) * (1 - a));
+    ctx.lineWidth = Math.max(0.7, p.r * 0.16 * (1 - a));
+    ctx.beginPath();
+    ctx.arc(p.x + dx, p.y, p.r * (0.5 + 1.5 * a), 0, TAU);
+    ctx.stroke();
+  }
+}
+
+function paintGloss(g) {
+  /* One broad gloss band across the whole sheet. Bubble wrap is a mirror
+   * before it is anything else, and a sheet of it under a room light has a
+   * single soft highlight lying across it that moves when you move — which
+   * is the reading of "this is plastic" that no amount of per-dome specular
+   * gets you, because that one is the *sheet* and not the bubbles. */
+  const lx = Math.cos(lightAngle), ly = Math.sin(lightAngle);
+  const L = Math.hypot(W, H) * 0.7;
+  const gr = g.createLinearGradient(CX - lx * L, CY - ly * L, CX + lx * L, CY + ly * L);
+  gr.addColorStop(0, "rgba(255,255,255,0)");
+  gr.addColorStop(0.42, "rgba(255,255,255,0)");
+  gr.addColorStop(0.68, rgba(FILM, 0.14));
+  gr.addColorStop(0.86, "rgba(255,255,255,0)");
+  gr.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = gr;
+  g.fillRect(0, 0, W, H);
+
+  if (filmTile) {
+    g.save();
+    g.globalAlpha = 0.5;
+    g.fillStyle = filmTile;
+    g.fillRect(0, 0, W, H);
+    g.restore();
+  }
+
+  const v = g.createRadialGradient(CX, CY, Math.min(W, H) * 0.34,
+                                   CX, CY, Math.hypot(W, H) * 0.62);
+  v.addColorStop(0, "rgba(8,16,34,0)");
+  v.addColorStop(1, rgba(DEEP, 0.30));
+  g.fillStyle = v;
+  g.fillRect(0, 0, W, H);
+}
+
+/* Both of those are four full-screen gradient fills between them, and every
+ * one of them is a function of the light and of nothing else — so paying for
+ * them once a frame is paying for them about sixty times more often than
+ * they change. They are baked into two full-screen layers instead, on the
+ * same threshold that rebakes the dome table, which leaves the frame with
+ * two blits where it had four gradients. Measured on the software rasteriser
+ * this is built on, that is the difference between 17fps and something a
+ * phone would not be embarrassed by; on a GPU it is the difference between
+ * caring and not. */
+let backLayer = null, glossLayer = null, BACK_PAD = 0;
+
+function buildLayers() {
+  /* The backing carries the sheet's own markings, so it slides when the sheet
+   * slides. A pitch of overhang each side means a home-screen swipe cannot
+   * drag a bare edge into view. */
+  BACK_PAD = pitch;
+  if (!backLayer) backLayer = document.createElement("canvas");
+  if (!glossLayer) glossLayer = document.createElement("canvas");
+  const bw = Math.ceil((W + BACK_PAD * 2) * DPR);
+  if (backLayer.width !== bw || backLayer.height !== canvas.height) {
+    backLayer.width = bw; backLayer.height = canvas.height;
+  }
+  if (glossLayer.width !== canvas.width || glossLayer.height !== canvas.height) {
+    glossLayer.width = canvas.width; glossLayer.height = canvas.height;
+  }
+  const bg = backLayer.getContext("2d");
+  bg.setTransform(1, 0, 0, 1, 0, 0);
+  bg.clearRect(0, 0, backLayer.width, backLayer.height);
+  bg.setTransform(DPR, 0, 0, DPR, BACK_PAD * DPR, 0);
+  paintBacking(bg);
+  const gg = glossLayer.getContext("2d");
+  gg.setTransform(1, 0, 0, 1, 0, 0);
+  gg.clearRect(0, 0, glossLayer.width, glossLayer.height);
+  gg.setTransform(DPR, 0, 0, DPR, 0, 0);
+  paintGloss(gg);
+}
+
+function blit(layer, offsetCss) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(layer, (offsetCss || 0) * DPR, 0);
+  ctx.restore();
+}
+
+function render(t) {
+  // The lamp is fixed in the room, so in the phone's frame it swings round
+  // as the phone turns. Slightly off "straight up" because a key light dead
+  // overhead flattens everything it touches.
+  const ux = -gDir.x, uy = -gDir.y;
+  const a = -0.42;
+  lightAngle = Math.atan2(ux * Math.sin(a) + uy * Math.cos(a),
+                          ux * Math.cos(a) - uy * Math.sin(a));
+  bakeLight(false);
+
+  ctx.save();
+  if (CONFIG.glass > 0 || CONFIG.mode === "pouch") ctx.clearRect(0, 0, W, H);
+  if (CONFIG.mode === "pouch") {
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, rgba(DEEP, 1));
+    bg.addColorStop(1, "rgba(19,19,23,1)");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    squirclePath(ctx, CX, CY, RX, RY, CONFIG.squircleN, 220);
+    ctx.clip();
+  }
+  blit(backLayer, sheetShift - BACK_PAD);
+  drawSheet(t);
+  blit(glossLayer, 0);
+  ctx.restore();
+}
+
+/* ----------------------------------------------------------------- the pop
+ *
+ * Synthesised rather than sampled, so the sound is a function of what the
+ * simulation actually did: a small bubble clicks higher than a big one, and
+ * a seal that held out to a higher pressure lets go harder and brighter.
+ * One sample played back at one volume is the tell that the pop is a
+ * trigger and not an event.
+ */
+let audio = null, noiseBuf = null, voices = 0;
+
+function wakeAudio() {
+  if (!CONFIG.sound) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  if (!audio) {
+    audio = new AC();
+    const len = Math.floor(audio.sampleRate * 0.12);
+    noiseBuf = audio.createBuffer(1, len, audio.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  }
+  if (audio.state === "suspended") audio.resume().catch(() => {});
+}
+
+function popSound(x, r, p) {
+  if (!audio || audio.state !== "running" || voices > 10) return;
+  const now = audio.currentTime;
+  // Smaller bubbles click higher; a seal that held longer lets go brighter.
+  const f0 = 2200 * (domeR / Math.max(1, r)) * (0.88 + Math.random() * 0.26)
+           * (0.92 + 0.12 * Math.min(3, p));
+  const amp = Math.min(0.30, 0.10 + 0.035 * Math.min(3, p)) * (r / Math.max(1, domeR));
+
+  const pan = audio.createStereoPanner
+    ? audio.createStereoPanner() : null;
+  if (pan) pan.pan.value = Math.max(-0.8, Math.min(0.8, (x / W) * 2 - 1));
+  const out = pan || audio.destination;
+  if (pan) pan.connect(audio.destination);
+
+  // The split: broadband, and gone in forty milliseconds.
+  const src = audio.createBufferSource();
+  src.buffer = noiseBuf;
+  const bp = audio.createBiquadFilter();
+  bp.type = "bandpass"; bp.frequency.value = f0; bp.Q.value = 1.9;
+  const ng = audio.createGain();
+  ng.gain.setValueAtTime(0.0001, now);
+  ng.gain.exponentialRampToValueAtTime(amp, now + 0.001);
+  ng.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+  src.connect(bp); bp.connect(ng); ng.connect(out);
+
+  // The body: the film's own edges snapping back, an octave and a bit below.
+  const osc = audio.createOscillator();
+  osc.type = "triangle";
+  osc.frequency.setValueAtTime(f0 * 0.44, now);
+  osc.frequency.exponentialRampToValueAtTime(f0 * 0.20, now + 0.028);
+  const og = audio.createGain();
+  og.gain.setValueAtTime(0.0001, now);
+  og.gain.exponentialRampToValueAtTime(amp * 0.55, now + 0.002);
+  og.gain.exponentialRampToValueAtTime(0.0001, now + 0.030);
+  osc.connect(og); og.connect(out);
+
+  voices++;
+  src.onended = () => { voices--; };
+  src.start(now); src.stop(now + 0.06);
+  osc.start(now); osc.stop(now + 0.04);
+}
+
+let lastBuzz = 0;
+function buzz() {
+  if (!CONFIG.haptics || !navigator.vibrate) return;
+  const now = performance.now();
+  // A cascade must not turn into a continuous hum.
+  if (now - lastBuzz < 45) return;
+  lastBuzz = now;
+  try { navigator.vibrate(9); } catch (_) { /* refused, or no motor */ }
+}
+
+/* -------------------------------------------------------------------- loop */
+
+let last = 0, raf = 0;
+let diagOn = false, diagFrames = 0, diagJs = 0, diagSince = 0, diagPops = 0;
+
+/** One step of everything, however the clock arrived — the page's own
+ *  requestAnimationFrame, or a host calling tick(). */
+function advance(now) {
+  const dt = Math.min((now - last) / 1000 || 0.016, 0.05);
+  last = now;
+  const t0 = diagOn ? performance.now() : 0;
+  if (bakeCooldown > 0) bakeCooldown -= dt;
+  popsThisStep = 0;
+  // Render on simulation time so the idle breath stays in step with the
+  // physics rather than with the wall clock.
+  render(step(dt));
+  if (diagOn) diagSample(now, performance.now() - t0);
+}
+
+/* Frame timing, reported to the console. Off unless a host turns it on:
+ * inside a live wallpaper there is no devtools to attach, so the one number
+ * that matters on real hardware has to come out through logcat. */
+function diagSample(now, js) {
+  diagFrames++; diagJs += js; diagPops += popsThisStep;
+  if (now - diagSince < 2000) return;
+  const fps = diagFrames * 1000 / (now - diagSince);
+  let popped = 0;
+  for (let i = 0; i < n; i++) if (bstate[i]) popped++;
+  console.log("wrap fps=" + fps.toFixed(1) +
+              " js=" + (diagJs / diagFrames).toFixed(1) + "ms" +
+              " canvas=" + canvas.width + "x" + canvas.height +
+              " bubbles=" + n + " popped=" + popped +
+              " pops=" + diagPops + " puffs=" + puffs.length);
+  diagFrames = 0; diagJs = 0; diagPops = 0; diagSince = now;
+}
+
+function frame(now) {
+  raf = requestAnimationFrame(frame);
+  advance(now);
+}
+
+function start() {
+  if (!resize()) { requestAnimationFrame(start); return; }
+  /* One frame drawn synchronously before anything is scheduled: the manifest
+   * icon is a picture of this canvas and it is asked for on the line after
+   * start() returns. */
+  render(simTime);
+  last = performance.now();
+  if (!raf) raf = requestAnimationFrame(frame);
+}
+
+window.addEventListener("resize", () => {
+  /* The sheet is rebuilt, which means the pops are lost. That is the honest
+   * behaviour for a rotation — it is a different sheet of wrap at a
+   * different pitch — and a wallpaper does not get resized in normal use. */
+  resize();
+});
+
+// A live wallpaper is hidden whenever the launcher is not showing, and one
+// that keeps simulating there is a battery leak rather than a wallpaper.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { cancelAnimationFrame(raf); raf = 0; }
+  else { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); }
+});
+
+/* ------------------------------------------------------- running on a phone
+ *
+ * The same three things that stand between a page in a browser tab and
+ * something that behaves like a wallpaper, and none of them are about the
+ * drawing. See ./index.html — this half is deliberately identical.
+ */
+let wakeLock = null;
+async function keepAwake() {
+  if (!navigator.wakeLock || document.visibilityState !== "visible") return;
+  try { wakeLock = await navigator.wakeLock.request("screen"); }
+  catch (e) { /* refused, or unsupported: there is no second way to ask */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") keepAwake();
+});
+
+/* Fullscreen needs a gesture to grant it, so it is taken on the first touch —
+ * and only on a touch, so that a click on a desktop does not throw the
+ * window into fullscreen the first time somebody pops a bubble. */
+function goImmersive(e) {
+  if (e.pointerType && e.pointerType !== "touch") return;
+  keepAwake();
+  const el = document.documentElement;
+  if (!document.fullscreenElement && el.requestFullscreen) {
+    el.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+  }
+  window.removeEventListener("pointerdown", goImmersive);
+}
+window.addEventListener("pointerdown", goImmersive);
+
+/* And it should be installable, because "add to home screen" is the closest
+ * a web page gets to being a wallpaper. The manifest is built here rather
+ * than shipped as a second file so this stays one self-contained page, and
+ * the icon is a photograph of the live canvas rather than a drawing of what
+ * the canvas is supposed to look like. */
+function installIcon(size) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  g.imageSmoothingQuality = "high";
+  const side = Math.min(canvas.width, canvas.height);
+  const ox = (canvas.width - side) / 2, oy = (canvas.height - side) / 2;
+  const k = size / side;
+  squirclePath(g, size / 2, size / 2, size / 2, size / 2, CONFIG.squircleN, 220);
+  g.clip();
+  g.drawImage(canvas, ox, oy, side, side, 0, 0, size, size);
+  return c.toDataURL("image/png");
+}
+
+function installManifest() {
+  const head = document.head;
+  const theme = document.createElement("meta");
+  theme.name = "theme-color";
+  theme.content = CONFIG.ramp[0];
+  head.appendChild(theme);
+  const manifest = {
+    name: "Bubble Wrap",
+    short_name: "Wrap",
+    display: "fullscreen",
+    orientation: "portrait",
+    background_color: CONFIG.ramp[0],
+    theme_color: CONFIG.ramp[0],
+    start_url: location.href.split("#")[0],
+    icons: [192, 512].map((s) => ({
+      src: installIcon(s), sizes: s + "x" + s, type: "image/png", purpose: "any",
+    })),
+  };
+  const link = document.createElement("link");
+  link.rel = "manifest";
+  link.href = URL.createObjectURL(
+    new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+  head.appendChild(link);
+}
+
+/* ------------------------------------------------ the native host, if any
+ *
+ * Inside an Android live wallpaper there is no browser to deliver
+ * devicemotion: the page is drawn into a wallpaper surface by a service that
+ * owns the sensors itself. The name and the shape of this object are the
+ * shaker's, verbatim, so the existing WallpaperService in ../android can
+ * host either page without knowing which one it has.
+ */
+let hostOffset = null;
+
+window.__shaker = {
+  /** Accelerometer, straight off android.hardware.Sensor.TYPE_ACCELEROMETER.
+   *  `spin` is accepted and ignored: a sheet of wrap has nothing to stir. */
+  motion(x, y, z, spin) {
+    onMotion({ accelerationIncludingGravity: { x, y, z } });
+  },
+
+  /* Home-screen page swipes. A wallpaper is wider than the screen and slides
+   * under the icons; here that is a real translation of the sheet, and the
+   * leading edge is pulled taut as it goes, so swiping between pages sends a
+   * tension ripple through the wrap rather than nothing at all. */
+  offset(t) {
+    if (hostOffset === null) { hostOffset = t; return; }
+    // Clamped: the launcher reports a jump between distant pages as one step.
+    const d = Math.max(-0.3, Math.min(0.3, t - hostOffset));
+    hostOffset = t;
+    if (!d) return;
+    sheetShift = Math.max(-pitch, Math.min(pitch, sheetShift - d * pitch * 2.4));
+    const lead = d > 0 ? 0 : COLS - 1;
+    for (let r = 0; r < ROWS; r++) tenv[r * COLS + lead] += d * 26;
+  },
+
+  /** A press on the glass, from a host that has its own touch handling. */
+  tap(nx, ny) {
+    press(nx * W, ny * H, 1.35);
+  },
+
+  /** The service stops the loop when the wallpaper is not on screen. */
+  pause() { cancelAnimationFrame(raf); raf = 0; },
+  resume() { last = performance.now(); if (!raf) raf = requestAnimationFrame(frame); },
+
+  /* Hand the clock to the host. Drawn into a wallpaper surface by hand, the
+   * page is in a WebView that is not attached to a window, and an unattached
+   * WebView has no vsync to hang requestAnimationFrame off. */
+  drive() { cancelAnimationFrame(raf); raf = 0; last = performance.now(); },
+  tick() { advance(performance.now()); },
+
+  diag(on) { diagOn = !!on; diagSince = performance.now(); diagFrames = 0; diagJs = 0; diagPops = 0; },
+
+  /** A picture of the sheet as it stands, for the icon renderer. */
+  icon(size) { return installIcon(size); },
+
+  /** What the sheet is doing, as numbers. The shaker can be judged by
+   *  looking at it; a wrap cannot — "did that press pop anything, and did
+   *  the ripple off it take anybody with it" is a count, and a count is the
+   *  only way the test harness can ask. */
+  stats() {
+    let popped = 0, held = 0, taut = 0, deepest = 0;
+    for (let i = 0; i < n; i++) {
+      if (bstate[i]) popped++;
+      else { if (bu[i] > 0.05) held++; deepest = Math.max(deepest, bu[i]); }
+      taut = Math.max(taut, Math.abs(ten[i]));
+    }
+    return {
+      bubbles: n, popped, held, taut, deepest,
+      puffs: puffs.length, pitch, cols: COLS, rows: ROWS,
+      refilling: Number.isFinite(refillFront),
+      light: lightAngle, gravity: { x: gDir.x, y: gDir.y },
+      thresholds: { min: Math.min.apply(null, Array.from(bburst)),
+                    max: Math.max.apply(null, Array.from(bburst)) },
+    };
+  },
+
+  /** Everything the tests need to drive a sheet without a finger. */
+  press,
+  fresh: freshSheet,
+};
+
+/** One impulse into the sheet at a point, in the same units the finger uses.
+ *  A press is a load and not a displacement, so this is a velocity kick and
+ *  the dome decides for itself whether that was enough. */
+function press(x, y, strength) {
+  const patch = pitch * PATCH;
+  const r0 = Math.max(0, Math.floor((y - patch - originY) / rowStep));
+  const r1 = Math.min(ROWS - 1, Math.ceil((y + patch - originY) / rowStep));
+  for (let r = r0; r <= r1; r++) {
+    const off = (r & 1) ? pitch * 0.5 : 0;
+    const c0 = Math.max(0, Math.floor((x - patch - originX - off) / pitch));
+    const c1 = Math.min(COLS - 1, Math.ceil((x + patch - originX - off) / pitch));
+    for (let c = c0; c <= c1; c++) {
+      const i = r * COLS + c;
+      if (bstate[i]) continue;
+      const d = Math.hypot(bx[i] - x, by[i] - y);
+      if (d > patch) continue;
+      bv[i] += FINGER * strength * patchWeight(d, patch) * 0.055;
+    }
+  }
+}
+
+start();
+installManifest();
+</script>
+</body>
+</html>
