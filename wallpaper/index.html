@@ -611,6 +611,9 @@ function buildFluid() {
   causticCanvas = document.createElement("canvas");
   causticCanvas.width = CAUSTIC_W; causticCanvas.height = CAUSTIC_H;
   causticCtx = causticCanvas.getContext("2d");
+  causticWebCanvas = document.createElement("canvas");
+  causticWebCanvas.width = CAUSTIC_W; causticWebCanvas.height = CAUSTIC_H;
+  causticWebCtx = causticWebCanvas.getContext("2d");
 
   dyeCanvas = document.createElement("canvas");
   dyeCanvas.width = GW; dyeCanvas.height = GH;
@@ -1795,7 +1798,9 @@ const bubbleBody = [];       // BUB_VARIANTS of them, rotated to gravity
 let bubbleGlint = null;      // world-fixed, never rotated
 const BUB_VARIANTS = 3;
 let shaftSprite = null;
+let causticTile = null;   // seamless dappled-light tile, baked once
 let causticCanvas = null, causticCtx = null;
+let causticWebCanvas = null, causticWebCtx = null;   // the web, masked by depth
 const CAUSTIC_W = 96, CAUSTIC_H = 220;
 let flareSprite = null;
 
@@ -2140,6 +2145,33 @@ function buildSprites() {
     grad.addColorStop(1, "rgba(6,42,96,0)");
     g.fillStyle = grad;
     g.fillRect(0, 0, s, s);
+  });
+
+  /* Dappled light. A lit body of water carries a slowly moving web of
+   * bright cell edges where the rippled surface focuses light, on top of
+   * the vertical shafts. Baked once as a seamless tile of soft rings, each
+   * drawn at the nine wrap offsets so the pattern repeats without a seam,
+   * and laid into the caustic canvas at two drifting scales per frame. */
+  causticTile = sprite(128, (g, s) => {
+    let seed = 7;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    g.lineCap = "round";
+    g.shadowColor = "rgba(255,255,255,.9)";
+    for (let i = 0; i < 22; i++) {
+      const x = rnd() * s, y = rnd() * s;
+      const rx = 7 + rnd() * 13, ry = rx * (0.55 + rnd() * 0.5);
+      const rot = rnd() * Math.PI;
+      const a = 0.22 + rnd() * 0.22;
+      g.strokeStyle = `rgba(255,255,255,${a.toFixed(2)})`;
+      g.lineWidth = 1.2 + rnd() * 1.2;
+      g.shadowBlur = 2 + rnd() * 2;
+      for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+        g.beginPath();
+        g.ellipse(x + ox * s, y + oy * s, rx, ry, rot, 0, Math.PI * 2);
+        g.stroke();
+      }
+    }
+    g.shadowBlur = 0;
   });
 
   glowSprite = sprite(64, (g, s) => {
@@ -3829,6 +3861,51 @@ function render(time) {
   }
   cg.globalAlpha = 1;
 
+  /* The dappled web, into the same small canvas so it rides the same single
+   * additive blit. Two layers at different scales drifting at different
+   * rates, so the pattern never reads as a fixed texture, and three strips
+   * of falling alpha below the waterline so it lives where light enters and
+   * dies out with depth. Cheap: six pattern fills on a canvas a fraction of
+   * the screen. */
+  if (causticTile) {
+    /* Built on its own small canvas so the depth fade can be one gradient
+     * mask rather than stepped strips, then laid into the caustic canvas at
+     * one overall strength. The caustic canvas is 96 wide for a 390px
+     * screen, so the tile is drawn well under its native size or the cells
+     * come out the size of the tank. */
+    const wg = causticWebCtx;
+    wg.clearRect(0, 0, CAUSTIC_W, CAUSTIC_H);
+    wg.globalCompositeOperation = "source-over";
+    const layers = [[0.34, 2.6, 1.3, 0.8], [0.56, -1.4, 0.9, 0.6]];  // scale, drift, weight
+    for (const [sc, vx, vy, wt] of layers) {
+      wg.save();
+      wg.scale(sc, sc);
+      const ox = (time * vx) % 128, oy = (time * vy) % 128;
+      wg.translate(ox, oy);
+      wg.globalAlpha = wt;
+      wg.fillStyle = wg.createPattern(causticTile, "repeat");
+      wg.fillRect(-ox - 128, -oy - 128, CAUSTIC_W / sc + 256, CAUSTIC_H / sc + 256);
+      wg.restore();
+    }
+    // Depth mask: nothing above the waterline, full just under it, gone by
+    // two thirds of the way down. Light enters at the top and is absorbed.
+    const waterY = toY(-lightLevel);
+    const fade = wg.createLinearGradient(0, waterY - 2, 0, waterY + (CAUSTIC_H - waterY) * 0.68);
+    fade.addColorStop(0, "rgba(0,0,0,0)");
+    fade.addColorStop(0.06, "rgba(0,0,0,1)");
+    fade.addColorStop(0.45, "rgba(0,0,0,.55)");
+    fade.addColorStop(1, "rgba(0,0,0,0)");
+    wg.globalCompositeOperation = "destination-in";
+    wg.globalAlpha = 1;
+    wg.fillStyle = fade;
+    wg.fillRect(0, 0, CAUSTIC_W, CAUSTIC_H);
+    wg.globalCompositeOperation = "source-over";
+
+    cg.globalAlpha = 0.12 * (motionActivity > 0.02 ? 1.2 : 1);
+    cg.drawImage(causticWebCanvas, 0, 0);
+    cg.globalAlpha = 1;
+  }
+
   ctx.save();
   ctx.transform(tan.x, tan.y, -up.x, -up.y, CX, CY);
   ctx.globalCompositeOperation = "lighter";
@@ -3857,7 +3934,9 @@ function render(time) {
     CY + displayUp.y * (displayLevel - displayUpExtent * 0.75),
     CX - displayUp.x * displayUpExtent, CY - displayUp.y * displayUpExtent);
   deep.addColorStop(0, "rgba(255,255,255,1)");
-  deep.addColorStop(1, "rgba(150,178,222,1)");
+  // Slightly toward teal at depth: water absorbs red first, so depth reads
+  // as absorption rather than as a shadow laid over the picture.
+  deep.addColorStop(1, "rgba(138,182,214,1)");
   ctx.fillStyle = deep;
   ctx.fillRect(0, 0, W, H);
   const edge = ctx.createRadialGradient(CX, CY, Math.min(RX, RY) * 0.55,
