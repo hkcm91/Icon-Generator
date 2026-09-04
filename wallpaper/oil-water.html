@@ -111,19 +111,27 @@ const CONFIG = {
    * reads as droplets that never quite build a layer; above two thirds the
    * water is the minority phase and the whole thing inverts, which is a real
    * emulsion behaviour and an odd-looking wallpaper. */
-  oilFraction: Math.max(0.08, Math.min(0.92, num("oil", 0.25))),
+  oilFraction: Math.max(0.08, Math.min(0.92, num("oil", 0.32))),
   blobs: Math.max(1, Math.min(40, Math.round(num("blobs", 7)))),
   layout: str("layout", "blobs"),
 
-  /* Water, read along the gravity axis. The same parameter with the same
-   * default as the other two pages, so a colourway is one URL across the
-   * line. */
-  ramp: (params.get("ramp") || "#0a5fd4,#1a86f0,#2aa8ee,#3ec4e9").split(","),
-  /* The oil. Ember Glow, because the pairing the whole product rests on is
-   * a warm phase suspended in a cool one — the two have to be different
-   * *hues* and not two lightnesses of the same one, or the separation the
-   * physics is doing so much work to produce is invisible. */
-  oilColour: params.get("tint") || "#e8806c",
+  /* Monochrome for now, on purpose: dark oil in pale water, so that what is
+   * being judged is the shape of the boundary and nothing else. Colour is the
+   * easiest thing on this page to have an opinion about and the least
+   * informative about whether the fluid is right.
+   *
+   * Not #000000 and not #FFFFFF, which the house palette forbids outright and
+   * which would also be wrong here — a real interface carries a rim of
+   * reflected light and a soft shadow, and neither is visible against a rail.
+   * These are the palette's own Background and Text.
+   *
+   * The colourway is one URL away and unchanged:
+   *   ?ramp=%230a5fd4,%231a86f0,%232aa8ee,%233ec4e9&tint=%23e8806c
+   * which is the Ember Glow oil in Opal water the rest of the line uses, and
+   * the pairing the product rests on — a warm phase suspended in a cool one,
+   * two hues rather than two lightnesses of one. */
+  ramp: (params.get("ramp") || "#edebe6,#e7e4dd,#e0ddd4,#d8d4ca").split(","),
+  oilColour: params.get("tint") || "#0a0a0e",
 
   /* Interfacial tension. Low and the droplets are ragged and slow to round
    * up; high and everything snaps to circles and the shake has no purchase. */
@@ -154,8 +162,12 @@ const mix = (a, b, t) => ({
 const OIL = parseHex(CONFIG.oilColour);
 const RAMP = CONFIG.ramp.map(parseHex);
 const WHITE = { r: 255, g: 255, b: 255 };
-const DEEP = { r: 8, g: 16, b: 34 };   // never #000000, and a shadow cast
-                                       // through tinted liquid is not black
+/* What a shadow cast through the liquid darkens toward. It was a fixed navy,
+ * which is right under blue water and wrong under any other, and the page now
+ * ships a pale one. Derived from the darkest stop of the ramp instead, so a
+ * colourway carries its own shadow: never #000000, because a shadow through
+ * tinted liquid is not black, and never as dark as the ink either. */
+const DEEP = mix(RAMP[RAMP.length - 1], { r: 8, g: 10, b: 14 }, 0.72);
 
 function mulberry32(a) {
   return function () {
@@ -287,12 +299,18 @@ function seedBlobs() {
   /* Radii first, because the area has to come out at the requested oil
    * fraction and the only free scale is the radius. Draw n relative sizes,
    * then scale them all so that sum(pi r^2) is the target area. */
-  /* Stratified log-uniform over a five-to-one range of radii, rather than n
-   * independent draws. Independent draws routinely return a set that happens
-   * to be all one size, and n identical circles do not read as liquid -- they
-   * read as printed dots. One sample per octave-band, jittered inside its
-   * band, guarantees the spread for every seed while still varying. */
-  const SPREAD = 5;
+  /* Stratified log-uniform over a range of radii, rather than n independent
+   * draws. Independent draws routinely return a set that happens to be all one
+   * size, and n identical circles do not read as liquid -- they read as
+   * printed dots. One sample per band, jittered inside its band, guarantees
+   * the spread for every seed while still varying.
+   *
+   * The range is twelve to one, up from five. At five the largest blob was
+   * only a bit over twice the smallest and the whole set read as one size
+   * class; twelve puts a genuinely big one on the screen with small ones
+   * beside it, which is both what a population of drops that has been through
+   * any mixing looks like and what makes the scale legible. */
+  const SPREAD = num("spread", 12);
   const rel = [];
   let relArea = 0;
   for (let i = 0; i < n; i++) {
@@ -300,7 +318,11 @@ function seedBlobs() {
     rel.push(r); relArea += Math.PI * r * r;
   }
   const scale = Math.sqrt(W2 * H2 * CONFIG.oilFraction / relArea);
-  const rad = rel.map((r) => r * scale);
+  /* Floored at three cells. A wider size range makes the smallest blob
+   * genuinely small, and below about three cells of radius a blob is all
+   * interface with no interior for the free energy to hold -- it is eaten
+   * within a second or two, so seeding it is just a way of losing oil. */
+  const rad = rel.map((r) => Math.max(3, r * scale));
 
   // Largest first: a big blob placed late has nowhere left to go.
   const order = rad.map((r, i) => i).sort((x, y) => rad[y] - rad[x]);

@@ -424,6 +424,34 @@ gone in a quarter second. Radius does most of the work — at five radii and
 2,600px/s the oil bulges by a fifth and heals over about three seconds, which
 is what a finger in a viscous liquid does.
 
+## Monochrome, for now
+
+The page ships dark oil in pale water rather than the line's Ember Glow on
+Opal. That is deliberate and temporary: colour is the easiest thing here to
+have an opinion about and the least informative about whether the fluid is
+right, and with it removed the only thing left to judge is the shape of the
+boundary.
+
+Not `#000000` on `#FFFFFF`, which the house palette forbids outright and which
+would also be wrong — a real interface carries a rim of reflected light and a
+soft shadow, and neither is visible against a rail. These are the palette's own
+Background and Text.
+
+The colourway is one URL away and unchanged:
+`?ramp=%230a5fd4,%231a86f0,%232aa8ee,%233ec4e9&tint=%23e8806c`
+
+Switching it turned up one small bug worth keeping fixed: `DEEP`, the colour a
+shadow cast through the liquid darkens toward, was a hard-coded navy. That is
+right under blue water and wrong under anything else. It is now derived from
+the darkest stop of the ramp, so a colourway carries its own shadow.
+
+**And the monochrome immediately showed something the colour was hiding.**
+Mid-shake the boundary carries sharp inward cusps — narrow V-shaped notches
+where it reverses. A real interface cannot hold one: the curvature at a cusp is
+enormous and tension retracts it in milliseconds. They are almost certainly an
+artefact of the marching-squares extraction rather than the field, and they are
+not fixed here.
+
 ## The oil has to rise
 
 The page was tuned to hold seven seeded blobs apart for as long as possible,
@@ -628,11 +656,12 @@ Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
 | --- | --- | --- |
 | `mode` | `full` | `full` fills the screen; `pouch` floats a squircle on a backdrop |
 | `grid` | `96` | Cells across, and the most important number here. It sets the smallest droplet that can exist — an interface is about three cells wide, so a bead is never smaller than four or five — and therefore whether this behaves like two liquids at all. At 56 a shaken ribbon is seven cells across with three of them interface: no bulk to neck, so it cannot break into drops |
-| `oil` | `0.25` | Oil as a fraction of the cell. Past about a third the seeded blobs run out of room to be placed without touching; past about two thirds the water is the minority phase and the emulsion inverts, which is real and looks odd |
+| `oil` | `0.32` | Oil as a fraction of the cell. Past about a third the seeded blobs run out of room to be placed without touching; past about two thirds the water is the minority phase and the emulsion inverts, which is real and looks odd |
+| `spread` | `12` | Ratio between the largest and smallest seeded blob radius |
 | `blobs` | `7` | How many oil blobs to seed. They rise and merge into a layer over about half a minute; turning the phone over is what makes new ones |
 | `layout` | `blobs` | `blobs` seeds separate drops; `layer` seeds oil floating on water, the original arrangement |
-| `ramp` | shaker's blue | The water, along the gravity axis. Same parameter and same default across all three pages |
-| `tint` | `#e8806c` | The oil. Ember Glow — the two phases have to differ in *hue*, or the separation the physics works so hard at is invisible |
+| `ramp` | pale grey | The water, along the gravity axis. Monochrome for now — see below |
+| `tint` | `#0a0a0e` | The oil. Near-black for now — see below |
 | `tension` | `1` | Interfacial tension, as a multiple of 12,000. Low is ragged and slow to round up; above about 1.5 the oil re-separates into one layer within seconds of any shake, which is right and dull |
 | `gain` | `25` | How far above life the accelerometer is amplified. This is the number that decides whether the oil holds together — see below |
 | `eps` | `1.8` | Interface half-width in cells |
