@@ -2,12 +2,19 @@ plugins {
     id("com.android.application")
 }
 
-/* The wallpaper page is not duplicated into the app. It is copied out of
- * ../wallpaper at build time, so there is one copy of it in the repository
- * and the APK cannot drift from the version you have been testing in a
- * browser. */
+/* The wallpaper pages are not duplicated into the app. They are copied out
+ * of ../wallpaper at build time, so there is one copy of each in the
+ * repository and the APK cannot drift from the version you have been testing
+ * in a browser. index.html is the shaker, lava.html the lava lamp. */
 val copyWallpaperPage by tasks.registering(Copy::class) {
     from(rootProject.file("../wallpaper/index.html"))
+    from(rootProject.file("../wallpaper/lava.html"))
+    into(layout.buildDirectory.dir("generated/wallpaperAssets"))
+}
+
+val copyWaterToyPage by tasks.registering(Copy::class) {
+    from(rootProject.file("../water-toy/index.html"))
+    rename { "water_toy.html" }
     into(layout.buildDirectory.dir("generated/wallpaperAssets"))
 }
 
@@ -19,8 +26,8 @@ android {
         applicationId = "com.hkcm.liquidshaker"
         minSdk = 21
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.16"
+        versionCode = 31
+        versionName = "1.30"
     }
 
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/wallpaperAssets"))
@@ -34,7 +41,7 @@ android {
     }
 }
 
-tasks.named("preBuild") { dependsOn(copyWallpaperPage) }
+tasks.named("preBuild") { dependsOn(copyWallpaperPage, copyWaterToyPage) }
 
 /* No dependencies. Nothing here needs AndroidX: the service is a
  * WallpaperService, a WebView and a SensorManager, all of them platform. That

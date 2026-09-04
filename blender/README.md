@@ -19,7 +19,14 @@ answering a press rather than a shake, and
 has a baked counterpart here, for the same reason: every frame of both is a
 response to where a finger was.
 
-## Sibling scene
+## Sibling scenes
+
+A second wallpaper is built from this one's skeleton:
+**[LAVA_LAMP.md](./LAVA_LAMP.md)**, a lava lamp. Same conventions, same flag
+vocabulary, different liquid — and because wax convects rather than sloshes,
+its motion is a keyframed metaball family instead of a fluid sim, so it has no
+bake, no cache, no pre-roll, and a loop that closes exactly rather than one
+crossfaded shut.
 
 [`water_ring_toy.py`](./water_ring_toy.py) uses this file as its template —
 importing its plan curve, pillow loft, fill-line boolean and render plumbing

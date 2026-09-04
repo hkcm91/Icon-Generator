@@ -8,7 +8,7 @@ This is the half that reacts. The [Blender pipeline](../blender) bakes the
 hero loop at full render quality, but a baked loop plays back identically no
 matter how hard you shake the phone — the two are complementary.
 
-## Sibling page
+## Sibling pages
 
 [`bubble-wrap.html`](./BUBBLE-WRAP.md) is the second interactive wallpaper in
 the line: a full sheet of bubble wrap that pops under a thumb. It shares this
@@ -23,13 +23,30 @@ one. Bubble wrap is *press*: one finger at a time, at a place you choose. See
 [BUBBLE-WRAP.md](./BUBBLE-WRAP.md).
 
 [`oil-water.html`](./OIL-WATER.md) is the third: a sealed cell holding several
-round blobs of oil in water, which deform and drift when the phone is shaken or
-turned and slowly merge into fewer, larger ones. It is the closest of the three to this page — it took this file's
-velocity solver, shake model and colourways nearly unchanged — but not as
-close as the plan claimed. This page's second phase is a dye, which marbles;
-oil and water is a phase field, which does not mix. That is a term in the
-equation of motion, not a constant. There is a 25-second clip of it being
-shaken and turned at [`docs/video/oil-water.mp4`](../docs/video/oil-water.mp4).
+round blobs of oil in water, which rise, deform when the phone is shaken or
+turned, and merge into fewer, larger ones. Turning the phone over is the verb
+that matters — it leaves the oil underneath the water, which fingers and
+pinches into fresh drops. It is the closest of the three to this page, having
+taken this file's velocity solver and shake model nearly unchanged, but not as
+close as the plan claimed: this page's second phase is a dye, which marbles,
+and oil and water is a phase field, which does not mix. That is a term in the
+equation of motion, not a constant. It currently ships monochrome on purpose,
+so that what is being judged is the shape of the boundary; there is a
+34-second clip at [`docs/video/oil-water.mp4`](../docs/video/oil-water.mp4).
+
+`lava.html` is the fourth: the [Blender lava lamp](../blender/LAVA_LAMP.md)
+made to answer the phone. Same conventions, same `window.__shaker` interface,
+so the Android host below runs either. Tilt the phone and the wax rises
+toward whichever way is up while the heater stays at the bottom of the
+screen, so on a tilt it pools on the low side and climbs the high wall.
+Twist it and the liquid spins; shake it and the blobs are thrown; tap the
+glass and they flinch. The physics is a port of the lamp's motion model
+(thermal buoyancy at terminal velocity, lumped heat transfer) and the
+drawing is a metaball field shaded as glass in a fragment shader.
+
+`node scripts/lava-wallpaper-test.mjs` drives it in headless Chromium
+through the same calls the service makes and checks the wax answers gravity
+and the twist.
 
 ## Try it
 
@@ -166,6 +183,13 @@ measured through a flip, the flow decayed from 357px/s to 29 within five
 seconds and then sat there while the glitter drifted down. Tripled, it holds
 at 51px/s indefinitely and carries the glitter twice as far in the same time.
 
+That strength was later brought back down. With the fine microglitter in the
+mix, the plumes it produces read as hard vertical columns of dust hanging in
+the body for a minute after a shake rather than as liquid motion. At 0.05 the
+flecks settle evenly and the columns are gone. The columns survive
+`bubbles=0` and survive disabling the wall recycling, and vanish the moment
+the coupling is lowered, so this is the term.
+
 It could not have been raised before, because raising it drove a bulk drift
 that swept the glitter into one end — which is also worth knowing about the
 old behaviour, because some of the drama of a flip was that artefact rather
@@ -184,29 +208,6 @@ sloshing *is* bulk momentum and a vessel tipped over genuinely has its
 contents moving one way, so only the part that persists is removed: a
 running mean over a second and a half, which a half-second slosh barely
 registers in and a steady drift saturates. It takes the drift to 2.7px/s.
-
-**Fizz appears where the liquid is being worked, and nowhere else.** A
-liquid holds dissolved gas, and gas comes out of solution where the pressure
-drops — and in a stirred liquid the lowest pressure is the core of a vortex.
-That is why a propeller trails a line of bubbles, and why fizz in a shaken
-vessel shows up in the curls rather than evenly through the volume. So it is
-seeded by vorticity: sample eight points, take the one sitting in the
-strongest swirl, and only while there is agitation to produce it. The current
-mix deliberately keeps that signal restrained: no fizz at all while still,
-short three-to-five-bubble puffs during a shake, and a hard ceiling of 180.
-Their 0.9–1.9 second lifetime lets the eddy trail disappear promptly instead
-of hanging around as a second field of glitter.
-
-It is emitted in puffs rather than one particle at a time, because
-cavitation follows a vortex line and the gas comes out along it — spawning
-singly gave an even dust that read as more glitter rather than as bubbles
-being torn out of the liquid.
-
-It is a separate population from the ordinary bubbles, not more of them. A
-bubble in the main pool is a persistent object with a size, a film and a
-life cycle; fizz is a puff that lasts a second or two and is gone. Being
-small enough to follow the flow almost exactly, what it draws is the shape
-of the eddy that made it.
 
 **Bubbles make the liquid lighter where they gather.** A bubbly liquid
 weighs less than the same liquid without bubbles, and where that mixture
@@ -332,7 +333,7 @@ crosses the full thickness of liquid before it reaches the eye, and putting
 those flakes under the tint layer is that absorption, for free. Tilting also
 shifts the layers against each other, since the viewing angle changes. The
 native host's Z accelerometer channel now drives spring-damped motion through
-the thickness as well: glitter, bubbles and fizz lag a normal shake, settle
+the thickness as well: glitter and bubbles lag a normal shake, settle
 into different depth layers, and reorder as they cross the mid-plane. A
 tilted surface also exposes a translucent rear rim, so the meniscus reads as
 the top of a volume rather than a line painted over the liquid.
@@ -412,7 +413,8 @@ under.** Bubbles used to reappear at a uniformly random point deep in the
 liquid, which is nucleation out of nowhere. A bubble born while the shaker
 is being agitated now starts just beneath the waterline and is driven *down*
 into the body by the plunging surface before climbing back, so a shake
-produces a plume of fizz instead of a fixed population quietly recycling.
+produces a plume of fine bubbles instead of a fixed population quietly
+recycling.
 At rest the trickle comes off the glass, where a real vessel has its
 nucleation sites. Measured: 17% of births are entrained at the surface when
 the shaker is still, 87% while it is being shaken.
@@ -432,11 +434,11 @@ through.
 **Path instability.** Below a critical size a bubble rises dead straight;
 above it the wake sheds vortices alternately and the bubble zigzags across
 its own rise. That threshold is real and was simply absent — every bubble
-down to the finest fizz wove from side to side at a rate drawn at random
-when it was born, which is why the fizz shimmered. The shedding frequency
+down to the finest wove from side to side at a rate drawn at random
+when it was born, which is why the small bubbles shimmered. The shedding frequency
 now follows speed over diameter, in the Strouhal form, so a bubble that
 stalls in the flow stops weaving and a fast one weaves quickly. Measured in
-still liquid: fizz generates 0.0px/s of lateral motion, large bubbles
+still liquid: the finest bubbles generate 0.0px/s of lateral motion, large bubbles
 25.8px/s at 2.9Hz — and when the rise speed fell by a factor of three in a
 later run, the frequency fell with it, to 0.9Hz.
 
@@ -547,6 +549,21 @@ look mechanically empty.
 body with a bias toward the downhill glass. The opening frame therefore reads
 as a shaker that has been resting, while still leaving enough suspended foil
 for the first movement to catch and circulate.
+
+**Microglitter that a shake leaves on the glass is recycled.** A shake's
+shove becomes a roll under the pressure projection, the roll centrifuges
+dense grains onto the walls, and the damped no-slip layer there gives them
+nothing to ride back off on. After a hard shake the outer 14% of the width
+held 30–50% of all glitter a full minute later, drawn as a bright column down
+one wall. Every fluid-side lever tried — the wall shed rate, the wall drag,
+the twist response — either helped only for gentle shakes or helped on one
+seed and not the next. So the micro layer, which is already an approximation
+(batched, 15 Hz, sub-pixel), carries one rule that is not physics: a grain
+that has sat in that band at rest for longer than `MICRO_WALL_DWELL` is
+treated as stuck and dropped back into the body to fall again, at a rate
+that fades the column out over a couple of seconds rather than popping it.
+Grains resting on the bed near the floor are exempt, because a corner of
+settled glitter is real.
 
 **A flake must not hinder itself.** The concentration field is built by
 dropping each flake's whole area into the cell it sits in, and a big flake
@@ -725,9 +742,8 @@ Append as query parameters, e.g. `index.html?fill=0.7&stars=320`.
 | `n` | `4` | Corner squareness: 2 circular, 4 squircle, 8 nearly square |
 | `corner` | `12%` of the short edge | Corner radius in pixels (`full` mode) |
 | `stars` | `1650` | Medium and hero glitter count |
-| `micro` | `17850` | Cached microglitter count; with `stars`, 19,500 visible pieces |
-| `bubbles` | `112` | Persistent air-bubble count; shake-generated fizz is separate |
-| `fizz` | `180` | Ceiling on the short-lived fine fizz spawned by strong vortices |
+| `micro` | `2000` | Cached microglitter count; with `stars`, 4,000 visible pieces. Was 20,000, which read as white static, then 6,000, which still filled the body |
+| `bubbles` | `150` | Persistent air-bubble count. Large ones are capped at five, so most of these are fine beads |
 | `scale` | `0.78` | Container size against the short edge (`pouch` mode only) |
 
 Drop `stars` to about 300 and `bubbles` to 30 on a low-end device; the
@@ -806,9 +822,8 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Orientation changes how fast a flake falls | 1.8x between edge-on and face-on, population mean unchanged |
 | Flake tumbling tracks the flow | 0.68 rad/s mean spin at rest, 2.19 under a shake |
 | Specular stays with the light | bright band holds screen orientation across 8 flake rotations |
-| Frame cost held still | median 31.5ms, and no fizz on screen at all |
+| Frame cost held still | median 31.5ms |
 | Frame cost under continuous shake | median 37ms (software rasteriser, no GPU) |
-| What the fizz costs | about 5ms, and only while the shaker is being shaken |
 | What the bezel costs | 20ms reading from the live canvas, 0.3-0.7ms reading from a copy |
 | What 40 more bubbles cost | about 1ms, inside the run-to-run noise |
 | Depth of field and aerial perspective | cost nothing: 24.5ms before, 23.6ms after |
@@ -816,7 +831,7 @@ Measured, with a seeded PRNG and a hand-driven clock so runs are comparable:
 | Bubble rise and response time agree | v_t/(3g·tau) = 1.000 across the population |
 | Buoyancy separates the phases, held still | bubbles climb 19.4px/s, flakes settle 4.8px/s |
 | Added mass makes bubbles lead the flow | lag 90px/s without the term, 17px/s with it; flakes lag 84px/s |
-| Weave is gated on size | fizz 0.0px/s lateral, large bubbles 25.8px/s at 2.9Hz |
+| Weave is gated on size | finest bubbles 0.0px/s lateral, large bubbles 25.8px/s at 2.9Hz |
 | Air is entrained at the surface | 17% of births at the waterline when still, 87% while shaken |
 | Bubbles stay out of the headspace | 0 above the waterline over 90s, at rest and shaken |
 
