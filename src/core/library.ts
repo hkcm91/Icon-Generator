@@ -89,6 +89,17 @@ export interface IconItem {
   error?: string;
 }
 
+export type GenerationItemPatch = Omit<Partial<IconItem>, 'selected'>;
+
+/** Generation lifecycle updates must never erase a user's live card selection. */
+export function applyGenerationItemPatch(
+  items: IconItem[],
+  id: string,
+  change: GenerationItemPatch,
+): IconItem[] {
+  return items.map((item) => (item.id === id ? { ...item, ...change } : item));
+}
+
 /**
  * Bundled Material and brand glyphs identify a subject; they are never finished
  * artwork. The model redraws that subject in the family's requested style.

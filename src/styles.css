@@ -541,6 +541,7 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
 }
 .card-pick input { accent-color: var(--accent); }
 .card-art { position: relative; }
+.card-select-target { cursor: pointer; }
 .card-fullscreen {
   position: absolute;
   top: 5px;

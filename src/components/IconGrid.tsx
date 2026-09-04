@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, hasNativeAlpha, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
+  applyGenerationItemPatch,
   containerGenerationUsesAlpha,
   modelGlyphReferenceSource,
   parseLibrary,
@@ -10,6 +11,7 @@ import {
   frameVariantTarget,
   stableFrameIndex,
   type IconItem,
+  type GenerationItemPatch,
   type ContainerMode,
 } from '../core/library';
 import LibraryPicker from './LibraryPicker';
@@ -261,16 +263,14 @@ export default function IconGrid(props: Props) {
             const image = await imageFromUrl(`${result.url}?revision=${card.nextRevision}`);
             const nextRevision = Math.max(item.revision + 1, card.nextRevision);
             props.onItemGlyph(item.id, image, nextRevision);
-            current = current.map((candidate) => candidate.id === item.id ? {
-              ...candidate,
+            current = applyGenerationItemPatch(current, item.id, {
               status: 'ready' as const,
               revision: nextRevision,
               activeRevision: nextRevision,
               outputMode: card.outputMode,
-              selected: false,
               approved: false,
               error: undefined,
-            } : candidate);
+            });
             importedLocalResults.current.add(result.id);
             imported += 1;
           }
@@ -303,8 +303,16 @@ export default function IconGrid(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localJob?.id, localBridge.available, props.imageStoreLoaded]);
 
+  const commitItems = (items: IconItem[]) => {
+    // Keep async queue/import updates and direct card interactions on the same
+    // current snapshot. Otherwise a later generation status update can replay
+    // a captured array and silently undo a checkbox click.
+    itemsRef.current = items;
+    props.onItems(items);
+  };
+
   const patch = (id: string, change: Partial<IconItem>) =>
-    props.onItems(props.items.map((item) => (item.id === id ? { ...item, ...change } : item)));
+    commitItems(itemsRef.current.map((item) => (item.id === id ? { ...item, ...change } : item)));
 
   const importFile = async (files: FileList | null) => {
     const file = files?.[0];
@@ -445,16 +453,14 @@ export default function IconGrid(props: Props) {
         const jobCard = localJob?.cards.find((card) => card.id === item.id);
         const nextRevision = Math.max(item.revision + 1, jobCard?.nextRevision ?? 0);
         props.onItemGlyph(item.id, image, nextRevision);
-        current = current.map((candidate) => candidate.id === item.id ? {
-          ...candidate,
+        current = applyGenerationItemPatch(current, item.id, {
           status: 'ready' as const,
           revision: nextRevision,
           activeRevision: nextRevision,
           outputMode: jobCard?.outputMode ?? codexOutputMode(props.containerMode),
-          selected: false,
           approved: false,
           error: undefined,
-        } : candidate);
+        });
         importedIds.add(item.id);
       } catch {
         unmatched.push(file.name);
@@ -524,12 +530,10 @@ export default function IconGrid(props: Props) {
     const queuedItems: IconItem[] = props.items.map((item) =>
         ids.has(item.id) ? { ...item, status: 'queued' as const, error: undefined } : item,
       );
-    props.onItems(queuedItems);
+    commitItems(queuedItems);
 
-    let current = queuedItems;
-    const apply = (id: string, change: Partial<IconItem>) => {
-      current = current.map((item) => (item.id === id ? { ...item, ...change } : item));
-      props.onItems(current);
+    const apply = (id: string, change: GenerationItemPatch) => {
+      commitItems(applyGenerationItemPatch(itemsRef.current, id, change));
     };
 
     const results = await runPool(
@@ -583,14 +587,11 @@ export default function IconGrid(props: Props) {
               ? 'transparent'
               : needsPaidGeneration(item) ? 'complete' : 'composed';
           props.onItemGlyph(item.id, layer, nextRevision);
-          // Deselect on success, so the next "Generate selected" targets only
-          // what still needs doing.
           apply(item.id, {
             status: 'ready',
             revision: nextRevision,
             activeRevision: nextRevision,
             outputMode,
-            selected: false,
             approved: false,
           });
         } catch (error) {
@@ -917,7 +918,14 @@ export default function IconGrid(props: Props) {
                 />
               </label>
 
-              <div className="card-art">
+              <div
+                className="card-art card-select-target"
+                title={`Click to ${item.selected ? 'deselect' : 'select'} ${item.name}`}
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest('button')) return;
+                  patch(item.id, { selected: !item.selected });
+                }}
+              >
                 <RenderedIcon
                   spec={props.spec}
                   compose={composeFor(item)}

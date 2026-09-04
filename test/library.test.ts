@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  applyGenerationItemPatch,
   dedupe,
   defaultGlyphSourceMode,
   makeItem,
@@ -15,6 +16,19 @@ import {
 import { runPool } from '../src/core/queue';
 
 beforeEach(() => resetIdCounter());
+
+describe('generation card updates', () => {
+  it('preserves a live selection while applying ready-state progress', () => {
+    const item = makeItem('Moon', { selected: true, status: 'generating' });
+    const updated = applyGenerationItemPatch([item], item.id, {
+      status: 'ready',
+      revision: 1,
+      activeRevision: 1,
+    });
+
+    expect(updated[0]).toMatchObject({ selected: true, status: 'ready', revision: 1 });
+  });
+});
 
 describe('optional open-frame preparation', () => {
   it('falls back to one-pass complete icons until a reusable frame exists', () => {
