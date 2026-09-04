@@ -618,7 +618,19 @@ function stepPoles(t, dt) {
    * pool apart into a spray of beads. Held a little over the surface, the same
    * ring straddles it, and what it pulls on is the boundary. */
   const GRAB = surface - 14 * OVER;
-  const TOP = surface - 150 * OVER;              // further than it usually gets
+  /* How far up a magnet is allowed to carry, and how fast it may travel to do
+   * it. Raised together: the ceiling alone does nothing, because the magnet
+   * cannot reach it inside the phase, and the speed alone does nothing,
+   * because there is nowhere to go. Together they are the difference between a
+   * crest that stands a third of the way up the screen and a column that
+   * stands halfway — which is the only presence available without more liquid,
+   * and more liquid is what the solver will not take.
+   *
+   * Both scale with the resolution, for the same reason the drive does: a
+   * coarse liquid cannot be carried as far before it tears. Carrying a tablet's
+   * as far as a phone's dropped 820x1180 to 19% of drops in one body with two
+   * of them out of the cell. */
+  const TOP = surface - mix(150, 260, drive()) * OVER;
 
   /* The magnet's standoff while it is working, and while it is away.
    *
@@ -661,7 +673,7 @@ function stepPoles(t, dt) {
    * and the same traction extrudes it straight up. That one factor is the
    * difference between sideways and vertical; it is not a magnitude. */
   const REACH = NEAR_Z / Math.SQRT2 * 1.5 * OVER;
-  const RATE = 190 * OVER * dt;                  // px per second, in these units
+  const RATE = mix(190, 260, drive()) * OVER * dt;   // px per second, in these units
   const WIN = refU() * 0.17;                     // how wide "under it" is
 
   for (let i = 0; i < ambientPoles; i++) {

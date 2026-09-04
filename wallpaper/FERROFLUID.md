@@ -608,21 +608,28 @@ What made it survive undetected so long is that every viewport the verifier
 tested had about a phone's *area*, the landscape one included, that being the
 same screen turned over. The four large ones are there now.
 
-**More *coverage* is still blocked, though the reach is no longer the problem.**
-Choreographing the magnets took the crest from 29% of the screen's height to
-52% at its peak — the liquid now goes most of the way up the page when a magnet
-carries it — but the ink on screen averaged over a minute barely moved, 19.6%
-against 21%. That is arithmetic, not a failure: it is the same volume of liquid
-in a different shape, and a wallpaper that is a fifth black stays a fifth black
-however dramatically it moves.
+**More *coverage* is still blocked, and now the reason is exact.** Raising
+`fill` from 0.185 to 0.30 puts the same 1800 drops over a 62% bigger pool,
+which takes the spacing from 6.6 px to 8.4 — throwing away precisely the
+resolution that made it look like a liquid rather than a swarm, and landing in
+the worst of both: a coarse liquid in a deep pool. Measured, it fails outright:
+four configurations lose drops out of the cell, the wallpaper viewport itself
+drops to 40% of drops in one body with six escaped, and 600×1000 to 27% with
+fifty-eight. `fill` and `drops` are not independent and never were; holding the
+spacing at 0.30 fill needs about 2900 drops, which is past the frame budget.
 
-The only way to more coverage is more liquid, and more liquid is what the
-solver will not take: raising `fill` from 0.185 to 0.30 measured out at 33%
-coverage, and also tore the pool apart under taps and at a fifth of the tested
-sizes. Raising the drop count to hold the spacing constant fixes some of that
-and not the rest. This is a solver problem rather than a parameter problem, and
-the parameters are `fill` with `drops` raised alongside it if you want to try:
-they are not independent, and `fill` alone is a trap.
+**Height, though, is free, and that is where the presence came from.** The
+silhouette does not have to hold more ink to occupy more screen — the same
+liquid standing taller does it. Letting the magnets carry to 260 px above the
+surface instead of 150, and travel at 260 px/s instead of 190, takes the crest
+from about a third of the way up the screen to about half. Neither number does
+anything alone: the ceiling alone is unreachable inside the phase, and the
+speed alone has nowhere to go.
+
+Both scale with the resolution, for the same reason the drive does — a coarse
+liquid cannot be carried as far before it tears. Carrying a tablet's as far as
+a phone's dropped 820×1180 to 19% of drops in one body with two out of the
+cell; interpolated, it is back to 99% with none.
 
 **It has never run on a handset.** There is no device or emulator here. Every
 number above is a headless software rasteriser, which is the wrong machine in
