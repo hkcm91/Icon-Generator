@@ -526,6 +526,66 @@ not one. The conserved quantity is the mean of φ, and across four shakes and
 four flips it holds at −0.496 against a target of −0.49644 — a drift under
 0.002. Read `mean` against `targetMean`, never `oilFraction`, for mass.
 
+## The flow was not incompressible when it moved
+
+The Courant fix above was real and not enough. What was left is that the
+pressure projection ran a fixed twelve Gauss–Seidel sweeps, and twelve is the
+right order of magnitude for a cell at rest and nowhere near enough for one in
+motion. Measured as the divergence left in the velocity field, in the same
+units as the Courant number so the two are comparable:
+
+| sweeps | at rest | during a shake | during a flip | oil area swing in a shake |
+| --- | --- | --- | --- | --- |
+| 12 | 0.018 | **0.404** | 0.096 | **11%** |
+| 40 | 0.012 | 0.228 | 0.025 | 8% |
+| 120 | 0.010 | 0.048 | 0.023 | 2% |
+
+A leftover divergence of 0.4 is a flow compressing and expanding as fast as it
+is moving, and for a two-phase field that is visible: **the oil swells and
+shrinks by a tenth of itself while the cell is being shaken.** That is the last
+of "it looks great until it goes fast", and it is the third limit on this page
+found by running a fixed guess instead of checking the answer.
+
+Iterating to convergence with relaxation alone is not affordable. Turning
+Gauss–Seidel into SOR and running until the residual fell below tolerance did
+fix the physics — divergence 0.039, oil swing 2% — at two hundred sweeps and
+180ms a frame, which is five frames a second during exactly the gesture the
+page exists for.
+
+The reason is structural. A relaxation sweep moves information one cell, so
+removing an error that spans the grid takes as many sweeps as the grid is
+wide, and the error here *is* grid-spanning: a shake tilts the whole cell, so
+the pressure answering it is the lowest mode there is. High-frequency error,
+which relaxation kills in three or four sweeps, was never the problem.
+
+The projection is now a **multigrid V-cycle**: smooth to kill the high
+frequencies, restrict the residual to a grid half the size where what is left
+is twice as high-frequency and a sweep goes twice as far, recurse to a grid
+small enough to solve outright, interpolate the correction back, smooth again.
+Each level costs a quarter of the one above, so a V-cycle is under twice one
+fine sweep. Four cycles, or fewer once the residual is small.
+
+Two things about it were wrong before they were right, and both are worth
+recording:
+
+- **Every wall here is Neumann, so the coarse problem is singular.** Adding a
+  constant to the pressure changes nothing, so the operator has a null space
+  and a right-hand side with a non-zero mean has no solution at all.
+  Relaxation does not fail politely on one — it grows the constant without
+  bound, and the first version overflowed to a velocity of 7×10¹⁶ inside a
+  frame. The mean is now removed from the coarse right-hand side and from the
+  correction.
+- **The restriction scale factor is 1, not 4.** Reasoning about it as a
+  differential operator says the coarse grid needs four times the residual,
+  because its cells are twice as wide. Reasoning about it as the matrix
+  equation it actually is says 1. Measured residual reduction over a V-cycle
+  at 4, 2, 1, 0.5, 0.25: 2.0×, 3.5×, **5.1×**, 4.4×, 3.7×. At 4 the residual
+  rose on half the cycles, which is what an over-scaled correction looks like.
+
+Result: divergence 0.008 at rest, 0.083 in a shake, 0.026 in a flip, against
+0.018 / 0.404 / 0.096 before. The oil area swing in a shake is 2–3% where it
+was 11%.
+
 ## Two things the metrics get wrong
 
 **`skinFraction` punishes small drops.** It measures the fraction of oil that
@@ -579,6 +639,8 @@ Append as query parameters, e.g. `oil-water.html?oil=0.6&tension=0.4`.
 | `mob` | `0.25` | Phase-field relaxation rate. Its ceiling is Cahn–Hilliard stability, `dt·M·eps²·64 < 2` |
 | `smooth` | `10` | Half-width, in cells, of the low-pass along the contour. Deliberately about four times what removes the lattice bumps |
 | `maxsub` | `24` | Most pieces the advection trajectory may be split into on one frame |
+| `cycles` | `4` | Most multigrid V-cycles the pressure solve may run on one frame |
+| `cfl` | `0.5` | Cells the fastest fluid is allowed to cross per trajectory piece |
 | `buoyancy` | `1` | Density difference. At 0 the fluids weigh the same, they never separate, and shaking does literally nothing |
 | `visc` | `1` | Multiplies `nu`. Momentum diffusivity sets how fast droplets rise and, through it, how many ridges the oil's outline carries |
 | `nu` | `45` | Momentum diffusivity in cells²/s. Sets how many ridges the outline carries, and above about 60 it suppresses the fingering that makes drops — see above |
@@ -631,6 +693,7 @@ Driven headless in Chromium at 393×852 on the virtual clock described above.
 | Property | Result |
 | --- | --- |
 | Determinism from `seed`, at a fixed sensor rate | three runs bit-identical |
+| Divergence left after the pressure solve | 0.008 at rest, 0.083 in a shake, 0.026 in a flip, against 0.018 / 0.404 / 0.096 with the old fixed twelve sweeps. Oil area swing in a shake 2–3%, was 11% |
 | Courant number held | 0.28 at rest, 0.45 at the end of a shake, 0.47 during a flip, against raw 0.57 / 2.7 / 3.3. Trajectory split into 1 piece at rest, 6 in a shake, 7 in a flip |
 | Mass, over four shakes and four flips | mean φ holds at −0.496 against a target of −0.49644; drift under 0.002 throughout |
 | Ridges four seconds after a shake | 1.9, at a contour low-pass of 10 cells; it was 4.9 at 2.5 cells |

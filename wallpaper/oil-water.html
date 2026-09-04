@@ -183,7 +183,7 @@ let W = 0, H = 0, DPR = 1, CX = 0, CY = 0, RX = 0, RY = 0;
  */
 let GW = 0, GH = 0, NC = 0, cell = 0;
 let u, v, u0, v0;            // velocity, px/s, and its scratch
-let p, div;                  // pressure and divergence
+let div;                     // divergence; the pressure lives in the multigrid
 let phi, phi0, lap, mu;      // the phase field and its working set
 let curl;                    // local rotation, for vorticity confinement
 let sc1, sc2;                // scratch for the second-order advection
@@ -204,7 +204,8 @@ function buildGrid() {
   NC = GW * GH;
   u = new Float32Array(NC); v = new Float32Array(NC);
   u0 = new Float32Array(NC); v0 = new Float32Array(NC);
-  p = new Float32Array(NC); div = new Float32Array(NC);
+  div = new Float32Array(NC);
+  mg = null;
   phi = new Float32Array(NC); phi0 = new Float32Array(NC);
   lap = new Float32Array(NC); mu = new Float32Array(NC);
   curl = new Float32Array(NC);
@@ -690,7 +691,6 @@ const WALL_DRAG = 1.6;     // 1/s, in the cells touching glass
  * ridge count from 6 to 4 and costs nothing else; kept as a knob because the
  * argument for it is sound for a single-phase fluid, just not for this one. */
 const VORTICITY = num("vort", 0);
-const PROJECT_ITERS = 12;
 
 /* The phase field's own constants.
  *
@@ -902,36 +902,198 @@ function bounds() {
  * pressure cannot accumulate into anything — it can only be a better initial
  * guess than zero, which it always is.
  */
-function project() {
-  for (let j = 1; j < GH - 1; j++) {
-    for (let i = 1; i < GW - 1; i++) {
-      const k = j * GW + i;
-      div[k] = -0.5 * cell * (u[k + 1] - u[k - 1] + v[k + GW] - v[k - GW]);
-    }
+/* The pressure projection, as a multigrid V-cycle.
+ *
+ * This was twelve Gauss-Seidel sweeps, and twelve is the right order of
+ * magnitude for a cell at rest and nowhere near enough for one in motion.
+ * Measured as the divergence left in the velocity field, in the same units as
+ * the Courant number so the two are comparable:
+ *
+ *   sweeps    at rest   during a shake   during a flip   oil area swing
+ *     12       0.018        0.404            0.096         11% in a shake
+ *     40       0.012        0.228            0.025          8%
+ *    120       0.010        0.048            0.023          2%
+ *
+ * A leftover divergence of 0.4 is a flow compressing and expanding as fast as
+ * it is moving, and for a two-phase field that is visible: the oil swells and
+ * shrinks by a tenth of itself while the cell is being shaken. That is the
+ * last of "it looks great until it goes fast", and it is the third limit on
+ * this page that was being missed by running a fixed guess instead of
+ * checking.
+ *
+ * Iterating to convergence with relaxation alone is not affordable. Turning
+ * Gauss-Seidel into SOR and running until the residual fell below tolerance
+ * did fix the physics -- divergence 0.039, oil swing 2% -- at two hundred
+ * sweeps and 180ms a frame, which is five frames a second during exactly the
+ * gesture the page exists for.
+ *
+ * The reason is structural rather than a matter of tuning. A relaxation sweep
+ * moves information one cell, so removing an error that spans the grid takes
+ * as many sweeps as the grid is wide, and the error here *is* grid-spanning:
+ * a shake tilts the whole cell, so the pressure that answers it is the lowest
+ * mode there is. High-frequency error, which relaxation kills in three or four
+ * sweeps, was never the problem.
+ *
+ * Multigrid is the answer to precisely that. Smooth a few times to kill the
+ * high frequencies, restrict what is left to a grid half the size where the
+ * remaining error is twice as high-frequency and a sweep goes twice as far,
+ * recurse to a grid small enough to solve outright, then interpolate the
+ * correction back and smooth again. Each level costs a quarter of the one
+ * above, so a whole V-cycle is under twice one fine sweep, and it removes
+ * error at every wavelength at once.
+ */
+const MG_LEVELS = 5;
+const MG_PRE = 2, MG_POST = 2;
+const MG_OMEGA = 1.4;
+const MG_SCALE = num("mgscale", 1);
+const MG_MAX_CYCLES = num("cycles", 4);
+const MG_TOL = 0.02;           // cells per step of leftover divergence
+let mg = null;                 // per-level { w, h, p, b, r }
+let lastIters = 0;
+
+function buildMultigrid() {
+  mg = [];
+  let w = GW, hh = GH;
+  for (let l = 0; l < MG_LEVELS; l++) {
+    mg.push({ w, h: hh, p: new Float32Array(w * hh), b: new Float32Array(w * hh),
+              r: new Float32Array(w * hh) });
+    if (w < 8 || hh < 8) break;
+    w = (w >> 1) + 1; hh = (hh >> 1) + 1;
   }
-  for (let it = 0; it < PROJECT_ITERS; it++) {
-    for (let j = 1; j < GH - 1; j++) {
-      for (let i = 1; i < GW - 1; i++) {
-        const k = j * GW + i;
-        p[k] = (div[k] + p[k - 1] + p[k + 1] + p[k - GW] + p[k + GW]) * 0.25;
+}
+
+/** SOR sweeps on one level, with the Neumann wall carried each time. */
+function mgSmooth(L, n) {
+  const { w, h, p: pp, b } = mg[L];
+  for (let it = 0; it < n; it++) {
+    for (let j = 1; j < h - 1; j++) {
+      for (let i = 1; i < w - 1; i++) {
+        const k = j * w + i;
+        const t = (b[k] + pp[k - 1] + pp[k + 1] + pp[k - w] + pp[k + w]) * 0.25;
+        pp[k] += MG_OMEGA * (t - pp[k]);
       }
     }
-    // Neumann boundary: the wall's pressure equals its neighbour's, which is
-    // what "no flow through the wall" means for the pressure equation.
-    for (let j = 1; j < GH - 1; j++) {
-      p[j * GW] = p[j * GW + 1];
-      p[j * GW + GW - 1] = p[j * GW + GW - 2];
-    }
-    for (let i = 0; i < GW; i++) {
-      p[i] = p[i + GW];
-      p[(GH - 1) * GW + i] = p[(GH - 2) * GW + i];
+    for (let j = 1; j < h - 1; j++) { pp[j * w] = pp[j * w + 1]; pp[j * w + w - 1] = pp[j * w + w - 2]; }
+    for (let i = 0; i < w; i++) { pp[i] = pp[i + w]; pp[(h - 1) * w + i] = pp[(h - 2) * w + i]; }
+  }
+}
+
+/** Residual b - A p, where A is the five-point Laplacian used above. */
+function mgResidual(L) {
+  const { w, h, p: pp, b, r } = mg[L];
+  let m = 0;
+  r.fill(0);
+  for (let j = 1; j < h - 1; j++) {
+    for (let i = 1; i < w - 1; i++) {
+      const k = j * w + i;
+      const v = b[k] + pp[k - 1] + pp[k + 1] + pp[k - w] + pp[k + w] - 4 * pp[k];
+      r[k] = v;
+      const a = v < 0 ? -v : v; if (a > m) m = a;
     }
   }
+  return m;
+}
+
+/** Full-weighting restriction of the residual onto the coarse right-hand side. */
+function mgRestrict(L) {
+  const f = mg[L], c = mg[L + 1];
+  c.p.fill(0); c.b.fill(0);
+  for (let j = 1; j < c.h - 1; j++) {
+    for (let i = 1; i < c.w - 1; i++) {
+      const fi = i * 2, fj = j * 2;
+      if (fi >= f.w - 1 || fj >= f.h - 1) continue;
+      const k = fj * f.w + fi;
+      const centre = f.r[k];
+      const edge = f.r[k - 1] + f.r[k + 1] + f.r[k - f.w] + f.r[k + f.w];
+      const diag = f.r[k - f.w - 1] + f.r[k - f.w + 1] + f.r[k + f.w - 1] + f.r[k + f.w + 1];
+      /* Scaled by four because the coarse Laplacian is written in coarse cell
+       * widths, which are twice the fine ones and so four times the area. */
+      c.b[j * c.w + i] = (4 * centre + 2 * edge + diag) * 0.0625 * MG_SCALE;
+    }
+  }
+  /* Every wall here is Neumann, so the coarse problem is singular: adding a
+   * constant to the pressure changes nothing, which means the operator has a
+   * null space and a right-hand side with a non-zero mean has no solution at
+   * all. Relaxation does not fail politely on one -- it grows the constant
+   * without bound, and the first version of this multigrid overflowed to a
+   * velocity of 7e16 within a frame. The mean is removed from the right-hand
+   * side to make it solvable, and from the correction so that the constant
+   * that is left, which affects no gradient, cannot drift. */
+  let mean = 0, n = 0;
+  for (let j = 1; j < c.h - 1; j++)
+    for (let i = 1; i < c.w - 1; i++) { mean += c.b[j * c.w + i]; n++; }
+  if (n) { mean /= n;
+    for (let j = 1; j < c.h - 1; j++)
+      for (let i = 1; i < c.w - 1; i++) c.b[j * c.w + i] -= mean; }
+}
+
+/** Remove the constant from a level's solution; see the note in mgRestrict. */
+function mgZeroMean(L) {
+  const { w, h, p: pp } = mg[L];
+  let mean = 0, n = 0;
+  for (let j = 1; j < h - 1; j++) for (let i = 1; i < w - 1; i++) { mean += pp[j * w + i]; n++; }
+  if (!n) return;
+  mean /= n;
+  for (let k = 0; k < pp.length; k++) pp[k] -= mean;
+}
+
+/** Bilinear prolongation of the coarse correction back onto the fine level. */
+function mgProlong(L) {
+  const f = mg[L], c = mg[L + 1];
+  for (let j = 1; j < f.h - 1; j++) {
+    const cy = j * 0.5, j0 = cy | 0, ty = cy - j0;
+    const j1 = j0 + 1 < c.h ? j0 + 1 : j0;
+    for (let i = 1; i < f.w - 1; i++) {
+      const cx = i * 0.5, i0 = cx | 0, tx = cx - i0;
+      const i1 = i0 + 1 < c.w ? i0 + 1 : i0;
+      const a = c.p[j0 * c.w + i0], b2 = c.p[j0 * c.w + i1];
+      const d = c.p[j1 * c.w + i0], e = c.p[j1 * c.w + i1];
+      f.p[j * f.w + i] += (1 - ty) * ((1 - tx) * a + tx * b2) + ty * ((1 - tx) * d + tx * e);
+    }
+  }
+}
+
+function mgVCycle(L) {
+  if (L === mg.length - 1) { mgSmooth(L, 24); mgZeroMean(L); return; }   // coarsest: solve it
+  mgSmooth(L, MG_PRE);
+  mgResidual(L);
+  mgRestrict(L);
+  mgVCycle(L + 1);
+  mgProlong(L);
+  mgSmooth(L, MG_POST);
+  if (L > 0) mgZeroMean(L);
+}
+
+function project() {
+  if (!mg) buildMultigrid();
+  const fine = mg[0];
   for (let j = 1; j < GH - 1; j++) {
     for (let i = 1; i < GW - 1; i++) {
       const k = j * GW + i;
-      u[k] -= 0.5 * (p[k + 1] - p[k - 1]) / cell;
-      v[k] -= 0.5 * (p[k + GW] - p[k - GW]) / cell;
+      fine.b[k] = -0.5 * cell * (u[k + 1] - u[k - 1] + v[k + GW] - v[k - GW]);
+    }
+  }
+  /* The pressure is NOT cleared between frames, and that one omission is the
+   * difference between a cell that comes to rest and one that never does: the
+   * hydrostatic field is the lowest frequency there is, and starting it from
+   * zero every frame means never getting close. `fine.p` is the live pressure
+   * and carries over; only the coarse levels are cleared, in mgRestrict. */
+  const tol = MG_TOL * cell * cell / Math.max(1e-6, FIXED_DT);
+  let cyc = 0;
+  if (window.__mgTrace) window.__mgTrace.push(mgResidual(0));
+  for (; cyc < MG_MAX_CYCLES; cyc++) {
+    mgVCycle(0);
+    const res = mgResidual(0);
+    if (window.__mgTrace) window.__mgTrace.push(res);
+    if (res < tol) { cyc++; break; }
+  }
+  lastIters = cyc;
+
+  for (let j = 1; j < GH - 1; j++) {
+    for (let i = 1; i < GW - 1; i++) {
+      const k = j * GW + i;
+      u[k] -= 0.5 * (fine.p[k + 1] - fine.p[k - 1]) / cell;
+      v[k] -= 0.5 * (fine.p[k + GW] - fine.p[k - GW]) / cell;
     }
   }
 }
@@ -1293,7 +1455,8 @@ function fixedStep(dt) {
    * The trajectory is walked in as many pieces as the Courant number needs:
    * one at rest, which is exactly the work this always did, rising only on
    * the handful of frames where the cell is really moving. */
-  const CFL_TARGET = 0.5, CFL_MAX_SUB = num("maxsub", 24);
+  const CFL_TARGET = num("cfl", 0.5), CFL_MAX_SUB = num("maxsub", 24);
+  const VEL_SUB = num("velsub", 2);
   let vmax = 0;
   for (let j = 1; j < GH - 1; j++)
     for (let i = 1; i < GW - 1; i++) {
@@ -1307,8 +1470,13 @@ function fixedStep(dt) {
   lastCfl = sub > 0 ? vmax * dt / cell / sub : 0;
 
   au.set(u); av.set(v); u0.set(u); v0.set(v);
-  buildTrace(bx, by, dt, sub);
-  buildTrace(fx, fy, -dt, sub);
+  /* The velocity field is smooth and forgiving; the phase field is a step and
+   * is not. Tracing the velocity's own advection as finely as the interface's
+   * doubles the cost of the whole step and buys nothing measurable, so it
+   * gets a coarser walk. */
+  const vsub = Math.max(1, Math.min(sub, VEL_SUB));
+  buildTrace(bx, by, dt, vsub);
+  buildTrace(fx, fy, -dt, vsub);
   advectMC(u, u0); advectMC(v, v0);
   bounds();
   project();
@@ -2138,7 +2306,24 @@ window.__shaker = {
        * been in one straight line, which is the honest measure of how hard
        * the cell is moving. Before the trajectory was split, the two were the
        * same number and it reached 4.6. */
-      cfl: lastCfl, substeps: lastSub, cflRaw: lastCfl * lastSub,
+      cfl: lastCfl, substeps: lastSub, cflRaw: lastCfl * lastSub, iters: lastIters,
+      /* How incompressible the flow actually is, after the projection has
+       * run. This is the residual the pressure solve left behind, as a
+       * fraction of a cell crossed per step -- so it is directly comparable
+       * with the Courant number above, and zero is what the physics says it
+       * must be. Anything appreciable means the fluid is being compressed
+       * and expanded, which for a two-phase field means the oil visibly
+       * swells and shrinks. */
+      divergence: (() => {
+        let m = 0;
+        for (let j = 1; j < GH - 1; j++)
+          for (let i = 1; i < GW - 1; i++) {
+            const k = j * GW + i;
+            const d = Math.abs(-0.5 * (u[k + 1] - u[k - 1] + v[k + GW] - v[k - GW]));
+            if (d > m) m = d;
+          }
+        return m * FIXED_DT / cell;
+      })(),
       centroid: (() => {
         let m = 0, acc = 0;
         for (let j = 1; j < GH - 1; j++)
