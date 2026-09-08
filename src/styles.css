@@ -1064,3 +1064,25 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   }
   .frame-master-compare { grid-template-columns: 1fr; }
 }
+
+/* Native-alpha sheet generation: the preview backdrop never enters the PNG. */
+.icon-sheet-panel { border: 1px solid var(--line, #d8d8dd); border-radius: 12px; margin: 12px 0 20px; overflow: hidden; }
+.icon-sheet-panel > summary { cursor: pointer; padding: 16px; }
+.icon-sheet-panel > summary span { display: block; margin: 5px 0 0 18px; font-size: 12px; opacity: .7; }
+.icon-sheet-body { padding: 0 16px 18px; }
+.icon-sheet-body fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.icon-sheet-body .field { margin: 12px 0; }
+.icon-sheet-body textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.icon-sheet-presets, .icon-sheet-options { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.icon-sheet-pending { display: grid; gap: 8px; margin-top: 12px; overflow-wrap: anywhere; font-size: 12px; }
+.icon-sheet-error { color: #fb7185; }
+.icon-sheet-preview { border: 1px solid #888; border-radius: 8px; overflow: hidden; }
+.icon-sheet-preview img { display: block; width: 100%; height: auto; }
+.icon-sheet-dark { background: #000; }
+.icon-sheet-light { background: #fff; }
+.icon-sheet-pink { background: #f029c4; }
+.icon-sheet-checker { background: repeating-conic-gradient(#ddd 0% 25%, #999 0% 50%) 0 / 20px 20px; }
+.icon-sheet-result { margin-top: 18px; }
+@media (max-width: 780px) {
+  .studio > .preview { position: static; }
+}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Preview from './Preview';
+import IconSheetPanel from './IconSheetPanel';
 import { containerPath } from '../core/geometry';
 import { traceMaster } from '../core/trace';
 import { describeMaster } from '../core/describe';
@@ -886,6 +887,8 @@ export default function SimpleStudio(props: Props) {
           <span className="field-label">Family name</span>
           <input value={props.familyName} onChange={(event) => props.onFamilyName(event.target.value)} />
         </label>
+        <IconSheetPanel familyStyle={[props.familyPrompt, props.styleProfile].filter(Boolean).join('\n')}
+          reference={props.master?.dataUrl} subjects={props.items.filter(item => item.selected).map(item => item.concept || item.name)} />
         <ol className="steps">
         <li>
           <details className="compact-step">
