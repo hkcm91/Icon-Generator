@@ -156,14 +156,28 @@ export function renderTransparentLayer(
   const ctx = context2d(canvas);
   const box = innerBox(spec);
   const safeEdge = box.edge * (1 - spec.glyphInset / 100) * options.glyphScale;
-  drawContain(
-    ctx,
-    image,
-    box.cx - safeEdge / 2 + box.edge * options.glyphOffsetX / 100,
-    box.cy - safeEdge / 2 + box.edge * options.glyphOffsetY / 100,
-    safeEdge,
-    safeEdge,
-  );
+  // Fit the visible artwork, not the model's arbitrary transparent margins.
+  // Measure at source resolution so every preview/export size uses the same
+  // envelope, including thin details that disappear in a small thumbnail.
+  const sourceWidth = (image as HTMLImageElement).naturalWidth || (image as HTMLCanvasElement).width;
+  const sourceHeight = (image as HTMLImageElement).naturalHeight || (image as HTMLCanvasElement).height;
+  if (!sourceWidth || !sourceHeight) return canvas;
+  const source = createCanvas(sourceWidth);
+  source.height = sourceHeight;
+  const sourceContext = context2d(source);
+  sourceContext.drawImage(image, 0, 0);
+  const bounds = alphaBounds(sourceContext.getImageData(0, 0, sourceWidth, sourceHeight).data, sourceWidth, sourceHeight, 1);
+  if (!bounds) return canvas;
+  const transform = boundsContainTransform(bounds, {
+    x: box.cx - safeEdge / 2 + box.edge * options.glyphOffsetX / 100,
+    y: box.cy - safeEdge / 2 + box.edge * options.glyphOffsetY / 100,
+    width: safeEdge,
+    height: safeEdge,
+  });
+  ctx.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height,
+    Math.round(bounds.x * transform.scaleX + transform.translateX),
+    Math.round(bounds.y * transform.scaleY + transform.translateY),
+    Math.round(bounds.width * transform.scaleX), Math.round(bounds.height * transform.scaleY));
   return canvas;
 }
 

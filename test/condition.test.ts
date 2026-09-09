@@ -150,8 +150,9 @@ describe('glyph isolation prompt', () => {
     expect(prompt).toContain("Do not give it the surrounding frame's ribbon");
     expect(prompt).toContain('read immediately at 24px');
     expect(prompt).toContain('do not turn the whole glyph into a thin transparent outline');
-    expect(prompt).toContain('instantly recognizable at 24px');
-    expect(prompt).toContain('No ornamental bubbles, swirls, sparkles');
+    expect(prompt).toContain('Preserve the reference\'s edge construction, pixel grid or brushwork');
+    expect(prompt).not.toContain('Use smooth broad surfaces');
+    expect(prompt).not.toContain('Front-facing orthographic view.');
     expect(prompt).toContain('deliberately simplify');
   });
 });
