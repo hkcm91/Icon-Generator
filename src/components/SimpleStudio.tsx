@@ -203,6 +203,7 @@ export default function SimpleStudio(props: Props) {
   const [tracing, setTracing] = useState('');
   const [notes, setNotes] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState('');
   const [variantBusy, setVariantBusy] = useState(false);
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [ideasBusy, setIdeasBusy] = useState(false);
@@ -635,8 +636,9 @@ export default function SimpleStudio(props: Props) {
     props.onMaterialPalette({ ...props.materialPalette, recipes });
   };
 
-  const downloadAll = async () => {
+  const downloadAll = async (mastersOnly = false) => {
     setExporting(true);
+    setExportProgress('Preparing export…');
     try {
       const files: Array<{ name: string; bytes: Uint8Array<ArrayBuffer> }> = [];
       const contacts: Array<{ name: string; canvas: HTMLCanvasElement }> = [];
@@ -658,6 +660,8 @@ export default function SimpleStudio(props: Props) {
         ? ready.map((item) => ({ item, glyph: props.glyphs.get(item.id)! }))
         : [{ item: { id: 'current', name: props.glyph || 'Icon', revision: 1 }, glyph: props.layers.glyph }];
 
+      const encodeMaster = (canvas: HTMLCanvasElement) => Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]), char => char.charCodeAt(0));
+      let finished = 0;
       for (const { item, glyph } of targets) {
         const stem = safe(item.name);
         const familyItem = ready.length ? item as IconItem : null;
@@ -688,20 +692,25 @@ export default function SimpleStudio(props: Props) {
             : outputMode === 'complete'
               ? renderCompleteAtSize(props.spec, size, glyph, itemCompose)
               : renderAtSize(props.spec, size, layers, itemCompose);
-        for (const target of PLATFORM_TARGETS) {
+        for (const target of mastersOnly ? [{ platform: 'master', name: 'icon-1024', size: 1024 }] : PLATFORM_TARGETS) {
           const canvas = render(target.size);
           files.push({
             name: `${stem}/${target.platform}/${target.name}.png`,
-            bytes: await blobBytes(await canvasToBlob(canvas)),
+            bytes: mastersOnly ? encodeMaster(canvas) : await blobBytes(await canvasToBlob(canvas)),
           });
         }
+        if (!mastersOnly) {
         const ico = [];
         for (const size of ICO_SIZES) {
           const canvas = render(size);
           ico.push({ size, bytes: await blobBytes(await canvasToBlob(canvas)) });
         }
         files.push({ name: `${stem}/windows/${stem}.ico`, bytes: await blobBytes(await buildIco(ico)) });
+        }
         contacts.push({ name: item.name, canvas: render(128) });
+        finished++;
+        setExportProgress(`Exporting ${finished} / ${targets.length} icons…`);
+        if (mastersOnly && finished % 5 === 0) await new Promise(resolve => setTimeout(resolve, 0));
       }
       if (contacts.length) {
         const columns = Math.min(5, contacts.length);
@@ -722,7 +731,7 @@ export default function SimpleStudio(props: Props) {
             ctx.drawImage(contact.canvas, x + 16, y + 8, 128, 128);
             ctx.fillText(contact.name.slice(0, 22), x + 80, y + 157);
           });
-          files.push({ name: 'family-contact-sheet.png', bytes: await blobBytes(await canvasToBlob(sheet)) });
+          files.push({ name: 'family-contact-sheet.png', bytes: mastersOnly ? encodeMaster(sheet) : await blobBytes(await canvasToBlob(sheet)) });
         }
       }
       files.push({ name: 'container-mask.svg', bytes: new TextEncoder().encode(svgMask(props.spec)) });
@@ -763,7 +772,7 @@ export default function SimpleStudio(props: Props) {
         name: 'package-index.txt',
         bytes: new TextEncoder().encode(files.map((file) => file.name).sort().join('\n')),
       });
-      download(buildZip(files), `${safe(props.familyName)}.zip`);
+      download(buildZip(files), `${safe(props.familyName)}${mastersOnly ? '-masters' : ''}.zip`);
       setStatus({ kind: 'ok', message: `Exported ${targets.length} icon${targets.length === 1 ? '' : 's'} with manifest.` });
     } catch (error) {
       setStatus({ kind: 'error', message: (error as Error).message });
@@ -1428,9 +1437,10 @@ export default function SimpleStudio(props: Props) {
           <h3>
             <span className="step-num">5</span> Download
           </h3>
-          <button type="button" onClick={downloadAll} disabled={exporting}>
-            {exporting ? 'Rendering every size…' : 'Download all icon sizes'}
+          <button type="button" onClick={() => void downloadAll()} disabled={exporting}>
+            {exporting ? exportProgress : 'Download all icon sizes'}
           </button>
+          <button type="button" className="ghost" onClick={() => void downloadAll(true)} disabled={exporting}>Download current master PNGs</button>
           <label className="toggle export-gate">
             <input
               type="checkbox"
@@ -1479,3 +1489,4 @@ export default function SimpleStudio(props: Props) {
     </div>
   );
 }
+
