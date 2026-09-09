@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ManualIconSizing from './ManualIconSizing';
+import MeasuredIconSizing from './MeasuredIconSizing';
 import { outlierScaleForAlpha } from '../core/frameAlignment';
 import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, correctIconSize, measureIconOpticalScale, hasNativeAlpha, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
@@ -855,6 +856,7 @@ export default function IconGrid(props: Props) {
 
       <p className="hint">The card name controls export. Visual subject controls what is drawn. The set theme then adapts that subject.</p>
       <p className="hint">Isolated results use a {props.spec.size} × {props.spec.size} transparent canvas. Optical sizing balances visible weight: dense icons shrink and thin icons grow by up to 15%. Preview the change on saved icons before applying it.</p>
+      <MeasuredIconSizing items={props.items} eligible={selectedIsolatedItems} glyphs={props.glyphs} spec={props.spec} compose={props.compose} disabled={running} onItems={props.onItems} />
       {sizingPlan.length > 0 && (
         <section className="optical-sizing-preview" aria-label="Optical sizing comparison">
           <h3>{outlierReview ? 'Small outlier review' : 'Optical sizing'} · {sizingPlan.length} icons</h3>

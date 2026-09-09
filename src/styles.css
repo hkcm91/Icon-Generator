@@ -1088,3 +1088,13 @@ button.primary { padding: 12px 20px; font-size: 14.5px; }
   }
   .frame-master-compare { grid-template-columns: 1fr; }
 }
+.measured-sizing { margin: 16px 0; padding: 16px; border: 1px solid #64748b; border-radius: 12px; }
+.measured-sizing summary { cursor: pointer; font-weight: 700; }
+.measured-controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; }
+.measured-controls label { display: grid; gap: 6px; }
+.measured-controls input[type="number"] { width: 120px; }
+.measured-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; max-height: 650px; overflow: auto; margin: 16px 0; }
+.measured-grid figure { margin: 0; padding: 10px; border: 1px solid #64748b; border-radius: 8px; }
+.measured-pair { display: flex; justify-content: center; gap: 8px; }
+.measured-pair > div { display: grid; text-align: center; }
+.measured-pair img { width: 128px; height: 128px; background-color: #283344; background-image: linear-gradient(#ffffff18 1px, transparent 1px), linear-gradient(90deg, #ffffff18 1px, transparent 1px); background-size: 16px 16px; }
