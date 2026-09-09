@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { outlierScaleForAlpha } from '../core/frameAlignment';
 import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, correctIconSize, measureIconOpticalScale, hasNativeAlpha, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
@@ -119,7 +120,8 @@ export default function IconGrid(props: Props) {
   const [running, setRunning] = useState(false);
   const [queueSummary, setQueueSummary] = useState<{ batches: number; batchSize: number } | null>(null);
   const [message, setMessage] = useState('');
-  const [sizingPlan, setSizingPlan] = useState<Array<{ id: string; revision: number; before: number; after: number }>>([]);
+  const [sizingPlan, setSizingPlan] = useState<Array<{ id: string; revision: number; before: number; after: number; limited?: boolean; coverage?: number }>>([]);
+  const [outlierReview, setOutlierReview] = useState(false);
   const [sizingUndo, setSizingUndo] = useState<Array<{ id: string; revision: number; before: number; after: number; approved: boolean }>>([]);
   const [browsing, setBrowsing] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -356,6 +358,7 @@ export default function IconGrid(props: Props) {
   };
 
   const correctSelectedSizes = () => {
+    setOutlierReview(false);
     const plan = selectedIsolatedItems.map(item => ({
       id: item.id, revision: item.activeRevision ?? item.revision,
       before: item.opticalScale ?? 1, after: measureIconOpticalScale(props.glyphs.get(item.id)!),
@@ -364,8 +367,34 @@ export default function IconGrid(props: Props) {
     if (!plan.length) setMessage('Selected icons already match optical sizing. No changes or duplicate revisions were created.');
   };
 
+  const reviewSizeOutliers = () => {
+    const ready = props.items.filter(item => item.status === 'ready' && props.glyphs.has(item.id) &&
+      resolveIconOutputMode(item, containerGenerationUsesAlpha(props.containerMode), props.containerMode) === 'transparent');
+    const measure = (item: IconItem) => {
+      const canvas = renderTransparentLayer({ ...props.spec, size: 128 }, props.glyphs.get(item.id), composeFor(item));
+      return canvas.getContext('2d')!.getImageData(0, 0, 128, 128).data;
+    };
+    const references = ready.filter(item => ['Camera', 'Settings'].includes(item.name));
+    const referenceCoverage = references.map(item => {
+      const pixels = measure(item);
+      let mass = 0;
+      for (let i = 3; i < pixels.length; i += 4) mass += pixels[i] / 255;
+      return mass / (128 * 128);
+    });
+    const target = referenceCoverage.length ? referenceCoverage.reduce((a, b) => a + b, 0) / referenceCoverage.length : .20;
+    const plan = ready.flatMap(item => {
+      const result = outlierScaleForAlpha(measure(item), 128, 128, item.opticalScale ?? 1, target);
+      if (!result) return [];
+      return [{ id: item.id, revision: item.activeRevision ?? item.revision, before: item.opticalScale ?? 1,
+        after: result.scale, limited: result.limited, coverage: result.coverage }];
+    });
+    setOutlierReview(true);
+    setSizingPlan(plan);
+    if (!plan.length) setMessage('No small outliers found below 18% visible coverage. Nothing changed.');
+  };
+
   const applyOpticalSizing = () => {
-    const changes = sizingPlan.filter(change => props.items.some(item => item.id === change.id &&
+    const changes = sizingPlan.filter(change => Math.abs(change.after - change.before) >= .005 && props.items.some(item => item.id === change.id &&
       (item.activeRevision ?? item.revision) === change.revision && (item.opticalScale ?? 1) === change.before));
     setSizingUndo(changes.map(change => ({ ...change, approved: !!props.items.find(item => item.id === change.id)?.approved })));
     props.onItems(props.items.map(item => {
@@ -691,6 +720,8 @@ export default function IconGrid(props: Props) {
         </button>
         <button type="button" className="ghost" disabled={running || !selectedIsolatedItems.length}
           onClick={correctSelectedSizes}>Preview optical sizing · $0</button>
+        <button type="button" className="ghost" disabled={running || !props.glyphs.size}
+          onClick={reviewSizeOutliers}>Review small outliers · $0</button>
         <button
           type="button"
           className="ghost"
@@ -823,10 +854,17 @@ export default function IconGrid(props: Props) {
       <p className="hint">Isolated results use a {props.spec.size} × {props.spec.size} transparent canvas. Optical sizing balances visible weight: dense icons shrink and thin icons grow by up to 15%. Preview the change on saved icons before applying it.</p>
       {sizingPlan.length > 0 && (
         <section className="optical-sizing-preview" aria-label="Optical sizing comparison">
-          <h3>Optical sizing · {sizingPlan.length} changes</h3>
+          <h3>{outlierReview ? 'Small outlier review' : 'Optical sizing'} · {sizingPlan.length} icons</h3>
           <p>Before and after at the same display size. This estimates visual weight from visible pixels; original artwork stays unchanged.</p>
+          {outlierReview && <>
+            <p>Only icons below 18% visible coverage are included. Camera and Settings set the target; growth stops at a 10% canvas margin. Other icons stay unchanged.</p>
+            <div className="optical-sizing-anchors" aria-label="Reference sizes">
+              {props.items.filter(item => ['Camera', 'Settings'].includes(item.name) && props.glyphs.has(item.id)).map(item =>
+                <figure key={item.id}><RenderedIcon spec={props.spec} compose={composeFor(item)} layers={{ glyph: props.glyphs.get(item.id) }} mode="transparent" alt={`${item.name} size reference`} /><figcaption>{item.name} · unchanged reference</figcaption></figure>)}
+            </div>
+          </>}
           <div className="optical-sizing-samples">
-            {[...sizingPlan].sort((a, b) => Math.abs(b.after - b.before) - Math.abs(a.after - a.before)).slice(0, 6).map(change => {
+            {[...sizingPlan].sort((a, b) => Math.abs(b.after - b.before) - Math.abs(a.after - a.before)).slice(0, outlierReview ? sizingPlan.length : 6).map(change => {
               const item = props.items.find(value => value.id === change.id);
               if (!item) return null;
               const layers = { glyph: props.glyphs.get(item.id) };
@@ -834,12 +872,12 @@ export default function IconGrid(props: Props) {
                 <strong>{item.name}</strong>
                 <div className="optical-sizing-pair">
                   <div><RenderedIcon spec={props.spec} compose={{ ...composeFor(item), glyphScale: props.compose.glyphScale * change.before }} layers={layers} mode="transparent" alt={`${item.name} before`} /><small>Before</small></div>
-                  <div><RenderedIcon spec={props.spec} compose={{ ...composeFor(item), glyphScale: props.compose.glyphScale * change.after }} layers={layers} mode="transparent" alt={`${item.name} after`} /><small>After · {Math.round((change.after / change.before - 1) * 100)}%</small></div>
+                  <div><RenderedIcon spec={props.spec} compose={{ ...composeFor(item), glyphScale: props.compose.glyphScale * change.after }} layers={layers} mode="transparent" alt={`${item.name} after`} /><small>After · {Math.round((change.after / change.before - 1) * 100)}%{change.limited ? ' · margin limit' : ''}</small></div>
                 </div>
               </figure>;
             })}
           </div>
-          <button type="button" disabled={running} onClick={applyOpticalSizing}>Apply optical sizing to {sizingPlan.length} icons</button>
+          <button type="button" disabled={running || !sizingPlan.some(change => change.after !== change.before)} onClick={applyOpticalSizing}>Apply optical sizing to {sizingPlan.filter(change => change.after !== change.before).length} icons</button>
           <button type="button" className="ghost" onClick={() => setSizingPlan([])}>Cancel sizing</button>
         </section>
       )}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { opticalScaleForAlpha } from '../src/core/frameAlignment';
+import { opticalScaleForAlpha, outlierScaleForAlpha } from '../src/core/frameAlignment';
 
 function rectangle(width: number, height: number, x: number, y: number, w: number, h: number) {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -18,5 +18,25 @@ describe('optical size correction', () => {
   });
   it('leaves empty images unchanged', () => {
     expect(opticalScaleForAlpha(new Uint8ClampedArray(400), 10, 10)).toBe(1);
+  });
+  it('leaves balanced icons out of the outlier plan', () => {
+    expect(outlierScaleForAlpha(rectangle(100,100,25,25,50,50),100,100,1,.20)).toBeNull();
+  });
+  it('allows growth beyond 15% to match reference coverage', () => {
+    const result = outlierScaleForAlpha(rectangle(100,100,30,30,40,40),100,100,1.15,.24)!;
+    expect(result.scale).toBe(1.40);
+    expect(result.limited).toBe(false);
+    expect(result.coverage * (result.scale / 1.15) ** 2).toBeCloseTo(.24,2);
+  });
+  it('caps a thin icon at safe margins without stretching or clipping', () => {
+    const result = outlierScaleForAlpha(rectangle(100,100,15,45,70,10),100,100,1,.20)!;
+    expect(result.limited).toBe(true);
+    expect(result.scale).toBe(1.14);
+    expect(70 * result.scale).toBeLessThanOrEqual(80);
+  });
+  it('does not enlarge an off-center icon past the margin', () => {
+    const result = outlierScaleForAlpha(rectangle(100,100,10,40,60,10),100,100,1,.20)!;
+    expect(result.scale).toBe(1);
+    expect(result.limited).toBe(true);
   });
 });

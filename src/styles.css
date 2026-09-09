@@ -170,9 +170,13 @@ summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-bottom
 .optical-sizing-preview { margin: 16px 0; padding: 16px; border: 1px solid #475569; border-radius: 12px; }
 .optical-sizing-samples { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
 .optical-sizing-samples figure { margin: 0; min-width: 0; }
-.optical-sizing-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
-.optical-sizing-pair img { width: 100%; aspect-ratio: 1; background: #303744; }
+.optical-sizing-pair { display: grid; grid-template-columns: 112px 112px; gap: 8px; margin: 8px 0; }
+.optical-sizing-pair img { width: 112px; height: 112px; background: #303744; }
 .optical-sizing-pair small { display: block; text-align: center; }
+.optical-sizing-anchors { display: flex; flex-wrap: wrap; gap: 16px; }
+.optical-sizing-anchors figure { margin: 0 0 16px; }
+.optical-sizing-anchors img { width: 112px; height: 112px; background: #303744; }
+.optical-sizing-samples { max-height: 65vh; overflow-y: auto; }
 
 .style-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 12px; }
 
