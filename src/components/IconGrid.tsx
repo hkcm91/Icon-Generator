@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, hasNativeAlpha, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, correctIconSize, hasNativeAlpha, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
   applyGenerationItemPatch,
@@ -262,7 +262,7 @@ export default function IconGrid(props: Props) {
             if (!item || !card) continue;
             const image = await imageFromUrl(`${result.url}?revision=${card.nextRevision}`);
             const nextRevision = Math.max(item.revision + 1, card.nextRevision);
-            props.onItemGlyph(item.id, image, nextRevision);
+            props.onItemGlyph(item.id, card.outputMode === 'transparent' ? correctIconSize(image, props.spec.size) : image, nextRevision);
             current = applyGenerationItemPatch(current, item.id, {
               status: 'ready' as const,
               revision: nextRevision,
@@ -350,6 +350,22 @@ export default function IconGrid(props: Props) {
     }
     props.onItems([...props.items, ...added]);
     setMessage(`Added ${added.length} custom glyph${added.length === 1 ? '' : 's'} with exact artwork.`);
+  };
+
+  const correctSelectedSizes = () => {
+    const updated = new Map<string, number>();
+    for (const item of selectedIsolatedItems) {
+      const image = props.glyphs.get(item.id);
+      if (!image) continue;
+      const revision = item.revision + 1;
+      props.onItemGlyph(item.id, correctIconSize(image, props.spec.size), revision);
+      updated.set(item.id, revision);
+    }
+    props.onItems(props.items.map(item => {
+      const revision = updated.get(item.id);
+      return revision === undefined ? item : { ...item, revision, activeRevision: revision, approved: false };
+    }));
+    setMessage(`Corrected ${updated.size} saved icons to ${props.spec.size} × ${props.spec.size}, with artwork fitted to 75% of the canvas. Original revisions kept. No API calls.`);
   };
 
   const applyContainerToSelected = (overlay = props.containerOverlay) => {
@@ -452,7 +468,8 @@ export default function IconGrid(props: Props) {
         const image = await imageFromUrl(await fileDataUrl(file));
         const jobCard = localJob?.cards.find((card) => card.id === item.id);
         const nextRevision = Math.max(item.revision + 1, jobCard?.nextRevision ?? 0);
-        props.onItemGlyph(item.id, image, nextRevision);
+        const importedMode = jobCard?.outputMode ?? codexOutputMode(props.containerMode);
+        props.onItemGlyph(item.id, importedMode === 'transparent' ? correctIconSize(image, props.spec.size) : image, nextRevision);
         current = applyGenerationItemPatch(current, item.id, {
           status: 'ready' as const,
           revision: nextRevision,
@@ -586,6 +603,7 @@ export default function IconGrid(props: Props) {
             : requestedContainerMode === 'isolated'
               ? 'transparent'
               : needsPaidGeneration(item) ? 'complete' : 'composed';
+          if (outputMode === 'transparent') layer = correctIconSize(layer, props.spec.size);
           props.onItemGlyph(item.id, layer, nextRevision);
           apply(item.id, {
             status: 'ready',
@@ -661,6 +679,8 @@ export default function IconGrid(props: Props) {
         <button type="button" className="ghost" onClick={() => setAll(false)} disabled={!selectedCount}>
           Select none
         </button>
+        <button type="button" className="ghost" disabled={running || !selectedIsolatedItems.length}
+          onClick={correctSelectedSizes}>Correct selected sizes · $0</button>
         <button
           type="button"
           className="ghost"
@@ -790,6 +810,7 @@ export default function IconGrid(props: Props) {
       )}
 
       <p className="hint">The card name controls export. Visual subject controls what is drawn. The set theme then adapts that subject.</p>
+      <p className="hint">Automatic sizing: isolated results are centered on a {props.spec.size} × {props.spec.size} transparent canvas, with the longest visible edge at 75%. Saved icons can use Correct selected sizes; original revisions are kept.</p>
 
       <details className="codex-local-tools">
         <summary>

@@ -2,7 +2,7 @@
 <style>body{font:16px system-ui;background:#eee}canvas{border:1px solid #888;margin:8px;background:#f0b}pre{white-space:pre-wrap}</style>
 <h1>Isolated icon sizing checks</h1><pre id="results">Running</pre>
 <script type="module">
-import {renderTransparentLayer, DEFAULT_COMPOSE} from '/src/core/compose.ts';
+import {renderTransparentLayer, correctIconSize, DEFAULT_COMPOSE} from '/src/core/compose.ts';
 import {DEFAULT_SPEC} from '/src/core/spec.ts';
 import {alphaBounds} from '/src/core/frameAlignment.ts';
 function fixture(w,h,x,y,bw,bh){const c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d');ctx.fillStyle='#174cd5';ctx.fillRect(x,y,bw,bh);return c;}
@@ -16,7 +16,11 @@ for(const size of [32,64,256]){
  const ab=bounds(a),bb=bounds(b);
  if(JSON.stringify(ab)!==JSON.stringify(bb))throw Error('Padding changes size: '+size);
  if(Math.abs(ab.width-size*.75)>2||Math.abs(ab.width/ab.height-2)>.2)throw Error('Scale or aspect ratio incorrect');
- tests.push({size,paddingInvariant:true,bounds:ab});document.body.append(a,b);
+ const corrected=correctIconSize(fixture(300,200,160,110,80,40),size);
+ const correctedAgain=correctIconSize(corrected,size);
+ if(JSON.stringify(bounds(corrected))!==JSON.stringify(bounds(correctedAgain)))throw Error('Repeated correction changes size');
+ if(JSON.stringify(bounds(corrected))!==JSON.stringify(ab))throw Error('Saved source size differs');
+ tests.push({size,paddingInvariant:true,savedCorrectionIdempotent:true,bounds:ab});document.body.append(a,b);
  const blank=renderTransparentLayer(spec,fixture(100,100,0,0,0,0),opts);
  if(bounds(blank)!==null)throw Error('Blank image gained pixels');
 }

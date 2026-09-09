@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { alignLayerToContainerBounds, alignLayerToReferenceBounds, cleanGeneratedAlpha, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
+import { alignLayerToContainerBounds, alignLayerToReferenceBounds, cleanGeneratedAlpha, correctIconSize, hasNativeAlpha, keyOutBackground, preserveAlphaLayer } from '../core/compose';
 import { buildConditioning, type ConditioningMode } from '../core/condition';
 import {
   conditionedMaterialPrompt,
@@ -360,8 +360,8 @@ export function useGeneration() {
       setStatus({ kind: 'busy', what: 'Drawing the symbol' });
       try {
         const { layer } = await runGlyph(options);
-        onGlyph(layer);
-        setStatus({ kind: 'ok', message: 'Symbol applied.' });
+        onGlyph(correctIconSize(layer, options.spec.size));
+        setStatus({ kind: 'ok', message: 'Symbol applied. Visible artwork automatically centered and sized.' });
       } catch (error) {
         setStatus({ kind: 'error', message: (error as Error).message });
       }
