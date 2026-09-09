@@ -56,7 +56,7 @@ export default function MeasuredIconSizing(props: Props) {
         if (!measured) { skipped++; continue; }
         const baseEdge = innerBox(props.spec).edge * (1 - props.spec.glyphInset / 100) * props.compose.glyphScale;
         const maxScale = Math.min(2, size * (1 - 2 * margin / 100) / baseEdge);
-        const goal = metric === 'coverage' ? target : target / 100 * size;
+        const goal = metric === 'coverage' ? target : Math.round(target / 100 * size);
         const valueOf = (value: NonNullable<typeof measured>) => metric === 'coverage' ? value.mass / size ** 2 * 100 :
           metric === 'width' ? value.width : metric === 'height' ? value.height : Math.max(value.width, value.height);
         // Resampling can remove very faint edge pixels. Close the loop on the
@@ -71,6 +71,22 @@ export default function MeasuredIconSizing(props: Props) {
           measured = nextMeasure;
           const error = Math.abs(valueOf(measured) - goal);
           if (error < best.error) best = { scale, after, measured, error };
+        }
+        // Faint resampled fringes can make proportional iteration oscillate.
+        // Search neighboring scales, then narrow around the best actual raster.
+        let radius = best.scale * .2;
+        for (let level = 0; level < 3 && best.error > (metric === 'coverage' ? .05 : 1); level++) {
+          const center = best.scale;
+          for (let sample = -8; sample <= 8; sample++) {
+            const candidateScale = Math.max(.25, Math.min(maxScale, center + radius * sample / 8));
+            const candidateCanvas = render(item, candidateScale, true);
+            const candidateMeasure = measure(candidateCanvas);
+            if (!candidateMeasure) continue;
+            const error = Math.abs(valueOf(candidateMeasure) - goal);
+            if (error < best.error) best = { scale: candidateScale, after: candidateCanvas, measured: candidateMeasure, error };
+            if (best.error <= (metric === 'coverage' ? .05 : 1)) break;
+          }
+          radius /= 8;
         }
         plan.push({ item, scale: best.scale, before: thumbnail(render(item)), after: thumbnail(best.after),
           width: best.measured.width, height: best.measured.height, coverage: best.measured.mass / size ** 2 * 100,
