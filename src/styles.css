@@ -162,6 +162,11 @@ summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-bottom
   background-position: 0 0, 0 11px, 11px -11px, -11px 0;
 }
 .preview-canvas { width: 100%; max-width: 420px; height: auto; display: block; }
+.master-preview { flex-direction: column; gap: 12px; }
+.master-reference-card { display: flex; align-items: center; gap: 16px; margin: 0 0 16px; }
+.master-reference-card img { width: 96px; height: 96px; object-fit: contain; background: #303744; border-radius: 8px; }
+.master-reference-card figcaption { min-width: 0; }
+.master-reference-card small { display: block; overflow-wrap: anywhere; }
 
 .style-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 12px; }
 
