@@ -14,7 +14,7 @@
 
 import { containerPath, glyphSafePath, innerBox } from './geometry';
 import { DEFAULT_SPEC, type ContainerSpec } from './spec';
-import { alphaBounds, boundsContainTransform, boundsTransform, substantialAlphaBounds } from './frameAlignment';
+import { alphaBounds, boundsContainTransform, boundsTransform, substantialAlphaBounds, opticalScaleForAlpha } from './frameAlignment';
 
 export interface ComposeLayers {
   /** Full-bleed surface texture. Cropped to fill, then clipped to the path. */
@@ -187,6 +187,17 @@ export function correctIconSize(image: CanvasImageSource, size: number): HTMLCan
     { ...DEFAULT_SPEC, size, padding: 0, glyphInset: 0 }, image,
     { ...DEFAULT_COMPOSE, glyphScale: 0.75 },
   );
+}
+
+export function measureIconOpticalScale(image: CanvasImageSource): number {
+  const width = (image as HTMLImageElement).naturalWidth || (image as HTMLCanvasElement).width;
+  const height = (image as HTMLImageElement).naturalHeight || (image as HTMLCanvasElement).height;
+  if (!width || !height) return 1;
+  const canvas = createCanvas(width);
+  canvas.height = height;
+  const ctx = context2d(canvas);
+  ctx.drawImage(image, 0, 0);
+  return opticalScaleForAlpha(ctx.getImageData(0, 0, width, height).data, width, height);
 }
 
 /**

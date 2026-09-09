@@ -12,6 +12,16 @@ export interface BoundsTransform {
   translateY: number;
 }
 
+/** Estimate visual weight from alpha coverage, with conservative adjustment limits. */
+export function opticalScaleForAlpha(data: Uint8ClampedArray, width: number, height: number): number {
+  const bounds = alphaBounds(data, width, height, 24);
+  if (!bounds) return 1;
+  let mass = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] >= 24) mass += data[i] / 255;
+  const density = mass / Math.max(bounds.width, bounds.height) ** 2;
+  return Math.round(Math.min(1.15, Math.max(0.85, Math.sqrt(0.65 / density))) * 100) / 100;
+}
+
 /** Measure visible pixels while ignoring extremely faint alpha noise. */
 export function alphaBounds(
   data: Uint8ClampedArray,
