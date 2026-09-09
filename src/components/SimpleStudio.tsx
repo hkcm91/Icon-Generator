@@ -874,12 +874,25 @@ export default function SimpleStudio(props: Props) {
 
   return (
     <div className="studio">
-      <Preview spec={props.spec} compose={props.compose} layers={{ material: props.materialLayer, glyph: props.layers.glyph }} showGuides={false} mode={props.containerMode} />
+      {props.containerMode === 'isolated' && !props.layers.glyph && props.master ? (
+        <figure className="preview master-preview">
+          <img className="preview-canvas" src={props.master.dataUrl} alt="Master glyph preview" />
+          <figcaption>Master reference</figcaption>
+        </figure>
+      ) : (
+        <Preview spec={props.spec} compose={props.compose} layers={{ material: props.materialLayer, glyph: props.layers.glyph }} showGuides={false} mode={props.containerMode} />
+      )}
       <div className="studio-flow">
         <label className="field family-name-field">
           <span className="field-label">Family name</span>
           <input value={props.familyName} onChange={(event) => props.onFamilyName(event.target.value)} />
         </label>
+        {props.master && (
+          <figure className="master-reference-card">
+            <img src={props.master.dataUrl} alt="Uploaded master glyph" />
+            <figcaption><strong>Master reference</strong><small>{props.master.name}</small></figcaption>
+          </figure>
+        )}
         <ol className="steps">
         <li>
           <details className="compact-step">
