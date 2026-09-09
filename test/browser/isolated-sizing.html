@@ -1,0 +1,24 @@
+<!doctype html><title>Isolated icon sizing checks</title>
+<style>body{font:16px system-ui;background:#eee}canvas{border:1px solid #888;margin:8px;background:#f0b}pre{white-space:pre-wrap}</style>
+<h1>Isolated icon sizing checks</h1><pre id="results">Running</pre>
+<script type="module">
+import {renderTransparentLayer, DEFAULT_COMPOSE} from '/src/core/compose.ts';
+import {DEFAULT_SPEC} from '/src/core/spec.ts';
+import {alphaBounds} from '/src/core/frameAlignment.ts';
+function fixture(w,h,x,y,bw,bh){const c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d');ctx.fillStyle='#174cd5';ctx.fillRect(x,y,bw,bh);return c;}
+function bounds(c){return alphaBounds(c.getContext('2d').getImageData(0,0,c.width,c.height).data,c.width,c.height,1);}
+const tests=[];
+for(const size of [32,64,256]){
+ const spec={...DEFAULT_SPEC,size,padding:0,glyphInset:0};
+ const opts={...DEFAULT_COMPOSE,glyphScale:.75};
+ const a=renderTransparentLayer(spec,fixture(160,100,10,20,80,40),opts);
+ const b=renderTransparentLayer(spec,fixture(300,200,160,110,80,40),opts);
+ const ab=bounds(a),bb=bounds(b);
+ if(JSON.stringify(ab)!==JSON.stringify(bb))throw Error('Padding changes size: '+size);
+ if(Math.abs(ab.width-size*.75)>2||Math.abs(ab.width/ab.height-2)>.2)throw Error('Scale or aspect ratio incorrect');
+ tests.push({size,paddingInvariant:true,bounds:ab});document.body.append(a,b);
+ const blank=renderTransparentLayer(spec,fixture(100,100,0,0,0,0),opts);
+ if(bounds(blank)!==null)throw Error('Blank image gained pixels');
+}
+document.querySelector('#results').textContent='PASS: identical visible size despite different canvas dimensions and padding; aspect ratio preserved; transparent inputs stay empty.\n'+JSON.stringify(tests,null,2);
+</script>

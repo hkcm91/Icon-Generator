@@ -318,8 +318,10 @@ export function glyphPrompt(
       ? 'Return a transparent PNG containing only the isolated glyph pixels. Everything outside the glyph must have zero alpha. No opaque or translucent backing shape, color field, tile, or plate.'
       : 'Isolated on a completely flat uniform #00FF00 chroma-green background with no gradient, no vignette, and no color spill.',
     'The glyph is fully visible, centered, with generous even margin on all four sides.',
-    `SMALL-ICON SIMPLIFICATION: ${requested} must remain instantly recognizable at 24px. Use one clean bold silhouette with the minimum canonical parts required to identify it. Use smooth broad surfaces, thick members, simple holes and crisp separation. No ornamental bubbles, swirls, sparkles, particles, tendrils, secondary objects, busy internal texture, filigree, or clusters of tiny highlights. Material variation belongs inside the large simple form; it must never change the form's geometry.`,
-    'Front-facing orthographic view.',
+    hasMaster
+      ? `SMALL-ICON LEGIBILITY: ${requested} must remain recognizable at small sizes. Preserve the reference's edge construction, pixel grid or brushwork, shading and dimensionality. Simplify only details that would become unreadable; do not convert pixel art into smooth vector or 3D artwork.`
+      : `SMALL-ICON SIMPLIFICATION: ${requested} must remain instantly recognizable at 24px. Use one clean bold silhouette with the minimum canonical parts required to identify it. Use smooth broad surfaces, thick members, simple holes and crisp separation. No ornamental bubbles, swirls, sparkles, particles, tendrils, secondary objects, busy internal texture, filigree, or clusters of tiny highlights. Material variation belongs inside the large simple form; it must never change the form's geometry.`,
+    hasMaster ? 'Use the reference camera and perspective unless the family direction specifies otherwise.' : 'Front-facing orthographic view.',
     // With a master supplied, the reference is the authority on *style* only.
     // Saying so explicitly is what stops the model copying its subject, which
     // is the usual failure when a reference image is present.

@@ -428,15 +428,9 @@ export default function SimpleStudio(props: Props) {
         glyphStyle: '',
         conditioning: 'auto',
         wantAlpha: layeredOutput,
-        // Isolated mode keeps the container out of the glyph request. Complete
-        // mode deliberately sends it because repainting the whole icon is the
-        // selected outcome.
-        // Open-frame glyphs still need the original finished sample so they can
-        // copy the central subject's treatment. The cleaned frame lives in the
-        // material layer and is never substituted for that style evidence.
-        master: generationContainerMode === 'open-frame'
-          ? (props.master?.dataUrl ?? null)
-          : layeredOutput && props.lockedContainer ? null : (props.master?.dataUrl ?? null),
+        // The master is style evidence in every mode, including isolated
+        // subjects with a locked container. Shape conditioning is separate.
+        master: props.master?.dataUrl ?? null,
         references: props.references.map((reference) => reference.dataUrl),
         referenceSubject: props.referenceSubject,
         styleProfile: props.styleProfile,
@@ -1395,11 +1389,7 @@ export default function SimpleStudio(props: Props) {
               glyphStyle: '',
               conditioning: 'auto',
               wantAlpha: containerGenerationUsesAlpha(generationContainerMode),
-              master: generationContainerMode === 'open-frame'
-                ? (props.master?.dataUrl ?? null)
-                : containerGenerationUsesAlpha(generationContainerMode) && props.lockedContainer
-                  ? null
-                  : (props.master?.dataUrl ?? null),
+              master: props.master?.dataUrl ?? null,
               references: props.references.map((reference) => reference.dataUrl),
               referenceSubject: props.referenceSubject,
               styleProfile: props.styleProfile,
