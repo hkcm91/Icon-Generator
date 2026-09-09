@@ -22,6 +22,25 @@ export function opticalScaleForAlpha(data: Uint8ClampedArray, width: number, hei
   return Math.round(Math.min(1.15, Math.max(0.85, Math.sqrt(0.65 / density))) * 100) / 100;
 }
 
+/** Review only underweight rendered icons; preserve a 10% exterior margin. */
+export function outlierScaleForAlpha(data: Uint8ClampedArray, width: number, height: number, currentScale: number, targetCoverage: number) {
+  let mass = 0;
+  for (let i = 3; i < data.length; i += 4) mass += data[i] / 255;
+  const coverage = mass / (width * height);
+  const bounds = alphaBounds(data, width, height, 1);
+  if (!bounds || coverage >= 0.18 || coverage <= 0) return null;
+  const cx = bounds.x + bounds.width / 2;
+  const cy = bounds.y + bounds.height / 2;
+  const room = Math.min(
+    2 * Math.min(cx - width * .1, width * .9 - cx) / bounds.width,
+    2 * Math.min(cy - height * .1, height * .9 - cy) / bounds.height,
+  );
+  const desired = Math.sqrt(targetCoverage / coverage);
+  const ratio = Math.max(1, Math.min(desired, room));
+  const scale = Math.max(currentScale, Math.floor(currentScale * ratio * 100) / 100);
+  return { scale, coverage, limited: room < desired, targetCoverage };
+}
+
 /** Measure visible pixels while ignoring extremely faint alpha noise. */
 export function alphaBounds(
   data: Uint8ClampedArray,
