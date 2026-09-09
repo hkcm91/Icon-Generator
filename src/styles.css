@@ -167,6 +167,12 @@ summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-bottom
 .master-reference-card img { width: 96px; height: 96px; object-fit: contain; background: #303744; border-radius: 8px; }
 .master-reference-card figcaption { min-width: 0; }
 .master-reference-card small { display: block; overflow-wrap: anywhere; }
+.optical-sizing-preview { margin: 16px 0; padding: 16px; border: 1px solid #475569; border-radius: 12px; }
+.optical-sizing-samples { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.optical-sizing-samples figure { margin: 0; min-width: 0; }
+.optical-sizing-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+.optical-sizing-pair img { width: 100%; aspect-ratio: 1; background: #303744; }
+.optical-sizing-pair small { display: block; text-align: center; }
 
 .style-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 12px; }
 

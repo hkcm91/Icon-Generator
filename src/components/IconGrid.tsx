@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, correctIconSize, hasNativeAlpha, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
+import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, correctIconSize, measureIconOpticalScale, hasNativeAlpha, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
   isAiGuidedCatalogSource,
   applyGenerationItemPatch,
@@ -119,6 +119,8 @@ export default function IconGrid(props: Props) {
   const [running, setRunning] = useState(false);
   const [queueSummary, setQueueSummary] = useState<{ batches: number; batchSize: number } | null>(null);
   const [message, setMessage] = useState('');
+  const [sizingPlan, setSizingPlan] = useState<Array<{ id: string; revision: number; before: number; after: number }>>([]);
+  const [sizingUndo, setSizingUndo] = useState<Array<{ id: string; revision: number; before: number; after: number; approved: boolean }>>([]);
   const [browsing, setBrowsing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
@@ -268,6 +270,7 @@ export default function IconGrid(props: Props) {
               revision: nextRevision,
               activeRevision: nextRevision,
               outputMode: card.outputMode,
+              ...(card.outputMode === 'transparent' ? { opticalScale: measureIconOpticalScale(image) } : {}),
               approved: false,
               error: undefined,
             });
@@ -353,19 +356,24 @@ export default function IconGrid(props: Props) {
   };
 
   const correctSelectedSizes = () => {
-    const updated = new Map<string, number>();
-    for (const item of selectedIsolatedItems) {
-      const image = props.glyphs.get(item.id);
-      if (!image) continue;
-      const revision = item.revision + 1;
-      props.onItemGlyph(item.id, correctIconSize(image, props.spec.size), revision);
-      updated.set(item.id, revision);
-    }
+    const plan = selectedIsolatedItems.map(item => ({
+      id: item.id, revision: item.activeRevision ?? item.revision,
+      before: item.opticalScale ?? 1, after: measureIconOpticalScale(props.glyphs.get(item.id)!),
+    })).filter(change => Math.abs(change.before - change.after) >= 0.005);
+    setSizingPlan(plan);
+    if (!plan.length) setMessage('Selected icons already match optical sizing. No changes or duplicate revisions were created.');
+  };
+
+  const applyOpticalSizing = () => {
+    const changes = sizingPlan.filter(change => props.items.some(item => item.id === change.id &&
+      (item.activeRevision ?? item.revision) === change.revision && (item.opticalScale ?? 1) === change.before));
+    setSizingUndo(changes.map(change => ({ ...change, approved: !!props.items.find(item => item.id === change.id)?.approved })));
     props.onItems(props.items.map(item => {
-      const revision = updated.get(item.id);
-      return revision === undefined ? item : { ...item, revision, activeRevision: revision, approved: false };
+      const change = changes.find(value => value.id === item.id);
+      return change ? { ...item, opticalScale: change.after, approved: false } : item;
     }));
-    setMessage(`Corrected ${updated.size} saved icons to ${props.spec.size} × ${props.spec.size}, with artwork fitted to 75% of the canvas. Original revisions kept. No API calls.`);
+    setSizingPlan([]);
+    setMessage(`Optically balanced ${changes.length} icons. Previews and exports use the new sizes. Source images and revisions are unchanged. No API calls.`);
   };
 
   const applyContainerToSelected = (overlay = props.containerOverlay) => {
@@ -475,6 +483,7 @@ export default function IconGrid(props: Props) {
           revision: nextRevision,
           activeRevision: nextRevision,
           outputMode: jobCard?.outputMode ?? codexOutputMode(props.containerMode),
+          ...(importedMode === 'transparent' ? { opticalScale: measureIconOpticalScale(image) } : {}),
           approved: false,
           error: undefined,
         });
@@ -610,6 +619,7 @@ export default function IconGrid(props: Props) {
             revision: nextRevision,
             activeRevision: nextRevision,
             outputMode,
+            ...(outputMode === 'transparent' ? { opticalScale: measureIconOpticalScale(layer) } : {}),
             approved: false,
           });
         } catch (error) {
@@ -680,7 +690,7 @@ export default function IconGrid(props: Props) {
           Select none
         </button>
         <button type="button" className="ghost" disabled={running || !selectedIsolatedItems.length}
-          onClick={correctSelectedSizes}>Correct selected sizes · $0</button>
+          onClick={correctSelectedSizes}>Preview optical sizing · $0</button>
         <button
           type="button"
           className="ghost"
@@ -810,7 +820,37 @@ export default function IconGrid(props: Props) {
       )}
 
       <p className="hint">The card name controls export. Visual subject controls what is drawn. The set theme then adapts that subject.</p>
-      <p className="hint">Automatic sizing: isolated results are centered on a {props.spec.size} × {props.spec.size} transparent canvas, with the longest visible edge at 75%. Saved icons can use Correct selected sizes; original revisions are kept.</p>
+      <p className="hint">Isolated results use a {props.spec.size} × {props.spec.size} transparent canvas. Optical sizing balances visible weight: dense icons shrink and thin icons grow by up to 15%. Preview the change on saved icons before applying it.</p>
+      {sizingPlan.length > 0 && (
+        <section className="optical-sizing-preview" aria-label="Optical sizing comparison">
+          <h3>Optical sizing · {sizingPlan.length} changes</h3>
+          <p>Before and after at the same display size. This estimates visual weight from visible pixels; original artwork stays unchanged.</p>
+          <div className="optical-sizing-samples">
+            {[...sizingPlan].sort((a, b) => Math.abs(b.after - b.before) - Math.abs(a.after - a.before)).slice(0, 6).map(change => {
+              const item = props.items.find(value => value.id === change.id);
+              if (!item) return null;
+              const layers = { glyph: props.glyphs.get(item.id) };
+              return <figure key={item.id}>
+                <strong>{item.name}</strong>
+                <div className="optical-sizing-pair">
+                  <div><RenderedIcon spec={props.spec} compose={{ ...composeFor(item), glyphScale: props.compose.glyphScale * change.before }} layers={layers} mode="transparent" alt={`${item.name} before`} /><small>Before</small></div>
+                  <div><RenderedIcon spec={props.spec} compose={{ ...composeFor(item), glyphScale: props.compose.glyphScale * change.after }} layers={layers} mode="transparent" alt={`${item.name} after`} /><small>After · {Math.round((change.after / change.before - 1) * 100)}%</small></div>
+                </div>
+              </figure>;
+            })}
+          </div>
+          <button type="button" disabled={running} onClick={applyOpticalSizing}>Apply optical sizing to {sizingPlan.length} icons</button>
+          <button type="button" className="ghost" onClick={() => setSizingPlan([])}>Cancel sizing</button>
+        </section>
+      )}
+      {sizingUndo.length > 0 && <button type="button" className="ghost" disabled={running} onClick={() => {
+        props.onItems(props.items.map(item => {
+          const change = sizingUndo.find(value => value.id === item.id && value.after === item.opticalScale && value.revision === (item.activeRevision ?? item.revision));
+          return change ? { ...item, opticalScale: change.before, approved: change.approved } : item;
+        }));
+        setSizingUndo([]);
+        setMessage('Optical sizing undone.');
+      }}>Undo optical sizing</button>}
 
       <details className="codex-local-tools">
         <summary>
