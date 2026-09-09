@@ -88,6 +88,21 @@ export default function MeasuredIconSizing(props: Props) {
           }
           radius /= 8;
         }
+        if (best.error > (metric === 'coverage' ? .05 : 1)) {
+          // A sparse fringe may create several local minima. Cover the entire
+          // nearby interval before accepting an unreachable-target result.
+          const lower = Math.max(.25, result.scale * .8);
+          const upper = Math.min(maxScale, result.scale * 1.5);
+          for (let sample = 0; sample <= 160; sample++) {
+            const candidateScale = lower + (upper - lower) * sample / 160;
+            const candidateCanvas = render(item, candidateScale, true);
+            const candidateMeasure = measure(candidateCanvas);
+            if (!candidateMeasure) continue;
+            const error = Math.abs(valueOf(candidateMeasure) - goal);
+            if (error < best.error) best = { scale: candidateScale, after: candidateCanvas, measured: candidateMeasure, error };
+            if (best.error <= (metric === 'coverage' ? .05 : 1)) break;
+          }
+        }
         plan.push({ item, scale: best.scale, before: thumbnail(render(item)), after: thumbnail(best.after),
           width: best.measured.width, height: best.measured.height, coverage: best.measured.mass / size ** 2 * 100,
           limited: best.error > (metric === 'coverage' ? .05 : 1) });
