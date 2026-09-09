@@ -68,6 +68,8 @@ export interface IconItem {
   complexity?: 'simple' | 'medium' | 'complex';
   role?: 'standard' | 'wide' | 'tall' | 'circular' | 'complex' | 'hero';
   opticalScale?: number;
+  /** Preserve deliberate visual adjustments through automatic sizing/generation. */
+  manualSizing?: boolean;
   opticalOffsetX?: number;
   opticalOffsetY?: number;
   anchor?: boolean;

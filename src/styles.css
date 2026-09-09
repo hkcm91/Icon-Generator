@@ -177,6 +177,15 @@ summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-bottom
 .optical-sizing-anchors figure { margin: 0 0 16px; }
 .optical-sizing-anchors img { width: 112px; height: 112px; background: #303744; }
 .optical-sizing-samples { max-height: 65vh; overflow-y: auto; }
+.manual-icon-sizing { margin: 8px 0; font-size: 12px; }
+.manual-icon-sizing summary { cursor: pointer; color: #7dd3fc; padding: 6px 0; }
+.manual-icon-sizing fieldset { border: 0; padding: 4px 0; margin: 0; min-width: 0; display: grid; gap: 8px; }
+.manual-icon-sizing label { display: grid; gap: 4px; }
+.manual-icon-sizing input[type="range"] { width: 100%; min-width: 0; }
+.manual-size-row { display: flex; gap: 3px; align-items: center; }
+.manual-size-row input { width: 50px; min-width: 0; padding: 4px; }
+.manual-size-row button { min-width: 26px; padding: 4px; }
+.manual-icon-sizing small { color: #94a3b8; line-height: 1.4; }
 
 .style-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 12px; }
 
