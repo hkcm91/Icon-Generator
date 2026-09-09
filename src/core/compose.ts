@@ -13,7 +13,7 @@
  */
 
 import { containerPath, glyphSafePath, innerBox } from './geometry';
-import type { ContainerSpec } from './spec';
+import { DEFAULT_SPEC, type ContainerSpec } from './spec';
 import { alphaBounds, boundsContainTransform, boundsTransform, substantialAlphaBounds } from './frameAlignment';
 
 export interface ComposeLayers {
@@ -179,6 +179,14 @@ export function renderTransparentLayer(
     Math.round(bounds.y * transform.scaleY + transform.translateY),
     Math.round(bounds.width * transform.scaleX), Math.round(bounds.height * transform.scaleY));
   return canvas;
+}
+
+/** Standardize saved cutouts as well as their previews. Never stretch a subject. */
+export function correctIconSize(image: CanvasImageSource, size: number): HTMLCanvasElement {
+  return renderTransparentLayer(
+    { ...DEFAULT_SPEC, size, padding: 0, glyphInset: 0 }, image,
+    { ...DEFAULT_COMPOSE, glyphScale: 0.75 },
+  );
 }
 
 /**
