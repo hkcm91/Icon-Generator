@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import ManualIconSizing from './ManualIconSizing';
 import { outlierScaleForAlpha } from '../core/frameAlignment';
 import { composeCompleteIcon, composeContainerOverlay, composeIcon, composeOpenFrame, correctIconSize, measureIconOpticalScale, hasNativeAlpha, renderTransparentLayer, type ComposeLayers, type ComposeOptions } from '../core/compose';
 import {
@@ -103,7 +104,9 @@ function RenderedIcon({
             : composeIcon({ ...spec, size }, layers, { ...compose, rimWidth: 0 });
     if (empty) canvas.width = canvas.height = size;
     return canvas.toDataURL('image/png');
-  }, [spec, compose, layers, empty, mode, size]);
+  }, [spec, compose.baseColor, compose.rimWidth, compose.rimColor, compose.shadowBlur,
+    compose.shadowColor, compose.shadowOffsetY, compose.glyphScale, compose.glyphOffsetX,
+    compose.glyphOffsetY, layers.glyph, layers.material, empty, mode, size]);
   return <img className={className} src={src} alt={alt} />;
 }
 
@@ -272,7 +275,7 @@ export default function IconGrid(props: Props) {
               revision: nextRevision,
               activeRevision: nextRevision,
               outputMode: card.outputMode,
-              ...(card.outputMode === 'transparent' ? { opticalScale: measureIconOpticalScale(image) } : {}),
+              ...(card.outputMode === 'transparent' && !item.manualSizing ? { opticalScale: measureIconOpticalScale(image) } : {}),
               approved: false,
               error: undefined,
             });
@@ -359,7 +362,7 @@ export default function IconGrid(props: Props) {
 
   const correctSelectedSizes = () => {
     setOutlierReview(false);
-    const plan = selectedIsolatedItems.map(item => ({
+    const plan = selectedIsolatedItems.filter(item => !item.manualSizing).map(item => ({
       id: item.id, revision: item.activeRevision ?? item.revision,
       before: item.opticalScale ?? 1, after: measureIconOpticalScale(props.glyphs.get(item.id)!),
     })).filter(change => Math.abs(change.before - change.after) >= 0.005);
@@ -368,7 +371,7 @@ export default function IconGrid(props: Props) {
   };
 
   const reviewSizeOutliers = () => {
-    const ready = props.items.filter(item => item.status === 'ready' && props.glyphs.has(item.id) &&
+    const ready = props.items.filter(item => !item.manualSizing && item.status === 'ready' && props.glyphs.has(item.id) &&
       resolveIconOutputMode(item, containerGenerationUsesAlpha(props.containerMode), props.containerMode) === 'transparent');
     const measure = (item: IconItem) => {
       const canvas = renderTransparentLayer({ ...props.spec, size: 128 }, props.glyphs.get(item.id), composeFor(item));
@@ -394,7 +397,7 @@ export default function IconGrid(props: Props) {
   };
 
   const applyOpticalSizing = () => {
-    const changes = sizingPlan.filter(change => Math.abs(change.after - change.before) >= .005 && props.items.some(item => item.id === change.id &&
+    const changes = sizingPlan.filter(change => Math.abs(change.after - change.before) >= .005 && props.items.some(item => !item.manualSizing && item.id === change.id &&
       (item.activeRevision ?? item.revision) === change.revision && (item.opticalScale ?? 1) === change.before));
     setSizingUndo(changes.map(change => ({ ...change, approved: !!props.items.find(item => item.id === change.id)?.approved })));
     props.onItems(props.items.map(item => {
@@ -512,7 +515,7 @@ export default function IconGrid(props: Props) {
           revision: nextRevision,
           activeRevision: nextRevision,
           outputMode: jobCard?.outputMode ?? codexOutputMode(props.containerMode),
-          ...(importedMode === 'transparent' ? { opticalScale: measureIconOpticalScale(image) } : {}),
+          ...(importedMode === 'transparent' && !item.manualSizing ? { opticalScale: measureIconOpticalScale(image) } : {}),
           approved: false,
           error: undefined,
         });
@@ -648,7 +651,7 @@ export default function IconGrid(props: Props) {
             revision: nextRevision,
             activeRevision: nextRevision,
             outputMode,
-            ...(outputMode === 'transparent' ? { opticalScale: measureIconOpticalScale(layer) } : {}),
+            ...(outputMode === 'transparent' && !item.manualSizing ? { opticalScale: measureIconOpticalScale(layer) } : {}),
             approved: false,
           });
         } catch (error) {
@@ -883,7 +886,7 @@ export default function IconGrid(props: Props) {
       )}
       {sizingUndo.length > 0 && <button type="button" className="ghost" disabled={running} onClick={() => {
         props.onItems(props.items.map(item => {
-          const change = sizingUndo.find(value => value.id === item.id && value.after === item.opticalScale && value.revision === (item.activeRevision ?? item.revision));
+          const change = sizingUndo.find(value => !item.manualSizing && value.id === item.id && value.after === item.opticalScale && value.revision === (item.activeRevision ?? item.revision));
           return change ? { ...item, opticalScale: change.before, approved: change.approved } : item;
         }));
         setSizingUndo([]);
@@ -1142,14 +1145,17 @@ export default function IconGrid(props: Props) {
                   <option value="circular">Circular</option><option value="complex">Complex</option><option value="hero">Hero</option>
                 </select>
                 <label>Optical scale <input type="number" min={0.5} max={1.5} step={0.05}
-                  value={item.opticalScale ?? 1} onChange={(event) => patch(item.id, { opticalScale: Number(event.target.value) })} /></label>
+                  value={item.opticalScale ?? 1} onChange={(event) => patch(item.id, { opticalScale: Number(event.target.value), manualSizing: true, approved: false })} /></label>
                 <label>X offset <input type="number" min={-25} max={25} value={item.opticalOffsetX ?? 0}
-                  onChange={(event) => patch(item.id, { opticalOffsetX: Number(event.target.value) })} /></label>
+                  onChange={(event) => patch(item.id, { opticalOffsetX: Number(event.target.value), manualSizing: true, approved: false })} /></label>
                 <label>Y offset <input type="number" min={-25} max={25} value={item.opticalOffsetY ?? 0}
-                  onChange={(event) => patch(item.id, { opticalOffsetY: Number(event.target.value) })} /></label>
+                  onChange={(event) => patch(item.id, { opticalOffsetY: Number(event.target.value), manualSizing: true, approved: false })} /></label>
                 <textarea aria-label={`${item.name} notes`} value={item.notes ?? ''} placeholder="Revision or production notes"
                   onChange={(event) => patch(item.id, { notes: event.target.value })} />
               </details>
+              {item.status === 'ready' && outputMode === 'transparent' && (
+                <ManualIconSizing item={item} disabled={running} onChange={change => patch(item.id, change)} />
+              )}
               <div className="card-foot">
                 <span className={`badge badge-${item.status}`}>
                   {item.status === 'ready'
