@@ -50,11 +50,31 @@ export default function MeasuredIconSizing(props: Props) {
         const result = alpha && solveMeasuredSize(alpha, size,
           innerBox(props.spec).edge * (1 - props.spec.glyphInset / 100) * props.compose.glyphScale, metric, target, margin);
         if (!result) { skipped++; continue; }
-        const after = render(item, result.scale, true);
-        const measured = measure(after);
+        let scale = result.scale;
+        let after = render(item, scale, true);
+        let measured = measure(after);
         if (!measured) { skipped++; continue; }
-        plan.push({ item, scale: result.scale, before: thumbnail(render(item)), after: thumbnail(after),
-          width: measured.width, height: measured.height, coverage: measured.mass / size ** 2 * 100, limited: result.limited });
+        const baseEdge = innerBox(props.spec).edge * (1 - props.spec.glyphInset / 100) * props.compose.glyphScale;
+        const maxScale = Math.min(2, size * (1 - 2 * margin / 100) / baseEdge);
+        const goal = metric === 'coverage' ? target : target / 100 * size;
+        const valueOf = (value: NonNullable<typeof measured>) => metric === 'coverage' ? value.mass / size ** 2 * 100 :
+          metric === 'width' ? value.width : metric === 'height' ? value.height : Math.max(value.width, value.height);
+        // Resampling can remove very faint edge pixels. Close the loop on the
+        // actual export-resolution raster rather than trusting source bounds.
+        let best = { scale, after, measured, error: Math.abs(valueOf(measured) - goal) };
+        for (let pass = 0; pass < 8 && best.error > (metric === 'coverage' ? .05 : 1); pass++) {
+          const ratio = goal / valueOf(measured);
+          const next = Math.max(.25, Math.min(maxScale, scale * (metric === 'coverage' ? Math.sqrt(ratio) : ratio)));
+          if (Math.abs(next - scale) < .000001) break;
+          scale = next; after = render(item, scale, true);
+          const nextMeasure = measure(after); if (!nextMeasure) break;
+          measured = nextMeasure;
+          const error = Math.abs(valueOf(measured) - goal);
+          if (error < best.error) best = { scale, after, measured, error };
+        }
+        plan.push({ item, scale: best.scale, before: thumbnail(render(item)), after: thumbnail(best.after),
+          width: best.measured.width, height: best.measured.height, coverage: best.measured.mass / size ** 2 * 100,
+          limited: best.error > (metric === 'coverage' ? .05 : 1) });
       }
       setRows(plan);
       setMessage(`${plan.length} icons measured${skipped ? ` · ${skipped} empty or unavailable` : ''}. ${plan.length ? 'Review the grid, then apply.' : 'Select ready transparent icons, or include manual sizes.'}`);
@@ -85,7 +105,7 @@ export default function MeasuredIconSizing(props: Props) {
       <div className="measured-grid">{rows.map(row => <figure key={row.item.id}>
         <figcaption>{row.item.name}</figcaption>
         <div className="measured-pair"><div><img src={row.before} alt={`${row.item.name} before`} /><small>Before</small></div><div><img src={row.after} alt={`${row.item.name} measured preview`} /><small>After</small></div></div>
-        <small>{row.width} × {row.height} px · {row.coverage.toFixed(2)}% area<br />Scale {(row.scale * 100).toFixed(2)}%{row.limited && ' · target limited by margin or scale range'}</small>
+        <small>{row.width} × {row.height} px · {row.coverage.toFixed(2)}% area<br />Scale {(row.scale * 100).toFixed(2)}%{row.limited && ' · target not reached within margin, scale, or raster limits'}</small>
       </figure>)}</div>
       <button type="button" disabled={props.disabled} onClick={() => {
         const changes = rows.filter(row => props.items.find(item => item.id === row.item.id) === row.item);
