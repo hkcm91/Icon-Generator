@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_COMPOSE, type ComposeOptions } from '../core/compose';
 import { DEFAULT_SPEC, normalizeSpec, type ContainerSpec } from '../core/spec';
 import { DEFAULT_VISION_MODEL } from '../core/vision';
@@ -224,13 +224,26 @@ function load(): Project {
 export function useProject() {
   const [project, setProject] = useState<Project>(load);
 
+  const latest = useRef(project);
+  latest.current = project;
+  const save = useCallback(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(latest.current)); }
+    catch { /* Storage may be unavailable in private mode. */ }
+  }, []);
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
-    } catch {
-      // Private-mode quota failures are not worth interrupting the session.
-    }
-  }, [project]);
+    const timer = window.setTimeout(save, 400);
+    return () => window.clearTimeout(timer);
+  }, [project, save]);
+  useEffect(() => {
+    const onHidden = () => { if (document.visibilityState === 'hidden') save(); };
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      save();
+      window.removeEventListener('pagehide', save);
+      document.removeEventListener('visibilitychange', onHidden);
+    };
+  }, [save]);
 
   const setSpec = useCallback((patch: Partial<ContainerSpec>) => {
     setProject((current) => ({ ...current, spec: normalizeSpec({ ...current.spec, ...patch }) }));

@@ -41,7 +41,7 @@ export default function Preview({ spec, compose, layers, showGuides, mode = 'fil
     }
 
     node.replaceChildren(canvas);
-  }, [spec, compose, layers, showGuides, mode]);
+  }, [spec, compose, layers.glyph, layers.material, showGuides, mode]);
 
   return <div className="preview" ref={holder} />;
 }

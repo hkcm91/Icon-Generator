@@ -1,3 +1,4 @@
+import DeferredDetails from './DeferredDetails';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ManualIconSizing from './ManualIconSizing';
 import MeasuredIconSizing from './MeasuredIconSizing';
@@ -92,7 +93,18 @@ function RenderedIcon({
   className?: string;
   alt?: string;
 }) {
+  const holder = useRef<HTMLImageElement>(null);
+  const [visible, setVisible] = useState(size > 128);
+  useEffect(() => {
+    if (visible || !holder.current) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect(); }
+    }, { rootMargin: '200px' });
+    observer.observe(holder.current);
+    return () => observer.disconnect();
+  }, [visible]);
   const src = useMemo(() => {
+    if (!visible || empty) return 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22128%22 height=%22128%22/%3E';
     const canvas = empty ? document.createElement('canvas')
       : mode === 'transparent'
         ? renderTransparentLayer({ ...spec, size }, layers.glyph, compose)
@@ -107,8 +119,8 @@ function RenderedIcon({
     return canvas.toDataURL('image/png');
   }, [spec, compose.baseColor, compose.rimWidth, compose.rimColor, compose.shadowBlur,
     compose.shadowColor, compose.shadowOffsetY, compose.glyphScale, compose.glyphOffsetX,
-    compose.glyphOffsetY, layers.glyph, layers.material, empty, mode, size]);
-  return <img className={className} src={src} alt={alt} />;
+    compose.glyphOffsetY, layers.glyph, layers.material, empty, mode, size, visible]);
+  return <img ref={holder} className={className} src={src} alt={alt} width={size} height={size} />;
 }
 
 /**
@@ -1061,8 +1073,7 @@ export default function IconGrid(props: Props) {
                   onChange={(event) => patch(item.id, { name: event.target.value })}
                 />
               </div>
-              <details className="card-editor">
-                <summary>Edit details</summary>
+              <DeferredDetails className="card-editor" summary="Edit details">
                 <input
                   className="card-concept"
                   aria-label={`${item.name} visual subject`}
@@ -1154,7 +1165,7 @@ export default function IconGrid(props: Props) {
                   onChange={(event) => patch(item.id, { opticalOffsetY: Number(event.target.value), manualSizing: true, approved: false })} /></label>
                 <textarea aria-label={`${item.name} notes`} value={item.notes ?? ''} placeholder="Revision or production notes"
                   onChange={(event) => patch(item.id, { notes: event.target.value })} />
-              </details>
+              </DeferredDetails>
               {item.status === 'ready' && outputMode === 'transparent' && (
                 <ManualIconSizing item={item} disabled={running} onChange={change => patch(item.id, change)} />
               )}

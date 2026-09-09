@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Preview from './Preview';
 import { containerPath } from '../core/geometry';
 import { traceMaster } from '../core/trace';
@@ -265,17 +265,21 @@ export default function SimpleStudio(props: Props) {
     return () => { cancelled = true; };
   }, [props.imageStoreLoaded, props.master, props.materialLayer, props.onMaterialLayer]);
 
+  const savedFrameInspection = useMemo(() => props.containerMode === 'open-frame' && props.materialLayer && !props.extractedSubject
+    ? inspectOpenFrame(props.materialLayer, props.spec.size) : null,
+  [props.containerMode, props.materialLayer, props.extractedSubject, props.spec.size]);
+
   useEffect(() => {
     if (!props.imageStoreLoaded || props.containerMode !== 'open-frame' || !props.materialLayer) return;
     // A persisted extracted subject proves this frame came from the validated
     // two-layer separation flow. Decorative flourishes may legitimately enter
     // the centre, so the older coverage-only heuristic must not erase it.
     if (props.extractedSubject) return;
-    const inspection = inspectOpenFrame(props.materialLayer, props.spec.size);
+    const inspection = savedFrameInspection;
     // Never auto-approve a transparent-looking layer. Older releases carved a
     // large hole and would otherwise immediately approve that damaged result
     // again after the migration deliberately marked it for re-extraction.
-    if (!inspection.subjectLikely) return;
+    if (!inspection?.subjectLikely) return;
     if (props.frameReady) {
       props.onFrameReady(false);
       props.onClearFrameVariants();
@@ -284,7 +288,7 @@ export default function SimpleStudio(props: Props) {
         message: 'The saved reusable frame was marked unready. You can still generate complete icons directly from the uploaded master, or optionally extract the frame again.',
       });
     }
-  }, [props.imageStoreLoaded, props.containerMode, props.frameReady, props.materialLayer, props.extractedSubject, props.spec, props.onFrameReady, props.onClearFrameVariants, setStatus]);
+  }, [props.imageStoreLoaded, props.containerMode, props.frameReady, props.materialLayer, props.extractedSubject, savedFrameInspection, props.onFrameReady, props.onClearFrameVariants, setStatus]);
 
   // Older versions could save a transparent AI layer but mark its card for
   // container composition. Once IndexedDB restores those pixels, repair only
@@ -1489,4 +1493,3 @@ export default function SimpleStudio(props: Props) {
     </div>
   );
 }
-

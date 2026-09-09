@@ -1,3 +1,4 @@
+import DeferredDetails from './DeferredDetails';
 import type { IconItem } from '../core/library';
 
 export default function ManualIconSizing({ item, disabled, onChange }: {
@@ -8,8 +9,7 @@ export default function ManualIconSizing({ item, disabled, onChange }: {
   const size = (value: number) => {
     if (Number.isFinite(value)) update({ opticalScale: Math.min(200, Math.max(25, value)) / 100 });
   };
-  return <details className="manual-icon-sizing">
-    <summary>Adjust size{item.manualSizing ? ' · manual' : ''}</summary>
+  return <DeferredDetails className="manual-icon-sizing" summary={`Adjust size${item.manualSizing ? ' · manual' : ''}`}>
     <fieldset disabled={disabled}>
       <label>Size · {percent}%
         <input aria-label={`${item.name} size slider`} type="range" min={25} max={200} step={1}
@@ -34,5 +34,5 @@ export default function ManualIconSizing({ item, disabled, onChange }: {
       {item.manualSizing && <button type="button" className="ghost tiny" onClick={() => onChange({ manualSizing: false })}>Allow automatic sizing</button>}
       <small>Live preview · used in exports · no generation. Manual choices are kept during automatic sizing.</small>
     </fieldset>
-  </details>;
+  </DeferredDetails>;
 }

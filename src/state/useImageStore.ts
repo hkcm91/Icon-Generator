@@ -9,6 +9,7 @@ import {
   deleteBlob,
   getBlob,
   putBlob,
+  replaceArtwork,
 } from '../core/store';
 
 const MATERIAL_KEY = 'material';
@@ -36,17 +37,34 @@ function blobDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-function imageDataUrl(image: CanvasImageSource | null): string | null {
+// Image elements are immutable artwork snapshots. Reuse their original bytes;
+// editable canvases are encoded asynchronously each time to avoid stale pixels.
+async function imageDataUrl(image: CanvasImageSource | null): Promise<string | null> {
   if (!image) return null;
+  if (image instanceof HTMLImageElement) {
+    if (image.src.startsWith('data:')) return image.src;
+    if (image.src.startsWith('blob:')) return blobDataUrl(await (await fetch(image.src)).blob());
+  }
   const width = (image as HTMLImageElement).naturalWidth || (image as HTMLCanvasElement).width || 1024;
   const height = (image as HTMLImageElement).naturalHeight || (image as HTMLCanvasElement).height || 1024;
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
+  if (!ctx) throw new Error('Could not encode artwork.');
   ctx.drawImage(image, 0, 0, width, height);
-  return canvas.toDataURL('image/png');
+  const blob = await canvasToBlobAsync(canvas);
+  if (!blob) throw new Error('Could not encode artwork.');
+  return blobDataUrl(blob);
+}
+
+async function mapArtwork<T, R>(values: T[], work: (value: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(values.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, values.length) }, async () => {
+    while (next < values.length) { const index = next++; results[index] = await work(values[index]); }
+  }));
+  return results;
 }
 
 function dataUrlImage(source: string): Promise<HTMLImageElement> {
@@ -75,6 +93,7 @@ export function useImageStore() {
   const [extractedSubject, setExtractedSubjectState] = useState<CanvasImageSource | null>(null);
   const [frames, setFrames] = useState<Map<string, CanvasImageSource>>(new Map());
   const urls = useRef(new Map<string, string>());
+  const pending = useRef(new Set<Promise<unknown>>());
 
   const trackUrl = useCallback((key: string, image: HTMLImageElement) => {
     const previous = urls.current.get(key);
@@ -147,8 +166,12 @@ export function useImageStore() {
   }, [trackUrl]);
 
   /** Persist whatever the compositor produced; canvases become PNG blobs. */
-  const persist = useCallback(async (store: string, key: string, image: CanvasImageSource | null) => {
+  const persist = useCallback((store: string, key: string, image: CanvasImageSource | null) => {
+    const task = (async () => {
     if (!image) return deleteBlob(store, key);
+    if (image instanceof HTMLImageElement && /^(data:|blob:)/.test(image.src)) {
+      return putBlob(store, key, await (await fetch(image.src)).blob());
+    }
     let canvas: HTMLCanvasElement;
     if (image instanceof HTMLCanvasElement) canvas = image;
     else {
@@ -161,6 +184,10 @@ export function useImageStore() {
     }
     const blob = await canvasToBlobAsync(canvas);
     if (blob) await putBlob(store, key, blob);
+    })();
+    pending.current.add(task);
+    void task.then(() => pending.current.delete(task), () => pending.current.delete(task));
+    return task;
   }, []);
 
   const setMaterial = useCallback(
@@ -275,15 +302,20 @@ export function useImageStore() {
     setExtractedSubjectState(null);
     setFrames(new Map());
     void clearStore(GLYPHS);
-    void clearStore(LAYERS);
+    void (async () => {
+      for (const key of await allKeys(LAYERS)) {
+        if ([MATERIAL_KEY, SINGLE_GLYPH_KEY, CONTAINER_OVERLAY_KEY, EXTRACTED_SUBJECT_KEY].includes(key) || key.startsWith(FRAME_PREFIX)) await deleteBlob(LAYERS, key);
+      }
+    })();
   }, []);
 
   const exportImages = useCallback(async (): Promise<ImageBundle> => {
+    await Promise.all([...pending.current]);
     const encoded: Record<string, string> = {};
     const revisions: Record<string, string> = {};
     const encodedFrames: Record<string, string> = {};
     for (const [id, image] of glyphs) {
-      const value = imageDataUrl(image);
+      const value = await imageDataUrl(image);
       if (value) encoded[id] = value;
     }
     for (const key of await allKeys(GLYPHS)) {
@@ -292,54 +324,50 @@ export function useImageStore() {
       if (blob) revisions[key] = await blobDataUrl(blob);
     }
     for (const [id, image] of frames) {
-      const value = imageDataUrl(image);
+      const value = await imageDataUrl(image);
       if (value) encodedFrames[id] = value;
     }
     return {
-      material: imageDataUrl(material),
-      glyph: imageDataUrl(glyph),
+      material: await imageDataUrl(material),
+      glyph: await imageDataUrl(glyph),
       glyphs: encoded,
-      containerOverlay: imageDataUrl(containerOverlay),
-      extractedSubject: imageDataUrl(extractedSubject),
+      containerOverlay: await imageDataUrl(containerOverlay),
+      extractedSubject: await imageDataUrl(extractedSubject),
       revisions,
       frames: encodedFrames,
     };
   }, [glyphs, material, glyph, containerOverlay, extractedSubject, frames]);
 
   const importImages = useCallback(async (bundle: ImageBundle) => {
-    await clearStore(GLYPHS);
-    await clearStore(LAYERS);
-    const restored = new Map<string, CanvasImageSource>();
-    for (const [id, source] of Object.entries(bundle.glyphs ?? {})) {
-      const image = await dataUrlImage(source);
-      restored.set(id, image);
-      await persist(GLYPHS, id, image);
-    }
-    for (const [key, source] of Object.entries(bundle.revisions ?? {})) {
-      const response = await fetch(source);
-      await putBlob(GLYPHS, key, await response.blob());
-    }
-    const nextMaterial = bundle.material ? await dataUrlImage(bundle.material) : null;
-    const nextGlyph = bundle.glyph ? await dataUrlImage(bundle.glyph) : null;
-    const nextContainerOverlay = bundle.containerOverlay ? await dataUrlImage(bundle.containerOverlay) : null;
-    const nextExtractedSubject = bundle.extractedSubject ? await dataUrlImage(bundle.extractedSubject) : null;
-    const nextFrames = new Map<string, CanvasImageSource>();
-    for (const [id, source] of Object.entries(bundle.frames ?? {})) {
-      const image = await dataUrlImage(source);
-      nextFrames.set(id, image);
-      await persist(LAYERS, `${FRAME_PREFIX}${id}`, image);
-    }
-    setGlyphs(restored);
-    setMaterialState(nextMaterial);
-    setGlyphState(nextGlyph);
-    setContainerOverlayState(nextContainerOverlay);
-    setExtractedSubjectState(nextExtractedSubject);
-    setFrames(nextFrames);
-    await persist(LAYERS, MATERIAL_KEY, nextMaterial);
-    await persist(LAYERS, SINGLE_GLYPH_KEY, nextGlyph);
-    await persist(LAYERS, CONTAINER_OVERLAY_KEY, nextContainerOverlay);
-    await persist(LAYERS, EXTRACTED_SUBJECT_KEY, nextExtractedSubject);
-  }, [persist]);
+    const glyphEntries = Object.entries(bundle.glyphs ?? {});
+    const layerEntries: Array<[string, string]> = [
+      [MATERIAL_KEY, bundle.material], [SINGLE_GLYPH_KEY, bundle.glyph],
+      [CONTAINER_OVERLAY_KEY, bundle.containerOverlay], [EXTRACTED_SUBJECT_KEY, bundle.extractedSubject],
+      ...Object.entries(bundle.frames ?? {}).map(([id, source]) => [`${FRAME_PREFIX}${id}`, source]),
+    ].filter((entry): entry is [string, string] => typeof entry[1] === 'string');
+    // Decode before changing the working copy; a bad file must not erase it.
+    const decoded = await mapArtwork([...glyphEntries, ...layerEntries], async ([id, source]) =>
+      [id, await dataUrlImage(source)] as const);
+    const blobs = await mapArtwork([...glyphEntries, ...layerEntries, ...Object.entries(bundle.revisions ?? {})],
+      async ([id, source]) => [id, await (await fetch(source)).blob()] as const);
+    const glyphCount = glyphEntries.length;
+    const layerCount = layerEntries.length;
+    await Promise.all([...pending.current]);
+    await replaceArtwork(
+      [...blobs.slice(0, glyphCount), ...blobs.slice(glyphCount + layerCount)],
+      blobs.slice(glyphCount, glyphCount + layerCount),
+    );
+    for (const url of urls.current.values()) URL.revokeObjectURL(url);
+    urls.current.clear();
+    const restoredLayers = new Map(decoded.slice(glyphCount));
+    setGlyphs(new Map(decoded.slice(0, glyphCount)));
+    setMaterialState(restoredLayers.get(MATERIAL_KEY) ?? null);
+    setGlyphState(restoredLayers.get(SINGLE_GLYPH_KEY) ?? null);
+    setContainerOverlayState(restoredLayers.get(CONTAINER_OVERLAY_KEY) ?? null);
+    setExtractedSubjectState(restoredLayers.get(EXTRACTED_SUBJECT_KEY) ?? null);
+    setFrames(new Map([...restoredLayers].filter(([key]) => key.startsWith(FRAME_PREFIX))
+      .map(([key, image]) => [key.slice(FRAME_PREFIX.length), image])));
+  }, []);
 
   return {
     loaded,

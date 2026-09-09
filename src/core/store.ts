@@ -122,3 +122,29 @@ export function blobToImage(blob: Blob): Promise<HTMLImageElement> {
     image.src = url;
   });
 }
+
+/** Replace a working set in one committed transaction, retaining shared libraries. */
+export async function replaceArtwork(
+  glyphs: ReadonlyArray<readonly [string, Blob]>,
+  layers: ReadonlyArray<readonly [string, Blob]>,
+): Promise<void> {
+  const db = await open();
+  if (!db) throw new Error('Browser storage is unavailable. The current set was kept.');
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([GLYPHS, LAYERS], 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error ?? new Error('Could not save the incoming set.'));
+    tx.onerror = () => reject(tx.error ?? new Error('Could not save the incoming set.'));
+    const glyphStore = tx.objectStore(GLYPHS);
+    glyphStore.clear();
+    for (const [key, blob] of glyphs) glyphStore.put(blob, key);
+    const layerStore = tx.objectStore(LAYERS);
+    const keys = layerStore.getAllKeys();
+    keys.onsuccess = () => {
+      for (const key of keys.result) {
+        if (['material', 'glyph', 'container-overlay', 'extracted-subject'].includes(String(key)) || String(key).startsWith('frame:')) layerStore.delete(key);
+      }
+      for (const [key, blob] of layers) layerStore.put(blob, key);
+    };
+  });
+}
